@@ -13,6 +13,7 @@ Junior Dev is a .NET-based platform for AI-assisted software development, featur
 - **Build/Test**: Use `dotnet build` on `jDev.sln`, `dotnet test` for unit/integration. Contracts changes require version bump in `ContractVersion.Current` and doc updates.
 - **Debugging**: Event logs are append-only; correlate via `Correlation` IDs. Surface throttling/conflicts in UI.
 - **CI Guard**: Any contract/architecture change must update docs with date/reason (e.g., in `CONTRACTS.md`). Enforce in pre-commit hooks.
+- **Version Control Discipline**: Always `git commit` and `git push` when shifting gears into the next body of work to maintain a clean, shareable state and enable collaboration.
 
 ## Conventions and Patterns
 - **DTOs**: Use sealed records for immutability (e.g., `WorkItemRef`, `SessionConfig`). Interfaces like `ICommand` with `Kind` for polymorphism.
