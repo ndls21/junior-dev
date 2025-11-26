@@ -11,10 +11,12 @@ public class SessionState
     private readonly List<IEvent> _eventLog = new();
 
     public SessionConfig Config { get; }
+    public string WorkspacePath { get; }
 
-    public SessionState(SessionConfig config)
+    public SessionState(SessionConfig config, string workspacePath)
     {
         Config = config;
+        WorkspacePath = workspacePath;
     }
 
     public async Task AddEvent(IEvent @event)

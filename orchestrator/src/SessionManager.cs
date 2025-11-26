@@ -12,15 +12,26 @@ public class SessionManager : ISessionManager
 {
     private readonly ConcurrentDictionary<Guid, SessionState> _sessions = new();
     private readonly IReadOnlyList<IAdapter> _adapters;
+    private readonly IPolicyEnforcer _policyEnforcer;
+    private readonly IRateLimiter _rateLimiter;
+    private readonly IWorkspaceProvider _workspaceProvider;
 
-    public SessionManager(IEnumerable<IAdapter> adapters)
+    public SessionManager(
+        IEnumerable<IAdapter> adapters,
+        IPolicyEnforcer policyEnforcer,
+        IRateLimiter rateLimiter,
+        IWorkspaceProvider workspaceProvider)
     {
         _adapters = adapters.ToList();
+        _policyEnforcer = policyEnforcer;
+        _rateLimiter = rateLimiter;
+        _workspaceProvider = workspaceProvider;
     }
 
     public async Task CreateSession(SessionConfig config)
     {
-        var sessionState = new SessionState(config);
+        var workspacePath = await _workspaceProvider.GetWorkspacePath(config);
+        var sessionState = new SessionState(config, workspacePath);
         if (!_sessions.TryAdd(config.SessionId, sessionState))
         {
             throw new InvalidOperationException($"Session {config.SessionId} already exists");
@@ -40,6 +51,35 @@ public class SessionManager : ISessionManager
         if (!_sessions.TryGetValue(command.Correlation.SessionId, out var session))
         {
             throw new InvalidOperationException($"Session {command.Correlation.SessionId} not found");
+        }
+
+        // Check policy
+        var policyResult = _policyEnforcer.CheckPolicy(command, session.Config);
+        if (!policyResult.Allowed)
+        {
+            var rejectedEvent = new CommandRejected(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Id,
+                "Policy violation",
+                policyResult.Rule);
+
+            await session.AddEvent(rejectedEvent);
+            return;
+        }
+
+        // Check rate limit
+        var rateResult = await _rateLimiter.CheckRateLimit(command, session.Config);
+        if (!rateResult.Allowed)
+        {
+            var throttledEvent = new Throttled(
+                Guid.NewGuid(),
+                command.Correlation,
+                "Rate limit exceeded",
+                rateResult.RetryAfter ?? DateTimeOffset.UtcNow.AddMinutes(1));
+
+            await session.AddEvent(throttledEvent);
+            return;
         }
 
         // Find adapter that can handle this command
