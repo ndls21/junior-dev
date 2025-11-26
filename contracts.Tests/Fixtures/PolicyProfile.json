@@ -1,0 +1,22 @@
+{
+  "name": "Default",
+  "commandWhitelist": [
+    "CreateBranch"
+  ],
+  "protectedBranches": [
+    "main"
+  ],
+  "maxFilesPerCommit": 10,
+  "requireTestsBeforePush": true,
+  "requireApprovalForPush": false,
+  "allowedWorkItemTransitions": [
+    "To Do->In Progress"
+  ],
+  "limits": {
+    "callsPerMinute": 100,
+    "burst": 10,
+    "perCommandCaps": {
+      "CreateBranch": 5
+    }
+  }
+}

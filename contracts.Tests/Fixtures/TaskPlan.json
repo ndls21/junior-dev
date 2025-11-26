@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    {
+      "id": "1",
+      "title": "Implement feature",
+      "dependsOn": [
+        "2"
+      ],
+      "workItem": {
+        "id": "JIRA-123"
+      },
+      "agentHint": "executor",
+      "suggestedBranch": "feature-branch",
+      "tags": [
+        "backend"
+      ]
+    }
+  ]
+}
