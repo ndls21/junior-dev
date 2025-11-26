@@ -9,11 +9,13 @@ public class SessionState
 {
     private readonly Channel<IEvent> _eventChannel = Channel.CreateUnbounded<IEvent>();
     private readonly List<IEvent> _eventLog = new();
+    private readonly Queue<ICommand> _pendingApproval = new();
 
     public SessionConfig Config { get; }
     public string WorkspacePath { get; }
     public SessionStatus Status { get; private set; } = SessionStatus.Running;
     public bool IsApproved { get; private set; }
+    public IReadOnlyList<IEvent> Events => _eventLog;
 
     public SessionState(SessionConfig config, string workspacePath)
     {
@@ -52,5 +54,22 @@ public class SessionState
     public void SetApproved(bool approved)
     {
         IsApproved = approved;
+    }
+
+    public void EnqueuePending(ICommand command)
+    {
+        _pendingApproval.Enqueue(command);
+    }
+
+    public bool TryDequeuePending(out ICommand? command)
+    {
+        if (_pendingApproval.Count > 0)
+        {
+            command = _pendingApproval.Dequeue();
+            return true;
+        }
+
+        command = null;
+        return false;
     }
 }

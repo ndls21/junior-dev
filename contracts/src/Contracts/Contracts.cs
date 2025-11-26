@@ -142,3 +142,8 @@ public sealed record SessionConfig(
     WorkspaceRef Workspace,
     WorkItemRef? WorkItem,
     string AgentProfile);
+
+public interface IVcsAdapter
+{
+    // Methods for VCS operations
+}

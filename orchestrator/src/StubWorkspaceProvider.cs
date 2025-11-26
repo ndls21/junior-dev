@@ -10,6 +10,7 @@ public class StubWorkspaceProvider : IWorkspaceProvider
 {
     private readonly ConcurrentDictionary<Guid, string> _workspaces = new();
     private readonly string _basePath;
+    // TODO: add mirror-based clone/--reference and stronger uniqueness/cleanup when integrating real VCS adapter.
 
     public StubWorkspaceProvider(string? basePath = null)
     {
@@ -24,14 +25,14 @@ public class StubWorkspaceProvider : IWorkspaceProvider
             return path;
         }
 
-        // If mirror path specified, use it
+        // Stub: if WorkspaceRef.Path is provided, use it verbatim
         if (!string.IsNullOrEmpty(config.Workspace.Path))
         {
             path = config.Workspace.Path;
         }
         else
         {
-            // Stub: create temp dir, "clone" by creating a marker file
+            // Create temp dir with .git marker
             path = Path.Combine(_basePath, config.SessionId.ToString());
             Directory.CreateDirectory(path);
             await File.WriteAllTextAsync(Path.Combine(path, ".git"), "stub repo");

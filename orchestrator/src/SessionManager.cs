@@ -51,6 +51,11 @@ public class SessionManager : ISessionManager
 
     public async Task PublishCommand(ICommand command)
     {
+        await ProcessCommand(command, bypassApproval: false);
+    }
+
+    private async Task ProcessCommand(ICommand command, bool bypassApproval)
+    {
         if (!_sessions.TryGetValue(command.Correlation.SessionId, out var session))
         {
             throw new InvalidOperationException($"Session {command.Correlation.SessionId} not found");
@@ -82,15 +87,15 @@ public class SessionManager : ISessionManager
         }
 
         // Check approval for commands requiring it
-        if (RequiresApproval(command, session.Config) && !session.IsApproved)
+        if (!bypassApproval && RequiresApproval(command, session.Config) && !session.IsApproved)
         {
-            var rejectedEvent = new CommandRejected(
-                Guid.NewGuid(),
-                command.Correlation,
-                command.Id,
-                "Session requires approval");
+            // Queue command and move session to NeedsApproval
+            session.EnqueuePending(command);
+            if (session.Status != SessionStatus.NeedsApproval)
+            {
+                await session.SetStatus(SessionStatus.NeedsApproval, "Session requires approval");
+            }
 
-            await session.AddEvent(rejectedEvent);
             return;
         }
 
@@ -200,7 +205,23 @@ public class SessionManager : ISessionManager
         }
 
         session.SetApproved(true);
+        // If session was waiting on approval, move back to running and process queued commands
+        if (session.Status == SessionStatus.NeedsApproval)
+        {
+            return ProcessPending(session);
+        }
+
         return Task.CompletedTask;
+    }
+
+    private async Task ProcessPending(SessionState session)
+    {
+        await session.SetStatus(SessionStatus.Running, "Session approved");
+
+        while (session.TryDequeuePending(out var pending) && pending != null)
+        {
+            await ProcessCommand(pending, bypassApproval: true);
+        }
     }
 
     public IAsyncEnumerable<IEvent> Subscribe(Guid sessionId)
@@ -211,5 +232,14 @@ public class SessionManager : ISessionManager
         }
 
         return session.GetEvents();
+    }
+
+    // For testing: complete the event channel for a session
+    public void CompleteSession(Guid sessionId)
+    {
+        if (_sessions.TryGetValue(sessionId, out var session))
+        {
+            session.Complete();
+        }
     }
 }

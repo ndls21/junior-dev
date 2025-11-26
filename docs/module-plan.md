@@ -27,7 +27,7 @@ Use these as hand-offs to juniors: each stage lists goal, deliverables, and test
   - Guidance: artifacts can be in-memory metadata/path hints; pause blocks dispatch; abort stops further commands and emits terminal status; approvals tracked per session.
   - Tests: scenario flow (command -> policy/rate -> fake adapter -> events); pause stops dispatch, resume restarts; abort blocks further commands; status events emitted; teardown cleans workspace if configured.
 
-## workitems-jira adapter
+## workitems-jira adapter ✅ Dev J complete
 - Stage 0: Goal: contract-fit shim.
   - Deliverables: interface + in-memory fake.
   - Tests: fake returns expected transitions/comments; serialization-safe outputs.

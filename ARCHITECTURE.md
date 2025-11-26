@@ -109,7 +109,8 @@ Orchestrator interfaces
 ```
 /contracts                (shared DTOs, tests)
 /orchestrator             (core session manager, policy/rate, workspace, event log)
-/adapters/workitems-jira  (Jira impl + fake)
+/adapters/common          (shared adapter interfaces and extensions)
+/adapters/workitems-jira  (Jira impl + fake) ✅ Dev J complete
 /adapters/vcs-git         (git CLI impl + fake)
 /agents/sk-host           (Semantic Kernel agents)
 /ui-shell                 (DevExpress UI)
@@ -129,3 +130,4 @@ global.json, Directory.Packages.props, .editorconfig, .gitignore
   - Note policy/profile changes impacting agents or UI.
   - Be enforced in code review/CI.
 - Governance note (2025-11-26): contract/architecture deviations without synchronized doc/timestamp updates are considered violations; CI should block such changes.
+- Update (2025-11-26): Dev J workitems-jira adapter implemented with fake in-memory and real REST client implementations, comprehensive unit tests added. Interface moved to adapters/common for shared access.

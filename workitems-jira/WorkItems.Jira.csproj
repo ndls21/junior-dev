@@ -7,7 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\contracts\Contracts.csproj" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\\contracts\\Contracts.csproj" />
+    <ProjectReference Include="..\\orchestrator\\Orchestrator.csproj" />
   </ItemGroup>
 
 </Project>
