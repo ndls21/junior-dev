@@ -14,15 +14,18 @@ Use these as hand-offs to juniors: each stage lists goal, deliverables, and test
   - Tests: rule enforcement test (e.g., diff detection), golden update required on schema change.
 
 ## orchestrator
-- Stage 0: Goal: basic plumbing.
-  - Deliverables: DI scaffold, in-memory event log, fake adapters.
-  - Tests: event ordering, command acceptance/echo via fakes.
-- Stage 1: Goal: enforce policy/rate limits + isolation.
-  - Deliverables: policy gate, rate limiter, workspace provisioner (isolated clone from baseline).
-  - Tests: blocked command emits `CommandRejected`; throttled emits `Throttled`; separate sessions get separate workspaces.
-- Stage 2: Goal: operational lifecycle.
-  - Deliverables: artifact store, status transitions, pause/resume/abort, approvals gating.
-  - Tests: scenario flow (command → adapter → events), pause/resume respected, teardown cleans workspace.
+- Stage 0: Goal: basic plumbing. (Dev A)
+  - Deliverables: DI scaffold; `ISessionManager` with `CreateSession(SessionConfig)`, `PublishCommand(ICommand)`, `Subscribe(SessionId)`; in-memory append-only event log; correlation/session handling; status events for created/terminated; fake adapters wired via interfaces.
+  - Guidance: consume `JuniorDev.Contracts`; no contract changes. Use thread-safe collections for logs/streams. Keep dependencies minimal.
+  - Tests: event ordering preserved; command accepted -> routed to fake -> events recorded/streamed; correlation IDs and SessionId round-trip; subscribe yields ordered events.
+- Stage 1: Goal: enforce policy/rate limits + isolation. (Dev B)
+  - Deliverables: `IPolicyEnforcer` applying `PolicyProfile` (allow/deny, protected branches stub, max files stub); `IRateLimiter` using `RateLimits` (token or leaky bucket); integrated before adapters; emits `CommandRejected` with rule and `Throttled` with retry info; `IWorkspaceProvider` for per-session workspace (clone from origin; optional mirror; isolated).
+  - Guidance: enforce centrally; keep per-session/adapter scopes; fallback to origin clone if no mirror; avoid real git in tests (use temp dirs).
+  - Tests: blocked command emits `CommandRejected` (rule present); allowed passes; throttle emits `Throttled` with RetryAfter; two sessions get distinct workspaces; optional cleanup tested.
+- Stage 2: Goal: operational lifecycle. (Dev C)
+  - Deliverables: artifact store placeholder; status transitions (Running/Paused/NeedsApproval/Error/Completed); pause/resume/abort handling via `SessionStatusChanged`; approvals gating (hold/reject until approved flag set).
+  - Guidance: artifacts can be in-memory metadata/path hints; pause blocks dispatch; abort stops further commands and emits terminal status; approvals tracked per session.
+  - Tests: scenario flow (command -> policy/rate -> fake adapter -> events); pause stops dispatch, resume restarts; abort blocks further commands; status events emitted; teardown cleans workspace if configured.
 
 ## workitems-jira adapter
 - Stage 0: Goal: contract-fit shim.
@@ -54,7 +57,7 @@ Use these as hand-offs to juniors: each stage lists goal, deliverables, and test
   - Deliverables: planner/reviewer profiles; throttle/policy signal handling.
   - Tests: blocked command surfaced to user; throttle backoff respected in outputs.
 - Stage 2: Goal: plan updates.
-  - Deliverables: optional plan expansion (single-node → DAG stub) emitting `PlanUpdated`.
+  - Deliverables: optional plan expansion (single-node -> DAG stub) emitting `PlanUpdated`.
   - Tests: plan update event content stable; goldens for planner text.
 
 ## ui-shell
@@ -73,7 +76,7 @@ Use these as hand-offs to juniors: each stage lists goal, deliverables, and test
   - Deliverables: runner with env-var gating.
   - Tests: dry-run pipeline executes with fakes.
 - Stage 1: Goal: E2E (local/fake).
-  - Deliverables: “ticket → branch → patch → commit (no push) → comment/transition” using fakes.
+  - Deliverables: "ticket -> branch -> patch -> commit (no push) -> comment/transition" using fakes.
   - Tests: assertions on emitted events/artifacts.
 - Stage 2: Goal: opt-in live.
   - Deliverables: Jira/git live run (push disabled by default; flag to enable).
