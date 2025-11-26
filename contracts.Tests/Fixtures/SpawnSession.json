@@ -1,0 +1,31 @@
+{
+  "config": {
+    "sessionId": "12345678-1234-1234-1234-123456789abc",
+    "parentSessionId": "12345678-1234-1234-1234-123456789abc",
+    "planNodeId": "node1",
+    "policy": {
+      "name": "Default",
+      "protectedBranches": [
+        "main"
+      ],
+      "requireTestsBeforePush": false,
+      "requireApprovalForPush": false
+    },
+    "repo": {
+      "name": "repo",
+      "path": "path"
+    },
+    "workspace": {
+      "path": "workspace"
+    },
+    "workItem": {
+      "id": "JIRA-123"
+    },
+    "agentProfile": "planner"
+  },
+  "id": "87654321-4321-4321-4321-cba987654321",
+  "correlation": {
+    "sessionId": "12345678-1234-1234-1234-123456789abc"
+  },
+  "kind": "SpawnSession"
+}

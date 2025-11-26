@@ -1,6 +1,22 @@
 param(
-    [string]$BaseRef = "HEAD~1"
+    [string]$BaseRef = $null
 )
+
+# Determine base ref
+if (-not $BaseRef) {
+    if ($env:GITHUB_BASE_REF) {
+        $BaseRef = $env:GITHUB_BASE_REF
+    } elseif ($env:GITHUB_EVENT_PATH) {
+        # For PR, parse the event to get base.sha
+        $event = Get-Content $env:GITHUB_EVENT_PATH | ConvertFrom-Json
+        if ($event.pull_request) {
+            $BaseRef = $event.pull_request.base.sha
+        }
+    }
+    if (-not $BaseRef) {
+        $BaseRef = "HEAD~1"
+    }
+}
 
 # Check if contracts have changed and require updates to docs and goldens
 

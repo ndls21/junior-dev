@@ -57,6 +57,68 @@
 - Center document: active session conversation + event log inline.
 - Right dock: artifacts (diffs/patches/test results/logs). Panels dockable/tear-off for multi-screen layouts; layout persisted with reset option.
 
+## Module Diagram (control/data flow)
+```
+[UI Shell]  ⇆  [Orchestrator]  ⇆  [Agents Host (SK)]
+    │                 │                 │
+    │            policy/rate            │
+    │                 │                 │
+    │                 ↓                 ↓
+    │          [WorkItems Adapter]   [VCS Adapter]
+    │                 │                 │
+    │                 ↓                 ↓
+    │            (Jira, …)          (Git CLI, …)
+```
+- Orchestrator is the hub: enforces policy/rate limits, manages sessions/workspaces, logs events/artifacts.
+- UI consumes session event streams; sends commands (approve, pause/resume, etc.).
+- Agents host emits commands; listens to events to adapt.
+- Adapters are swappable implementations of stable contracts.
+
+## Interaction per session
+```
+Agent/UI -> Orchestrator: Command (CreateBranch, ApplyPatch, ...)
+Orchestrator -> Policy/Rate: Check
+Policy/Rate -> Orchestrator: Allow/Reject/Throttle
+Orchestrator -> Adapter: Invoke (VCS/WorkItem)
+Adapter -> Orchestrator: Result/Artifact/Conflict
+Orchestrator -> EventLog: Append
+Orchestrator -> UI/Agent: Event stream (CommandAccepted, ..., ArtifactAvailable)
+```
+
+## Contracts/Class Outline (C# sketch)
+```
+Contracts
+  ICommand / CommandBase (Id, Correlation, Kind)
+    CreateBranch, ApplyPatch, RunTests, Commit, Push,
+    TransitionTicket, Comment, SetAssignee, UploadArtifact, RequestApproval, SpawnSession (future)
+  IEvent / EventBase (Id, Correlation, Kind)
+    CommandAccepted, CommandRejected, CommandCompleted,
+    ArtifactAvailable, Throttled, ConflictDetected,
+    SessionStatusChanged, PlanUpdated
+  TaskPlan / TaskNode
+  PolicyProfile / RateLimits
+  SessionConfig (session/workspace/policy/plan node refs)
+
+Orchestrator interfaces
+  ISessionManager (CreateSession, PublishCommand, Subscribe)
+  IPolicyEnforcer, IRateLimiter, IWorkspaceProvider, IArtifactStore
+  Adapters: IWorkItemService, IVcsService
+```
+
+## Repo Layout (proposed)
+```
+/contracts                (shared DTOs, tests)
+/orchestrator             (core session manager, policy/rate, workspace, event log)
+/adapters/workitems-jira  (Jira impl + fake)
+/adapters/vcs-git         (git CLI impl + fake)
+/agents/sk-host           (Semantic Kernel agents)
+/ui-shell                 (DevExpress UI)
+/docs                     (architecture, plans, setup, prompts)
+/scripts                  (guards, helpers)
+.github/workflows         (CI)
+global.json, Directory.Packages.props, .editorconfig, .gitignore
+```
+
 ## Testing Posture
 - Over-test bias: unit tests for contracts/serialization; adapter tests with fakes; orchestrator scenario tests (policy, rate limits, isolation); agent golden tests; smoke/integration gated by env vars for live services; UI component tests.
 - CI guard: contracts changes require version bump, docs update (with date/reason), and refreshed tests.

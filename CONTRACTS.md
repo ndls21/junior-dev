@@ -2,6 +2,14 @@
 
 Versioning rule: bump contract version when changing shapes; update docs with date/reason. Contracts changes must ship with serialization tests and CI checks.
 
+## Serialization Options
+Contracts are serialized using System.Text.Json with the following options:
+- PropertyNamingPolicy: CamelCase
+- WriteIndented: true (for readability in tests)
+- DefaultIgnoreCondition: WhenWritingNull (null values omitted)
+- Converters: JsonStringEnumConverter (enums as strings)
+- Encoder: UnsafeRelaxedJsonEscaping (allows special characters like > in strings)
+
 ## Core Types
 - `SessionId`, `CommandId`, `EventId`, `PlanNodeId`: GUIDs/strings with stable casing.
 - `WorkItemRef { string Id, string? ProviderHint }`
