@@ -15,17 +15,20 @@ public class SessionManager : ISessionManager
     private readonly IPolicyEnforcer _policyEnforcer;
     private readonly IRateLimiter _rateLimiter;
     private readonly IWorkspaceProvider _workspaceProvider;
+    private readonly IArtifactStore _artifactStore;
 
     public SessionManager(
         IEnumerable<IAdapter> adapters,
         IPolicyEnforcer policyEnforcer,
         IRateLimiter rateLimiter,
-        IWorkspaceProvider workspaceProvider)
+        IWorkspaceProvider workspaceProvider,
+        IArtifactStore artifactStore)
     {
         _adapters = adapters.ToList();
         _policyEnforcer = policyEnforcer;
         _rateLimiter = rateLimiter;
         _workspaceProvider = workspaceProvider;
+        _artifactStore = artifactStore;
     }
 
     public async Task CreateSession(SessionConfig config)
@@ -51,6 +54,44 @@ public class SessionManager : ISessionManager
         if (!_sessions.TryGetValue(command.Correlation.SessionId, out var session))
         {
             throw new InvalidOperationException($"Session {command.Correlation.SessionId} not found");
+        }
+
+        // Check session status
+        if (session.Status == SessionStatus.Paused)
+        {
+            var rejectedEvent = new CommandRejected(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Id,
+                "Session is paused");
+
+            await session.AddEvent(rejectedEvent);
+            return;
+        }
+
+        if (session.Status == SessionStatus.Completed || session.Status == SessionStatus.Error)
+        {
+            var rejectedEvent = new CommandRejected(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Id,
+                $"Session is in terminal state: {session.Status}");
+
+            await session.AddEvent(rejectedEvent);
+            return;
+        }
+
+        // Check approval for commands requiring it
+        if (RequiresApproval(command, session.Config) && !session.IsApproved)
+        {
+            var rejectedEvent = new CommandRejected(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Id,
+                "Session requires approval");
+
+            await session.AddEvent(rejectedEvent);
+            return;
         }
 
         // Check policy
@@ -100,6 +141,68 @@ public class SessionManager : ISessionManager
         await adapter.HandleCommand(command, session);
     }
 
+    private bool RequiresApproval(ICommand command, SessionConfig config)
+    {
+        // Stub: require approval for Push if policy says so
+        return command is Push && config.Policy.RequireApprovalForPush;
+    }
+
+    public async Task PauseSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+        {
+            throw new InvalidOperationException($"Session {sessionId} not found");
+        }
+
+        if (session.Status != SessionStatus.Running)
+        {
+            throw new InvalidOperationException($"Cannot pause session in status {session.Status}");
+        }
+
+        await session.SetStatus(SessionStatus.Paused, "Session paused");
+    }
+
+    public async Task ResumeSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+        {
+            throw new InvalidOperationException($"Session {sessionId} not found");
+        }
+
+        if (session.Status != SessionStatus.Paused)
+        {
+            throw new InvalidOperationException($"Cannot resume session in status {session.Status}");
+        }
+
+        await session.SetStatus(SessionStatus.Running, "Session resumed");
+    }
+
+    public async Task AbortSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+        {
+            throw new InvalidOperationException($"Session {sessionId} not found");
+        }
+
+        if (session.Status == SessionStatus.Completed || session.Status == SessionStatus.Error)
+        {
+            throw new InvalidOperationException($"Session {sessionId} is already in terminal state");
+        }
+
+        await session.SetStatus(SessionStatus.Error, "Session aborted");
+    }
+
+    public Task ApproveSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+        {
+            throw new InvalidOperationException($"Session {sessionId} not found");
+        }
+
+        session.SetApproved(true);
+        return Task.CompletedTask;
+    }
+
     public IAsyncEnumerable<IEvent> Subscribe(Guid sessionId)
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
@@ -109,6 +212,4 @@ public class SessionManager : ISessionManager
 
         return session.GetEvents();
     }
-
-
 }

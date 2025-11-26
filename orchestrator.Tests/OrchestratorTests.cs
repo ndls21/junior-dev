@@ -21,7 +21,8 @@ public class OrchestratorTests
         var policyEnforcer = new StubPolicyEnforcer();
         var rateLimiter = new StubRateLimiter();
         var workspaceProvider = new StubWorkspaceProvider();
-        _sessionManager = new SessionManager(adapters, policyEnforcer, rateLimiter, workspaceProvider);
+        var artifactStore = new StubArtifactStore();
+        _sessionManager = new SessionManager(adapters, policyEnforcer, rateLimiter, workspaceProvider, artifactStore);
     }
 
     [Fact]
@@ -322,4 +323,137 @@ public class OrchestratorTests
         Assert.Equal(sessionId1, events1[0].Correlation.SessionId);
         Assert.Equal(sessionId2, events2[0].Correlation.SessionId);
     }
+
+    [Fact]
+    public async Task CommandScenario_PolicyRateFakeAdapter_EventsWork()
+    {
+        // Arrange
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile("test", null, null, new[] { "main" }, null, false, false, null, null),
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+
+        var command = new CreateBranch(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            new RepoRef("test", "/tmp/test"),
+            "feature-branch");
+
+        // Act
+        await _sessionManager.PublishCommand(command);
+
+        // Assert
+        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync(); // Skip status, take accepted + completed
+
+        Assert.Equal(2, events.Count);
+        Assert.IsType<CommandAccepted>(events[0]);
+        Assert.IsType<CommandCompleted>(events[1]);
+        Assert.Equal(CommandOutcome.Success, ((CommandCompleted)events[1]).Outcome);
+    }
+
+    [Fact]
+    public async Task Pause_StopsDispatch_ResumeRestarts_AbortPreventsFurther()
+    {
+        // Arrange
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile("test", null, null, new[] { "main" }, null, false, false, null, null),
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+
+        var command1 = new CreateBranch(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            new RepoRef("test", "/tmp/test"),
+            "branch1");
+
+        var command2 = new CreateBranch(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            new RepoRef("test", "/tmp/test"),
+            "branch2");
+
+        var command3 = new CreateBranch(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            new RepoRef("test", "/tmp/test"),
+            "branch3");
+
+        // Act
+        await _sessionManager.PublishCommand(command1); // Should succeed
+        await _sessionManager.PauseSession(sessionId);
+        await _sessionManager.PublishCommand(command2); // Should be rejected (paused)
+        await _sessionManager.ResumeSession(sessionId);
+        await _sessionManager.PublishCommand(command3); // Should succeed
+        await _sessionManager.AbortSession(sessionId);
+
+        // Assert
+        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(6).ToListAsync(); // Skip initial status, take the 6 events before abort
+
+        // Should have: accepted+completed for cmd1, status paused, rejected for cmd2, status running, accepted+completed for cmd3
+        Assert.Equal(6, events.Count);
+        Assert.IsType<CommandAccepted>(events[0]);
+        Assert.IsType<CommandCompleted>(events[1]);
+        Assert.IsType<SessionStatusChanged>(events[2]);
+        Assert.Equal(SessionStatus.Paused, ((SessionStatusChanged)events[2]).Status);
+        Assert.IsType<CommandRejected>(events[3]);
+        Assert.IsType<SessionStatusChanged>(events[4]);
+        Assert.Equal(SessionStatus.Running, ((SessionStatusChanged)events[4]).Status);
+        Assert.IsType<CommandAccepted>(events[5]);
+        // Note: completed for cmd3 and abort status not included in Take(6)
+    }
+
+    /*
+    [Fact]
+    public async Task Approvals_BlockUntilApproved()
+    {
+        // Arrange
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile("test", null, null, new[] { "main" }, null, false, true, null, null), // Require approval for push
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+
+        var command = new Push(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            new RepoRef("test", "/tmp/test"),
+            "main");
+
+        // Act
+        await _sessionManager.PublishCommand(command); // Should be rejected (not approved)
+        await _sessionManager.ApproveSession(sessionId);
+        await _sessionManager.PublishCommand(command); // Should succeed
+
+        // Assert
+        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(10).ToListAsync(); // Skip initial status
+
+        Assert.True(events.Count >= 3); // At least rejected, accepted, completed
+        Assert.IsType<CommandRejected>(events[0]); // First push rejected
+        Assert.IsType<CommandAccepted>(events[1]); // Second push accepted
+        Assert.IsType<CommandCompleted>(events[2]); // Second push completed
+    }
+    */
 }

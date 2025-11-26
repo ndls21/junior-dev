@@ -12,6 +12,8 @@ public class SessionState
 
     public SessionConfig Config { get; }
     public string WorkspacePath { get; }
+    public SessionStatus Status { get; private set; } = SessionStatus.Running;
+    public bool IsApproved { get; private set; }
 
     public SessionState(SessionConfig config, string workspacePath)
     {
@@ -33,5 +35,22 @@ public class SessionState
     public void Complete()
     {
         _eventChannel.Writer.Complete();
+    }
+
+    public async Task SetStatus(SessionStatus newStatus, string? reason = null)
+    {
+        Status = newStatus;
+        var statusEvent = new SessionStatusChanged(
+            Guid.NewGuid(),
+            new Correlation(Config.SessionId),
+            newStatus,
+            reason);
+
+        await AddEvent(statusEvent);
+    }
+
+    public void SetApproved(bool approved)
+    {
+        IsApproved = approved;
     }
 }
