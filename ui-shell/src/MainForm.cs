@@ -23,14 +23,25 @@ public partial class MainForm : Form
     private MemoEdit conversationMemo;
     private TreeList artifactsTree;
 
+    private bool isTestMode = false;
+    private System.Windows.Forms.Timer testTimer;
     private MenuStrip mainMenu;
 
     public MainForm()
     {
+        // Check for test mode argument
+        string[] args = Environment.GetCommandLineArgs();
+        isTestMode = args.Contains("--test") || args.Contains("-t");
+
         InitializeComponent();
         SetupMenu();
         SetupUI();
         LoadLayout();
+
+        if (isTestMode)
+        {
+            SetupTestMode();
+        }
     }
 
     private void InitializeComponent()
@@ -58,6 +69,21 @@ public partial class MainForm : Form
         
         viewMenu.DropDownItems.Add(resetLayoutItem);
         mainMenu.Items.Add(viewMenu);
+    }
+
+    private void SetupTestMode()
+    {
+        testTimer = new System.Windows.Forms.Timer();
+        testTimer.Interval = 2000; // 2 seconds
+        testTimer.Tick += (s, e) => 
+        {
+            testTimer.Stop();
+            Application.Exit();
+        };
+        testTimer.Start();
+        
+        // Update title to indicate test mode
+        this.Text = "Junior Dev - TEST MODE (Auto-exit in 2s)";
     }
 
     private void SetupUI()

@@ -11,6 +11,7 @@ Junior Dev is a .NET-based platform for AI-assisted software development, featur
 
 ## Developer Workflows
 - **Build/Test**: Use `dotnet build` on `jDev.sln`, `dotnet test` for unit/integration. Contracts changes require version bump in `ContractVersion.Current` and doc updates.
+- **UI Testing**: For automated UI inspection during development, use `dotnet run -- --test` to run the application in test mode. The UI will display for 2 seconds then automatically exit, allowing inspection of layout and functionality changes without manual intervention.
 - **Debugging**: Event logs are append-only; correlate via `Correlation` IDs. Surface throttling/conflicts in UI.
 - **CI Guard**: Any contract/architecture change must update docs with date/reason (e.g., in `CONTRACTS.md`). Enforce in pre-commit hooks.
 - **Version Control Discipline**: Always `git commit` and `git push` when shifting gears into the next body of work to maintain a clean, shareable state and enable collaboration. Always `git commit` and `git push` when switching between GitHub issues to maintain a clean state and enable collaboration.
@@ -21,7 +22,7 @@ Junior Dev is a .NET-based platform for AI-assisted software development, featur
 ## Copilot Workflow Rules
 - **Claiming Work**: When Copilot (or any automated coding agent) picks up an issue to implement, it MUST open or link to a GitHub issue and add a comment indicating it has started work. The issue number MUST be referenced in any `TODO` comments added to the code (format: `// TODO: ... - Issue: #[number]`).
 - **Branching Guidance**: By default prefer creating a feature branch named `agent/<issue-number>-short-desc` when implementing an issue. Working directly on `master` is allowed only when explicitly approved by the repository owner or maintainer and when the change is small, well-tested, and non-breaking. When working on `master`, include the issue number and rationale in the commit message.
-- **Issue Closure**: DO NOT automatically close GitHub issues. Wait for explicit user confirmation by saying "NEXT!" before closing any issue and moving to the next most significant ticket. When the user says "NEXT!", then close the current issue using `gh issue close <number> --reason completed` and proceed to identify the next priority.
+- **Issue Closure**: DO NOT automatically close GitHub issues. Wait for explicit user confirmation by saying "NEXT!" before closing any issue and moving to the next most significant ticket. When the user says "NEXT!", then close the current issue using `gh issue close <number> --reason completed` and proceed to identify the next priority. Once a ticket is taken up for implementation, do not move on to another ticket until it has been confirmed closed with "NEXT!".
 - **Commit Message Convention**: Include the current stage or codename in the commit message prefix when applicable (e.g., `Envoy – feat: add reviewer agent` or `Dock – fix: vcs adapter`). This helps trace changes to module stages. If a GitHub issue was opened for the work, include the issue number in the commit message (e.g., `Envoy – feat: implement reviewer agent (#3)`).
 
 ## Conventions and Patterns
