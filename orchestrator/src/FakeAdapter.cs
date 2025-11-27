@@ -8,7 +8,7 @@ public abstract class FakeAdapter : IAdapter
 {
     public abstract bool CanHandle(ICommand command);
 
-    public async Task HandleCommand(ICommand command, SessionState session)
+    public virtual async Task HandleCommand(ICommand command, SessionState session)
     {
         // Emit CommandAccepted
         var acceptedEvent = new CommandAccepted(
