@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using JuniorDev.Contracts;
 
@@ -18,6 +19,12 @@ public interface IAgent
     /// Gets the type/name of this agent (e.g., "executor", "planner", "reviewer").
     /// </summary>
     string AgentType { get; }
+
+    /// <summary>
+    /// Gets the event types this agent is interested in receiving.
+    /// Return null or empty collection to receive all events (subject to other filtering).
+    /// </summary>
+    IReadOnlyCollection<string>? EventInterests { get; }
 
     /// <summary>
     /// Starts the agent with the given session context.

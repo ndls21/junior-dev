@@ -103,21 +103,37 @@ public class AgentEventDispatcher
     }
 
     /// <summary>
-    /// Determines if an agent should receive a specific event based on session filtering.
+    /// Determines if an agent should receive a specific event based on advanced filtering.
     /// </summary>
     private bool ShouldAgentReceiveEvent(IAgent agent, IEvent @event, Guid sessionId)
     {
-        // Check if event belongs to the session
+        // 1. Session filtering - event must belong to the session
         if (@event.Correlation.SessionId != sessionId)
         {
             return false;
         }
 
-        // TODO: Add more sophisticated filtering based on:
-        // - Event type subscriptions per agent
-        // - Correlation ID matching for command responses
-        // - Agent-specific event interests
-        // Issue: #7 - Advanced event filtering
+        // 2. Event type filtering - check if agent has declared specific interests
+        if (agent.EventInterests != null && agent.EventInterests.Any())
+        {
+            if (!agent.EventInterests.Contains(@event.Kind))
+            {
+                return false;
+            }
+        }
+
+        // 3. Correlation ID matching for command responses
+        // Agents are interested in events related to commands they issued
+        // This includes CommandCompleted, CommandRejected, and other response events
+        if (@event.Correlation.CommandId.HasValue)
+        {
+            // For now, we let all agents in the session receive command-related events
+            // In the future, we could track which agent issued which command
+            // and only send responses to the originating agent
+        }
+
+        // 4. Agent-specific filtering could be added here in the future
+        // e.g., based on agent type, work item assignments, etc.
 
         return true;
     }

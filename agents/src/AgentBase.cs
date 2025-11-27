@@ -28,6 +28,13 @@ public abstract class AgentBase : IAgent
     public string Id { get; } = Guid.NewGuid().ToString();
     public abstract string AgentType { get; }
 
+    /// <summary>
+    /// Gets the event types this agent is interested in receiving.
+    /// Default implementation returns null (all events).
+    /// Override to specify specific event interests for better filtering.
+    /// </summary>
+    public virtual IReadOnlyCollection<string>? EventInterests => null;
+
     protected AgentBase()
     {
         _meter = new Meter($"JuniorDev.Agents.{AgentType}", "1.0.0");

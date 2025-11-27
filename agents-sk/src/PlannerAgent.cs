@@ -16,6 +16,13 @@ public class PlannerAgent : AgentBase
 
     public override string AgentType => "planner";
 
+    /// <summary>
+    /// Planner agents are primarily interested in events that might trigger plan regeneration.
+    /// Currently, planners generate plans on startup and don't react to events,
+    /// but this could change if we implement dynamic plan updates.
+    /// </summary>
+    public override IReadOnlyCollection<string>? EventInterests => null; // Receive all events for now
+
     public PlannerAgent(Kernel kernel)
     {
         _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));

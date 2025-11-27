@@ -61,6 +61,17 @@ public class ExecutorAgent : AgentBase
 
     public override string AgentType => "executor";
 
+    /// <summary>
+    /// Executor agents are interested in command completion feedback and error handling.
+    /// </summary>
+    public override IReadOnlyCollection<string>? EventInterests => new[]
+    {
+        nameof(CommandCompleted),
+        nameof(CommandRejected),
+        nameof(Throttled),
+        nameof(ConflictDetected)
+    };
+
     public ExecutorAgent(Kernel kernel)
     {
         _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));

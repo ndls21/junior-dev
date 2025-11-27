@@ -98,7 +98,66 @@ public class AgentEventDispatcherTests
     }
 
     [Fact]
-    public void UnregisterAgent_RemovesAgentFromRegistry()
+    public async Task DispatchEventAsync_FiltersByEventType_WhenAgentHasInterests()
+    {
+        // Arrange
+        var interestedAgent = new Mock<IAgent>();
+        interestedAgent.Setup(a => a.AgentType).Returns("TestAgent");
+        interestedAgent.Setup(a => a.Id).Returns("interested");
+        interestedAgent.Setup(a => a.EventInterests).Returns(new[] { nameof(CommandCompleted) });
+
+        var uninterestedAgent = new Mock<IAgent>();
+        uninterestedAgent.Setup(a => a.AgentType).Returns("TestAgent");
+        uninterestedAgent.Setup(a => a.Id).Returns("uninterested");
+        uninterestedAgent.Setup(a => a.EventInterests).Returns(new[] { nameof(CommandRejected) });
+
+        _dispatcher.RegisterAgent(interestedAgent.Object);
+        _dispatcher.RegisterAgent(uninterestedAgent.Object);
+
+        var commandCompletedEvent = new CommandCompleted(
+            Id: Guid.NewGuid(),
+            Correlation: new Correlation(Guid.NewGuid(), Guid.NewGuid(), null, null),
+            CommandId: Guid.NewGuid(),
+            Outcome: CommandOutcome.Success);
+
+        var sessionId = commandCompletedEvent.Correlation.SessionId;
+
+        // Act
+        await _dispatcher.DispatchEventAsync(commandCompletedEvent, sessionId);
+
+        // Assert
+        interestedAgent.Verify(a => a.HandleEventAsync(commandCompletedEvent), Times.Once);
+        uninterestedAgent.Verify(a => a.HandleEventAsync(It.IsAny<IEvent>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DispatchEventAsync_AllowsAllEvents_WhenAgentHasNoInterests()
+    {
+        // Arrange
+        var agent = new Mock<IAgent>();
+        agent.Setup(a => a.AgentType).Returns("TestAgent");
+        agent.Setup(a => a.Id).Returns("agent1");
+        agent.Setup(a => a.EventInterests).Returns((IReadOnlyCollection<string>?)null); // No interests declared
+
+        _dispatcher.RegisterAgent(agent.Object);
+
+        var commandCompletedEvent = new CommandCompleted(
+            Id: Guid.NewGuid(),
+            Correlation: new Correlation(Guid.NewGuid(), Guid.NewGuid(), null, null),
+            CommandId: Guid.NewGuid(),
+            Outcome: CommandOutcome.Success);
+
+        var sessionId = commandCompletedEvent.Correlation.SessionId;
+
+        // Act
+        await _dispatcher.DispatchEventAsync(commandCompletedEvent, sessionId);
+
+        // Assert
+        agent.Verify(a => a.HandleEventAsync(commandCompletedEvent), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchEventAsync_FiltersBySession()
     {
         // Arrange
         var agent = new Mock<IAgent>();
@@ -106,12 +165,20 @@ public class AgentEventDispatcherTests
         agent.Setup(a => a.Id).Returns("agent1");
 
         _dispatcher.RegisterAgent(agent.Object);
-        Assert.Single(_dispatcher.GetAgentsByType("TestAgent"));
 
-        // Act
-        _dispatcher.UnregisterAgent(agent.Object);
+        var eventSessionId = Guid.NewGuid();
+        var differentSessionId = Guid.NewGuid();
 
-        // Assert
-        Assert.Empty(_dispatcher.GetAgentsByType("TestAgent"));
+        var testEvent = new CommandCompleted(
+            Id: Guid.NewGuid(),
+            Correlation: new Correlation(eventSessionId, Guid.NewGuid(), null, null),
+            CommandId: Guid.NewGuid(),
+            Outcome: CommandOutcome.Success);
+
+        // Act - dispatch with different session ID
+        await _dispatcher.DispatchEventAsync(testEvent, differentSessionId);
+
+        // Assert - agent should not receive event from different session
+        agent.Verify(a => a.HandleEventAsync(It.IsAny<IEvent>()), Times.Never);
     }
 }

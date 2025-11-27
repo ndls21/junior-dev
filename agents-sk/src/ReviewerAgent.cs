@@ -28,6 +28,16 @@ public class ReviewerAgent : AgentBase
 
     public override string AgentType => "reviewer";
 
+    /// <summary>
+    /// Reviewer agents are interested in artifacts to review and command feedback.
+    /// </summary>
+    public override IReadOnlyCollection<string>? EventInterests => new[]
+    {
+        nameof(ArtifactAvailable),
+        nameof(CommandRejected),
+        nameof(Throttled)
+    };
+
     public ReviewerAgent(Kernel kernel)
     {
         _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));
