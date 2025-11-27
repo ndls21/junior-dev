@@ -163,6 +163,25 @@ public abstract class AgentBase : IAgent
     }
 
     /// <summary>
+    /// Publishes an event to the orchestrator.
+    /// </summary>
+    protected async Task PublishEventAsync(IEvent @event)
+    {
+        if (Context == null)
+        {
+            throw new InvalidOperationException("Agent not started");
+        }
+
+        if (Config.EnableDetailedLogging)
+        {
+            Logger.LogInformation("Emitting event {EventType} ({EventId})", @event.Kind, @event.Id);
+        }
+
+        // Assuming SessionManager has PublishEvent method
+        await SessionManager.PublishEvent(@event);
+    }
+
+    /// <summary>
     /// Called when the agent starts. Override to perform initialization.
     /// </summary>
     protected virtual Task OnStartedAsync() => Task.CompletedTask;

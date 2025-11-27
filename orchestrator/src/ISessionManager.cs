@@ -9,6 +9,7 @@ public interface ISessionManager
 {
     Task CreateSession(SessionConfig config);
     Task PublishCommand(ICommand command);
+    Task PublishEvent(IEvent @event);
     IAsyncEnumerable<IEvent> Subscribe(Guid sessionId);
     Task PauseSession(Guid sessionId);
     Task ResumeSession(Guid sessionId);

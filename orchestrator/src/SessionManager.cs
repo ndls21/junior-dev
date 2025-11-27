@@ -54,6 +54,16 @@ public class SessionManager : ISessionManager
         await ProcessCommand(command, bypassApproval: false);
     }
 
+    public async Task PublishEvent(IEvent @event)
+    {
+        if (!_sessions.TryGetValue(@event.Correlation.SessionId, out var session))
+        {
+            throw new InvalidOperationException($"Session {@event.Correlation.SessionId} not found");
+        }
+
+        await session.AddEvent(@event);
+    }
+
     private async Task ProcessCommand(ICommand command, bool bypassApproval)
     {
         if (!_sessions.TryGetValue(command.Correlation.SessionId, out var session))
