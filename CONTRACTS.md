@@ -1,4 +1,4 @@
-# Contracts (v1 draft)
+# Contracts (v1.1)
 
 Versioning rule: bump contract version when changing shapes; update docs with date/reason. Contracts changes must ship with serialization tests and CI checks.
 
@@ -70,3 +70,6 @@ Contracts are serialized using System.Text.Json with the following options:
 
 ## Documentation Discipline
 - Any contract/schema change must update this file (with date/rationale) and ARCHITECTURE.md; add/adjust serialization tests; CI should enforce the rule.
+
+## Change Log
+- **2025-11-28**: Added QueryBacklog/QueryWorkItem commands and BacklogQueried/WorkItemQueried events to support work item queries via unified IAdapter model. Bumped version to v1.1. Removed legacy IVcsAdapter interface placeholder.

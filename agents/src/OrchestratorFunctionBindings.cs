@@ -44,14 +44,33 @@ public class OrchestratorFunctionBindings
             throw new ArgumentNullException(nameof(kernel));
         }
 
-        // VCS operations
-        kernel.Plugins.AddFromObject(this, "vcs");
+        // Register plugins, ignoring if already registered
+        try
+        {
+            kernel.Plugins.AddFromObject(this, "vcs");
+        }
+        catch (ArgumentException ex) when (ex.Message.Contains("An item with the same key has already been added"))
+        {
+            // Plugin already registered, ignore
+        }
 
-        // Work item operations
-        kernel.Plugins.AddFromObject(this, "workitems");
+        try
+        {
+            kernel.Plugins.AddFromObject(this, "workitems");
+        }
+        catch (ArgumentException ex) when (ex.Message.Contains("An item with the same key has already been added"))
+        {
+            // Plugin already registered, ignore
+        }
 
-        // General operations
-        kernel.Plugins.AddFromObject(this, "general");
+        try
+        {
+            kernel.Plugins.AddFromObject(this, "general");
+        }
+        catch (ArgumentException ex) when (ex.Message.Contains("An item with the same key has already been added"))
+        {
+            // Plugin already registered, ignore
+        }
     }
 
     #region VCS Functions
@@ -184,40 +203,36 @@ public class OrchestratorFunctionBindings
     #region Work Item Functions
 
     [KernelFunction("list_backlog")]
-    [Description("Lists work items in the backlog. Note: This is a placeholder implementation.")]
-    public async Task<string> ListBacklogAsync()
+    [Description("Lists work items in the backlog.")]
+    public async Task<string> ListBacklogAsync(
+        [Description("Optional filter for work items")] string? filter = null)
     {
-        // TODO: Implement query command pattern for work item queries
-        // This requires:
-        // 1. Add QueryBacklog command to Contracts.cs (with filters, pagination, etc.)
-        // 2. Add BacklogQueried event to Contracts.cs (with work item list)
-        // 3. Implement query handling in orchestrator (route to appropriate work item adapter)
-        // 4. Update work item adapters to handle query commands
-        // 5. Implement async result waiting pattern (commands are fire-and-forget, queries need responses)
-        // 6. Consider query result caching and invalidation strategy
-        // 7. Add proper error handling for query failures
-        // Issue: #7 - Implement work item query commands
-        _context.Logger.Log(LogLevel.Warning, "list_backlog function is not yet implemented - requires QueryBacklog command and query result pattern");
-        return "Backlog listing not yet implemented. Requires implementing query command pattern in contracts and orchestrator. See issue #7.";
+        var command = new QueryBacklog(
+            Guid.NewGuid(),
+            _context.CreateCorrelation(),
+            filter);
+
+        return await ExecuteOrDryRunAsync(
+            command,
+            "Backlog query initiated - results will be emitted as BacklogQueried event",
+            $"[DRY RUN] Would query backlog{(string.IsNullOrEmpty(filter) ? "" : $" with filter '{filter}'")}");
     }
 
     [KernelFunction("get_item")]
-    [Description("Gets details of a specific work item. Note: This is a placeholder implementation.")]
+    [Description("Gets details of a specific work item.")]
     public async Task<string> GetItemAsync(
         [Description("The work item ID")] string itemId)
     {
-        // TODO: Implement query command pattern for work item details
-        // This requires:
-        // 1. Add QueryWorkItem command to Contracts.cs (with work item ID)
-        // 2. Add WorkItemQueried event to Contracts.cs (with full work item details)
-        // 3. Implement query handling in orchestrator (route to appropriate work item adapter)
-        // 4. Update work item adapters to handle query commands and return detailed data
-        // 5. Implement async result waiting pattern for query responses
-        // 6. Add work item detail caching strategy
-        // 7. Handle work item not found scenarios
-        // Issue: #7 - Implement work item query commands
-        _context.Logger.Log(LogLevel.Warning, "get_item function for {ItemId} is not yet implemented - requires QueryWorkItem command and query result pattern", itemId);
-        return $"Work item {itemId} details not yet implemented. Requires implementing query command pattern in contracts and orchestrator. See issue #7.";
+        var workItem = new WorkItemRef(itemId);
+        var command = new QueryWorkItem(
+            Guid.NewGuid(),
+            _context.CreateCorrelation(),
+            workItem);
+
+        return await ExecuteOrDryRunAsync(
+            command,
+            $"Work item {itemId} query initiated - results will be emitted as WorkItemQueried event",
+            $"[DRY RUN] Would query work item '{itemId}'");
     }
 
     [KernelFunction("claim_item")]
@@ -323,4 +338,5 @@ public class OrchestratorFunctionBindings
     }
 
     #endregion
+
 }

@@ -102,16 +102,15 @@ Contracts
 Orchestrator interfaces
   ISessionManager (CreateSession, PublishCommand, Subscribe)
   IPolicyEnforcer, IRateLimiter, IWorkspaceProvider, IArtifactStore
-  Adapters: IWorkItemService, IVcsService
+  IAdapter (unified interface for work items, VCS, and other capabilities)
 ```
 
 ## Repo Layout (proposed)
 ```
 /contracts                (shared DTOs, tests)
-/orchestrator             (core session manager, policy/rate, workspace, event log)
-/adapters/common          (shared adapter interfaces and extensions)
-/adapters/workitems-jira  (Jira impl + fake) ✅ Dev J complete
-/adapters/vcs-git         (git CLI impl + fake)
+/orchestrator             (core session manager, policy/rate, workspace, event log, adapters)
+/workitems-jira           (Jira impl + fake) ✅ Dev J complete
+/vcs-git                  (git CLI impl + fake)
 /agents/sk-host           (Semantic Kernel agents)
 /ui-shell                 (DevExpress UI)
 /docs                     (architecture, plans, setup, prompts)
@@ -131,4 +130,4 @@ global.json, Directory.Packages.props, .editorconfig, .gitignore
   - Be enforced in code review/CI.
 - Governance note (2025-11-26): contract/architecture deviations without synchronized doc/timestamp updates are considered violations; CI should block such changes.
 - Update (2025-11-26): Dev J workitems-jira adapter implemented with fake in-memory and real REST client implementations, comprehensive unit tests added. Interface moved to adapters/common for shared access.
-- Update (2025-11-28): Added QueryBacklog/QueryWorkItem commands and BacklogQueried/WorkItemQueried events to support work item queries for SK functions (list_backlog/get_item). Implemented fake query handling in orchestrator for testing; real adapter queries to be added later.
+- Update (2025-11-28): Added QueryBacklog/QueryWorkItem commands and BacklogQueried/WorkItemQueried events to support work item queries for SK functions (list_backlog/get_item). Implemented fake query handling in orchestrator for testing; real adapter queries to be added later. Updated architecture to use unified IAdapter model instead of separate service interfaces.

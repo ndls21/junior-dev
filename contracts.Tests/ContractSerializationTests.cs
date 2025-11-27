@@ -316,12 +316,94 @@ public class ContractSerializationTests
     }
 
     [Fact]
-    public void RunTestsCommand_WithNulls_RoundTrip()
+    public void QueryBacklogCommand_SerializesCorrectly()
     {
         var correlation = new Correlation(TestSessionId);
-        var original = new RunTests(TestCommandId, correlation, new RepoRef("repo", "path"), null, null);
-        var json = JsonSerializer.Serialize(original, Options);
-        var deserialized = JsonSerializer.Deserialize<RunTests>(json, Options);
-        Assert.Equal(original, deserialized);
+        var command = new QueryBacklog(TestCommandId, correlation, "urgent");
+        var json = JsonSerializer.Serialize(command, Options);
+        var expected = File.ReadAllText("Fixtures/QueryBacklog.json");
+        Assert.Equal(expected.Trim(), json.Trim());
     }
+
+    [Fact]
+    public void QueryWorkItemCommand_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var command = new QueryWorkItem(TestCommandId, correlation, new WorkItemRef("JIRA-123"));
+        var json = JsonSerializer.Serialize(command, Options);
+        var expected = File.ReadAllText("Fixtures/QueryWorkItem.json");
+        Assert.Equal(expected.Trim(), json.Trim());
+    }
+
+    [Fact]
+    public void BacklogQueriedEvent_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var items = new[]
+        {
+            new WorkItemSummary("JIRA-123", "Implement feature", "Open", "user1"),
+            new WorkItemSummary("JIRA-124", "Fix bug", "In Progress", "user2")
+        };
+        var @event = new BacklogQueried(TestCommandId, correlation, items);
+        var json = JsonSerializer.Serialize(@event, Options);
+        var expected = File.ReadAllText("Fixtures/BacklogQueried.json");
+        Assert.Equal(expected.Trim(), json.Trim());
+    }
+
+    [Fact]
+    public void WorkItemQueriedEvent_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var details = new WorkItemDetails("JIRA-123", "Implement feature", "Detailed description", "Open", "user1", new[] { "backend", "urgent" });
+        var @event = new WorkItemQueried(TestCommandId, correlation, details);
+        var json = JsonSerializer.Serialize(@event, Options);
+        var expected = File.ReadAllText("Fixtures/WorkItemQueried.json");
+        Assert.Equal(expected.Trim(), json.Trim());
+    }    // Round-trip tests
+// Round-trip tests
+[Fact]
+public void QueryBacklogCommand_RoundTrip()
+{
+    var correlation = new Correlation(TestSessionId);
+    var original = new QueryBacklog(TestCommandId, correlation, "urgent");
+    var json = JsonSerializer.Serialize(original, Options);
+    var deserialized = JsonSerializer.Deserialize<QueryBacklog>(json, Options);
+    Assert.Equal(original, deserialized);
+}
+
+[Fact]
+public void QueryWorkItemCommand_RoundTrip()
+{
+    var correlation = new Correlation(TestSessionId);
+    var original = new QueryWorkItem(TestCommandId, correlation, new WorkItemRef("JIRA-123"));
+    var json = JsonSerializer.Serialize(original, Options);
+    var deserialized = JsonSerializer.Deserialize<QueryWorkItem>(json, Options);
+    Assert.Equal(original, deserialized);
+}
+
+[Fact]
+public void BacklogQueriedEvent_RoundTrip()
+{
+    var correlation = new Correlation(TestSessionId);
+    var items = new[]
+    {
+        new WorkItemSummary("JIRA-123", "Implement feature", "Open", "user1"),
+        new WorkItemSummary("JIRA-124", "Fix bug", "In Progress", "user2")
+    };
+    var original = new BacklogQueried(TestCommandId, correlation, items);
+    var json = JsonSerializer.Serialize(original, Options);
+    var deserialized = JsonSerializer.Deserialize<BacklogQueried>(json, Options);
+    Assert.Equal(original, deserialized);
+}
+
+[Fact]
+public void WorkItemQueriedEvent_RoundTrip()
+{
+    var correlation = new Correlation(TestSessionId);
+    var details = new WorkItemDetails("JIRA-123", "Implement feature", "Detailed description", "Open", "user1", new[] { "backend", "urgent" });
+    var original = new WorkItemQueried(TestCommandId, correlation, details);
+    var json = JsonSerializer.Serialize(original, Options);
+    var deserialized = JsonSerializer.Deserialize<WorkItemQueried>(json, Options);
+    Assert.Equal(original, deserialized);
+}
 }

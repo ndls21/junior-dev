@@ -5,7 +5,7 @@ namespace JuniorDev.Contracts;
 
 public static class ContractVersion
 {
-    public const string Current = "v1";
+    public const string Current = "v1.1";
 }
 
 public sealed record WorkItemRef(string Id, string? ProviderHint = null);
@@ -158,8 +158,3 @@ public sealed record SessionConfig(
     WorkspaceRef Workspace,
     WorkItemRef? WorkItem,
     string AgentProfile);
-
-public interface IVcsAdapter
-{
-    // Methods for VCS operations
-}
