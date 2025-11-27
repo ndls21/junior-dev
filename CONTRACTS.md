@@ -73,3 +73,4 @@ Contracts are serialized using System.Text.Json with the following options:
 
 ## Change Log
 - **2025-11-28**: Added QueryBacklog/QueryWorkItem commands and BacklogQueried/WorkItemQueried events to support work item queries via unified IAdapter model. Bumped version to v1.1. Removed legacy IVcsAdapter interface placeholder.
+- **2025-11-28**: Implemented SK function bindings for list_backlog/get_item in OrchestratorFunctionBindings, completing end-to-end work item query functionality.
