@@ -33,6 +33,8 @@ public partial class MainForm : Form
         string[] args = Environment.GetCommandLineArgs();
         isTestMode = args.Contains("--test") || args.Contains("-t");
 
+        Console.WriteLine($"Junior Dev starting... Test mode: {isTestMode}");
+
         InitializeComponent();
         SetupMenu();
         SetupUI();
@@ -41,6 +43,10 @@ public partial class MainForm : Form
         if (isTestMode)
         {
             SetupTestMode();
+        }
+        else
+        {
+            Console.WriteLine("UI initialized successfully. Close window to exit.");
         }
     }
 
@@ -84,6 +90,17 @@ public partial class MainForm : Form
         
         // Update title to indicate test mode
         this.Text = "Junior Dev - TEST MODE (Auto-exit in 2s)";
+        
+        // Log UI state for inspection
+        Console.WriteLine("=== UI TEST MODE INSPECTION ===");
+        Console.WriteLine($"Window Size: {this.Size.Width}x{this.Size.Height}");
+        Console.WriteLine($"Sessions Panel: Visible={sessionsPanel.Visible}, Width={sessionsPanel.Width}");
+        Console.WriteLine($"Conversation Panel: Visible={conversationPanel.Visible}");
+        Console.WriteLine($"Artifacts Panel: Visible={artifactsPanel.Visible}, Width={artifactsPanel.Width}");
+        Console.WriteLine($"Sessions in list: {sessionsListBox.Items.Count}");
+        Console.WriteLine("Mock data loaded successfully");
+        Console.WriteLine("Auto-exit in 2 seconds...");
+        Console.WriteLine("===============================");
     }
 
     private void SetupUI()

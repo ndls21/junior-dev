@@ -23,6 +23,24 @@ A .NET-based platform for AI-assisted software development.
 - `docs/`: Documentation.
 - `.github/`: CI workflows and instructions.
 
+## UI Development
+
+The UI shell (`ui-shell/`) provides a DevExpress-based Windows Forms application for managing AI-assisted development sessions.
+
+### Testing UI Changes
+
+- **Normal mode**: `dotnet run` (from `ui-shell/` directory) - runs the full application
+- **Test mode**: `dotnet run -- --test` - displays UI for 2 seconds then auto-exits for automated testing
+- **Layout**: UI uses dockable panels (sessions left, conversation center, artifacts right)
+- **Persistence**: Layout is saved to `%APPDATA%\JuniorDev\layout.xml`
+
+### UI Architecture
+
+- DevExpress WinForms 24.2.9 for dockable panels and controls
+- Three-panel layout: Sessions (left), Conversation (center), Artifacts (right)
+- Session filtering with status chips (All/Running/Paused/Error)
+- Layout persistence with reset functionality (View → Reset Layout or Ctrl+R)
+
 ## Tooling
 
 - .NET 8 SDK

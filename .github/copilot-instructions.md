@@ -37,8 +37,11 @@ Junior Dev is a .NET-based platform for AI-assisted software development, featur
 - **Communication**: Event-driven; artifacts carry diffs/patches/logs. Rate limits via `Throttled` events with backoff.
 - **UI Layout**: Columnar dockable: sessions left, conversation center, artifacts right. Persist layout.
 
-## Key Files
-- `contracts/src/Contracts/Contracts.cs`: Core DTOs/commands/events.
-- `ARCHITECTURE.md`: Principles, modules, protocols.
-- `CONTRACTS.md`: Schema details, versioning rules.
-- `docs/module-plan.md`: MVP deliverables per module.
+## UI Development Guidelines
+
+- **Testing UI Changes**: Always test UI changes using `dotnet run -- --test` to verify layout and functionality without manual intervention. Describe what you observe (panel positions, control states, any visual issues).
+- **Layout Verification**: When implementing UI features, verify dockable panels work correctly, layout persists between runs, and reset functionality restores defaults.
+- **Error Reporting**: When UI issues occur, provide specific details: which panel/control is affected, what behavior was expected vs observed, any error messages, and current layout state.
+- **Mock Data**: Use descriptive mock data that clearly indicates functionality (e.g., "🔄 Session 1 - Running" instead of generic placeholders).
+- **Accessibility**: Ensure UI elements have clear labels, keyboard shortcuts where appropriate, and logical tab order.
+- **Performance**: UI should load within 2-3 seconds; test mode helps verify startup performance.
