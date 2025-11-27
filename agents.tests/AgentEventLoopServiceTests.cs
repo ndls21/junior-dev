@@ -81,6 +81,7 @@ public class AgentEventLoopServiceTests
     }
 
     [Fact]
+#pragma warning disable CS1998 // Async test method - await is used for timing control
     public async Task ExecuteAsync_ProcessesSessionEvents()
     {
         // Arrange
@@ -118,8 +119,10 @@ public class AgentEventLoopServiceTests
         // Assert
         agentMock.Verify(a => a.HandleEventAsync(testEvent), Times.Once);
     }
+#pragma warning restore CS1998
 
     [Fact]
+#pragma warning disable CS1998 // Async test method - await is used for timing control
     public async Task ExecuteAsync_HandlesAgentExceptions()
     {
         // Arrange
@@ -155,4 +158,5 @@ public class AgentEventLoopServiceTests
         await Task.Delay(50);
         await _eventLoopService.StopAsync(CancellationToken.None);
     }
+#pragma warning restore CS1998
 }

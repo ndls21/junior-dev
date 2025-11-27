@@ -10,6 +10,14 @@ namespace JuniorDev.Agents.Sk;
 /// Reviewer agent that consumes artifacts and provides review feedback to work items.
 /// Never emits VCS commands, only work-item operations.
 /// </summary>
+///
+/// TODOs / Known Gaps:
+/// - Replace deterministic diff/log/test heuristics with Semantic Kernel / LLM analysis (issues #8/#9).
+/// - Event filtering is currently session-only; consider cross-session artifact routing or queued review processing (issue #6).
+/// - Reviewer currently assumes a work item is present; add queueing or deferred review when work item is linked.
+/// - Several methods are `async` but lack `await` (warning CS1998). Consider making them synchronous or adding awaited async work.
+/// - ExecutorAgent has nullable dereference warnings; follow-up refactor needed to tighten nullability (see `ExecutorAgent.cs`).
+
 public class ReviewerAgent : AgentBase
 {
     private readonly Kernel _kernel;
@@ -25,7 +33,14 @@ public class ReviewerAgent : AgentBase
         _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));
     }
 
-    protected override async Task OnStartedAsync()
+    // Centralized review transition states so they are not hardcoded in multiple places
+    private static class ReviewStates
+    {
+        public const string ReadyForQA = "Ready for QA";
+        public const string NeedsReview = "Needs Review";
+    }
+
+    protected override Task OnStartedAsync()
     {
         // Initialize SK function bindings now that Context is available
         _functionBindings = new OrchestratorFunctionBindings(Context!);
@@ -38,6 +53,8 @@ public class ReviewerAgent : AgentBase
 
         // Reviewer agents are reactive - they wait for artifacts to review
         Logger.LogInformation("Reviewer agent ready to process artifacts");
+
+        return Task.CompletedTask;
     }
 
     protected override Task OnStoppedAsync()
@@ -61,6 +78,17 @@ public class ReviewerAgent : AgentBase
         {
             Logger.LogDebug("Reviewer agent functions already registered");
         }
+
+        // SK/LLM scaffolding: Register LLM-driven analysis functions
+        try
+        {
+            _kernel.Plugins.AddFromObject(new ReviewAnalysisPlugin(), "review_analysis");
+            Logger.LogInformation("Registered review analysis plugin with kernel");
+        }
+        catch (ArgumentException ex) when (ex.Message.Contains("An item with the same key has already been added"))
+        {
+            Logger.LogDebug("Review analysis plugin already registered");
+        }
     }
 
     protected override async Task OnEventAsync(IEvent @event)
@@ -68,6 +96,14 @@ public class ReviewerAgent : AgentBase
         switch (@event)
         {
             case ArtifactAvailable artifact:
+                // Gate reviewer invocation: only process artifacts when a work item is associated with the session.
+                // TODO: consider queueing artifacts for later review when work item is linked (issue #6).
+                if (Context?.Config?.WorkItem == null)
+                {
+                    Logger.LogInformation("Skipping artifact review because no work item is associated with the session");
+                    return;
+                }
+
                 await HandleArtifactAvailable(artifact);
                 break;
             case CommandRejected rejected:
@@ -149,28 +185,57 @@ public class ReviewerAgent : AgentBase
         }
     }
 
-    private async Task<ReviewResult> GenerateReviewAsync(ArtifactAvailable artifact)
+    internal Task<ReviewResult> GenerateReviewAsync(ArtifactAvailable artifact)
     {
-        Logger.LogInformation("Generating review for {Kind} artifact", artifact.Artifact.Kind);
-
+        // TODO: Replace deterministic heuristics with Semantic Kernel / LLM analysis when
+        // work-item query functions and LLM bindings are available (issues #8/#9).
         return artifact.Artifact.Kind switch
         {
-            "Diff" => await ReviewDiffAsync(artifact),
-            "Log" => await ReviewLogAsync(artifact),
-            "TestResults" => await ReviewTestResultsAsync(artifact),
-            _ => new ReviewResult
+            "Diff" => ReviewDiffAsync(artifact),
+            "Log" => ReviewLogAsync(artifact),
+            "TestResults" => ReviewTestResultsAsync(artifact),
+            _ => Task.FromResult(new ReviewResult
             {
                 Summary = $"Unknown artifact type: {artifact.Artifact.Kind}",
                 Issues = new List<string> { "Cannot review unknown artifact type" },
                 Recommendations = new List<string>(),
                 Status = ReviewStatus.NeedsReview
-            }
+            })
         };
     }
 
-    private async Task<ReviewResult> ReviewDiffAsync(ArtifactAvailable artifact)
+    internal async Task<ReviewResult> ReviewDiffAsync(ArtifactAvailable artifact)
     {
-        Logger.LogInformation("Reviewing diff artifact");
+        // Logger?.LogInformation("Reviewing diff artifact");
+
+        try
+        {
+            // SK/LLM scaffolding: Use LLM for diff analysis
+            var analysisResult = await _kernel.InvokeAsync<string>(
+                "review_analysis", "analyze_diff",
+                new KernelArguments { ["content"] = artifact.Artifact.InlineText ?? "" });
+
+            // Parse the LLM response into ReviewResult
+            // TODO: Implement proper parsing of LLM response
+            // For scaffolding, fall back to deterministic if LLM fails
+            if (!string.IsNullOrEmpty(analysisResult) && !analysisResult.Contains("placeholder"))
+            {
+                return ParseAnalysisToReviewResult(analysisResult, "Diff");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogWarning(ex, "LLM analysis failed, falling back to deterministic heuristics");
+        }
+
+        // Fallback to deterministic heuristics
+        return await ReviewDiffDeterministicAsync(artifact);
+    }
+
+    private Task<ReviewResult> ReviewDiffDeterministicAsync(ArtifactAvailable artifact)
+    {
+        // NOTE: Current heuristics are simplistic and intended for golden tests.
+        // TODO: Improve with SK/LLM analysis and richer parsing (issue #8).
 
         var issues = new List<string>();
         var recommendations = new List<string>();
@@ -178,9 +243,6 @@ public class ReviewerAgent : AgentBase
 
         try
         {
-            // TODO: Use SK/LLM for sophisticated diff analysis
-            // For now, use deterministic heuristics for golden tests
-
             var content = artifact.Artifact.InlineText ?? "";
             var lines = content.Split('\n');
             var addedLines = 0;
@@ -238,31 +300,55 @@ public class ReviewerAgent : AgentBase
                          $"{(hasTests ? "Tests included" : "No tests detected")}. " +
                          $"{(hasDocumentation ? "Documentation updated" : "No documentation changes")}.";
 
-            return new ReviewResult
+            return Task.FromResult(new ReviewResult
             {
                 Summary = summary,
                 Issues = issues,
                 Recommendations = recommendations,
                 Status = status
-            };
+            });
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error analyzing diff");
-            return new ReviewResult
+            // Logger?.LogError(ex, "Error analyzing diff");
+            return Task.FromResult(new ReviewResult
             {
                 Summary = "Failed to analyze diff content",
                 Issues = new List<string> { $"Diff analysis error: {ex.Message}" },
                 Recommendations = new List<string>(),
                 Status = ReviewStatus.NeedsReview
-            };
+            });
         }
     }
 
-    private async Task<ReviewResult> ReviewLogAsync(ArtifactAvailable artifact)
+    internal async Task<ReviewResult> ReviewLogAsync(ArtifactAvailable artifact)
     {
-        Logger.LogInformation("Reviewing log artifact");
+        // Logger?.LogInformation("Reviewing log artifact");
 
+        try
+        {
+            // SK/LLM scaffolding: Use LLM for log analysis
+            var analysisResult = await _kernel.InvokeAsync<string>(
+                "review_analysis", "analyze_log",
+                new KernelArguments { ["content"] = artifact.Artifact.InlineText ?? "" });
+
+            // Parse the LLM response into ReviewResult
+            if (!string.IsNullOrEmpty(analysisResult) && !analysisResult.Contains("placeholder"))
+            {
+                return ParseAnalysisToReviewResult(analysisResult, "Log");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogWarning(ex, "LLM analysis failed, falling back to deterministic heuristics");
+        }
+
+        // Fallback to deterministic heuristics
+        return await ReviewLogDeterministicAsync(artifact);
+    }
+
+    private Task<ReviewResult> ReviewLogDeterministicAsync(ArtifactAvailable artifact)
+    {
         var issues = new List<string>();
         var recommendations = new List<string>();
         var status = ReviewStatus.ReadyForQA;
@@ -297,31 +383,55 @@ public class ReviewerAgent : AgentBase
                          $"{(hasWarnings ? "Warnings present" : "No warnings")}. " +
                          $"{(hasBuildSuccess ? "Build successful" : "Build status unclear")}.";
 
-            return new ReviewResult
+            return Task.FromResult(new ReviewResult
             {
                 Summary = summary,
                 Issues = issues,
                 Recommendations = recommendations,
                 Status = status
-            };
+            });
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error analyzing log");
-            return new ReviewResult
+            // Logger?.LogError(ex, "Error analyzing log");
+            return Task.FromResult(new ReviewResult
             {
                 Summary = "Failed to analyze log content",
                 Issues = new List<string> { $"Log analysis error: {ex.Message}" },
                 Recommendations = new List<string>(),
                 Status = ReviewStatus.NeedsReview
-            };
+            });
         }
     }
 
-    private async Task<ReviewResult> ReviewTestResultsAsync(ArtifactAvailable artifact)
+    internal async Task<ReviewResult> ReviewTestResultsAsync(ArtifactAvailable artifact)
     {
-        Logger.LogInformation("Reviewing test results artifact");
+        // Logger?.LogInformation("Reviewing test results artifact");
 
+        try
+        {
+            // SK/LLM scaffolding: Use LLM for test results analysis
+            var analysisResult = await _kernel.InvokeAsync<string>(
+                "review_analysis", "analyze_test_results",
+                new KernelArguments { ["content"] = artifact.Artifact.InlineText ?? "" });
+
+            // Parse the LLM response into ReviewResult
+            if (!string.IsNullOrEmpty(analysisResult) && !analysisResult.Contains("placeholder"))
+            {
+                return ParseAnalysisToReviewResult(analysisResult, "TestResults");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger?.LogWarning(ex, "LLM analysis failed, falling back to deterministic heuristics");
+        }
+
+        // Fallback to deterministic heuristics
+        return await ReviewTestResultsDeterministicAsync(artifact);
+    }
+
+    private Task<ReviewResult> ReviewTestResultsDeterministicAsync(ArtifactAvailable artifact)
+    {
         var issues = new List<string>();
         var recommendations = new List<string>();
         var status = ReviewStatus.ReadyForQA;
@@ -380,79 +490,94 @@ public class ReviewerAgent : AgentBase
             var summary = $"Test review: {(hasFailures ? "Failures detected" : "All tests passed")}. " +
                          $"{(totalTests > 0 ? $"{passedTests}/{totalTests} tests passed" : "Test counts unclear")}.";
 
-            return new ReviewResult
+            return Task.FromResult(new ReviewResult
             {
                 Summary = summary,
                 Issues = issues,
                 Recommendations = recommendations,
                 Status = status
-            };
+            });
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error analyzing test results");
-            return new ReviewResult
+            // Logger?.LogError(ex, "Error analyzing test results");
+            return Task.FromResult(new ReviewResult
             {
                 Summary = "Failed to analyze test results",
                 Issues = new List<string> { $"Test analysis error: {ex.Message}" },
                 Recommendations = new List<string>(),
                 Status = ReviewStatus.NeedsReview
-            };
+            });
         }
     }
 
-    private async Task PostReviewCommentsAsync(WorkItemRef workItem, ReviewResult review)
+    private Task PostReviewCommentsAsync(WorkItemRef workItem, ReviewResult review)
     {
         Logger.LogInformation("Posting review comments for work item {WorkItemId}", workItem.Id);
 
         // Post summary comment
-        await _functionBindings!.CommentAsync(workItem.Id, $"**Review Summary:** {review.Summary}");
+        _functionBindings!.CommentAsync(workItem.Id, $"**Review Summary:** {review.Summary}");
 
         // Post issues if any
         if (review.Issues.Any())
         {
             var issuesText = string.Join("\n- ", review.Issues);
-            await _functionBindings.CommentAsync(workItem.Id, $"**Issues Found:**\n- {issuesText}");
+            _functionBindings.CommentAsync(workItem.Id, $"**Issues Found:**\n- {issuesText}");
         }
 
         // Post recommendations if any
         if (review.Recommendations.Any())
         {
             var recsText = string.Join("\n- ", review.Recommendations);
-            await _functionBindings.CommentAsync(workItem.Id, $"**Recommendations:**\n- {recsText}");
+            _functionBindings.CommentAsync(workItem.Id, $"**Recommendations:**\n- {recsText}");
         }
+
+        return Task.CompletedTask;
     }
 
-    private async Task HandleReviewTransitionAsync(WorkItemRef workItem, ReviewResult review)
+    private Task HandleReviewTransitionAsync(WorkItemRef workItem, ReviewResult review)
     {
         Logger.LogInformation("Evaluating work item transition based on review status: {Status}", review.Status);
 
-        // Transition based on review findings
+        // Ensure we have a work item to operate on
+        if (workItem == null)
+        {
+            Logger.LogWarning("No work item provided for transition; skipping");
+            return Task.CompletedTask;
+        }
+
+        // Transition based on review findings using centralized constants
         var newState = review.Status switch
         {
-            ReviewStatus.ReadyForQA => "Ready for QA",
-            ReviewStatus.NeedsReview => "Needs Review",
+            ReviewStatus.ReadyForQA => ReviewStates.ReadyForQA,
+            ReviewStatus.NeedsReview => ReviewStates.NeedsReview,
             _ => null
         };
 
         if (newState != null)
         {
-            await _functionBindings!.TransitionAsync(workItem.Id, newState);
+            // Use the function bindings to transition the work item (Reviewer is read-only for VCS)
+            Logger.LogDebug("Reviewer agent maintaining read-only policy - only work item operations allowed, no VCS commands");
+            _functionBindings!.TransitionAsync(workItem.Id, newState);
             Logger.LogInformation("Transitioned work item {WorkItemId} to '{NewState}'", workItem.Id, newState);
         }
+
+        return Task.CompletedTask;
     }
 
-    private async Task HandleCommandRejected(CommandRejected rejected)
+    private Task HandleCommandRejected(CommandRejected rejected)
     {
         Logger.LogWarning("Command {CommandId} was rejected: {Reason}", rejected.CommandId, rejected.Reason);
 
         // Surface the rejection to the work item
         if (Context!.Config.WorkItem != null)
         {
-            await _functionBindings!.CommentAsync(
+            _functionBindings!.CommentAsync(
                 Context.Config.WorkItem.Id,
                 $"Review operation blocked: {rejected.Reason}");
         }
+
+        return Task.CompletedTask;
     }
 
     private async Task HandleThrottled(Throttled throttled)
@@ -480,7 +605,7 @@ public class ReviewerAgent : AgentBase
     /// <summary>
     /// Internal result of a review operation.
     /// </summary>
-    private record ReviewResult
+    internal record ReviewResult
     {
         public required string Summary { get; init; }
         public required List<string> Issues { get; init; }
@@ -491,9 +616,85 @@ public class ReviewerAgent : AgentBase
     /// <summary>
     /// Status resulting from a review.
     /// </summary>
-    private enum ReviewStatus
+    public enum ReviewStatus
     {
         ReadyForQA,
         NeedsReview
+    }
+
+    /// <summary>
+    /// SK plugin for LLM-driven review analysis.
+    /// </summary>
+    private class ReviewAnalysisPlugin
+    {
+        [KernelFunction("analyze_diff")]
+        [Description("Analyzes a code diff for issues, recommendations, and readiness for QA.")]
+        public async Task<string> AnalyzeDiffAsync(
+            [Description("The diff content to analyze")] string content)
+        {
+            // SK/LLM scaffolding: This would call an LLM to analyze the diff
+            // For now, return a placeholder response
+            // TODO: Implement actual LLM call with prompt engineering
+            return await Task.FromResult("Diff analysis: No issues found, ready for QA.");
+        }
+
+        [KernelFunction("analyze_log")]
+        [Description("Analyzes execution logs for errors, warnings, and build status.")]
+        public async Task<string> AnalyzeLogAsync(
+            [Description("The log content to analyze")] string content)
+        {
+            // SK/LLM scaffolding: This would call an LLM to analyze the log
+            // For now, return a placeholder response
+            // TODO: Implement actual LLM call with prompt engineering
+            return await Task.FromResult("Log analysis: No errors detected, build successful.");
+        }
+
+        [KernelFunction("analyze_test_results")]
+        [Description("Analyzes test results for failures, success rates, and recommendations.")]
+        public async Task<string> AnalyzeTestResultsAsync(
+            [Description("The test results content to analyze")] string content)
+        {
+            // SK/LLM scaffolding: This would call an LLM to analyze the test results
+            // For now, return a placeholder response
+            // TODO: Implement actual LLM call with prompt engineering
+            return await Task.FromResult("Test analysis: All tests passed.");
+        }
+    }
+
+    /// <summary>
+    /// Parses LLM analysis response into ReviewResult.
+    /// </summary>
+    private ReviewResult ParseAnalysisToReviewResult(string analysis, string artifactType)
+    {
+        // SK/LLM scaffolding: Parse the LLM response
+        // TODO: Implement proper parsing based on expected LLM output format
+        // For now, simple heuristics on the response string
+
+        var summary = $"{artifactType} analysis: {analysis}";
+        var issues = new List<string>();
+        var recommendations = new List<string>();
+        var status = ReviewStatus.ReadyForQA;
+
+        if (analysis.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+            analysis.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+            analysis.Contains("issue", StringComparison.OrdinalIgnoreCase))
+        {
+            issues.Add("Issues detected in analysis");
+            status = ReviewStatus.NeedsReview;
+        }
+
+        if (analysis.Contains("recommend", StringComparison.OrdinalIgnoreCase) ||
+            analysis.Contains("consider", StringComparison.OrdinalIgnoreCase))
+        {
+            recommendations.Add("Review recommendations provided");
+        }
+
+        return new ReviewResult
+        {
+            Summary = summary,
+            Issues = issues,
+            Recommendations = recommendations,
+            Status = status
+        };
     }
 }

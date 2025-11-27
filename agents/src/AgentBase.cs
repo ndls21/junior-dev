@@ -21,7 +21,7 @@ public abstract class AgentBase : IAgent
     private readonly Counter<long> _eventsProcessed;
 
     protected AgentSessionContext? Context { get; private set; }
-    protected ILogger Logger => Context?.Logger ?? throw new InvalidOperationException("Agent not started");
+    protected ILogger Logger => Context?.Logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     protected ISessionManager SessionManager => Context?.SessionManager ?? throw new InvalidOperationException("Agent not started");
     protected AgentConfig Config => Context?.AgentConfig ?? throw new InvalidOperationException("Agent not started");
 

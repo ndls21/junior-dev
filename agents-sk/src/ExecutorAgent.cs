@@ -40,10 +40,19 @@ public record FunctionCall
 /// <summary>
 /// Executor agent that processes work items by analyzing requirements and executing development tasks.
 /// </summary>
+///
+/// TODOs / Known Gaps:
+/// - Several nullable-dereference warnings exist (CS8602); refactor to validate `_functionBindings` and `Context` usage.
+/// - Improve planning integration with SK/LLM (work-item query functions TODO: #8/#9).
+/// - Ensure all async methods use `await` where appropriate or remove async modifier to clear CS1998 warnings.
+/// - Consider better retry/backoff strategies and observability for long-running operations.
+
 public class ExecutorAgent : AgentBase
 {
     private readonly Kernel _kernel;
     private OrchestratorFunctionBindings? _functionBindings;
+    private OrchestratorFunctionBindings FunctionBindings => _functionBindings ?? throw new InvalidOperationException("Function bindings not initialized");
+        private AgentSessionContext Ctx => Context ?? throw new InvalidOperationException("Agent Context is not initialized");
     
     // Track execution state
     private readonly List<FunctionCall> _pendingOperations = new();
@@ -60,18 +69,18 @@ public class ExecutorAgent : AgentBase
     protected override async Task OnStartedAsync()
     {
         // Initialize SK function bindings now that Context is available
-        _functionBindings = new OrchestratorFunctionBindings(Context!);
+        _functionBindings = new OrchestratorFunctionBindings(Ctx!);
         _functionBindings.RegisterFunctions(_kernel);
         
         // Register this agent's functions as SK functions
         RegisterAgentFunctions();
 
-        Logger.LogInformation("Executor agent started for session {SessionId}", Context!.Config.SessionId);
+        Logger.LogInformation("Executor agent started for session {SessionId}", Ctx!.Config.SessionId);
 
         // Check if we have a work item to execute (auto-execution mode)
-        if (Context!.Config.WorkItem != null)
+        if (Ctx!.Config.WorkItem != null)
         {
-            await ExecuteWorkItemAsync(Context.Config.WorkItem);
+            await ExecuteWorkItemAsync(Ctx!.Config.WorkItem);
         }
         else
         {
@@ -81,7 +90,7 @@ public class ExecutorAgent : AgentBase
 
     protected override Task OnStoppedAsync()
     {
-        Logger.LogInformation("Executor agent stopped for session {SessionId}", Context!.Config.SessionId);
+        Logger.LogInformation("Executor agent stopped for session {SessionId}", Ctx!.Config.SessionId);
         return Task.CompletedTask;
     }
 
@@ -173,8 +182,8 @@ public class ExecutorAgent : AgentBase
     {
         try
         {
-            var claimUtil = new ClaimUtilities(Context!);
-            return await claimUtil.TryClaimWorkItemAsync(workItem, Context!.AgentConfig.AgentProfile ?? "executor");
+            var claimUtil = new ClaimUtilities(Ctx!);
+            return await claimUtil.TryClaimWorkItemAsync(workItem, Ctx!.AgentConfig.AgentProfile ?? "executor");
         }
         catch (Exception ex)
         {
@@ -183,7 +192,7 @@ public class ExecutorAgent : AgentBase
         }
     }
 
-    private async Task<List<FunctionCall>> AnalyzeWorkItemAsync(WorkItemRef workItem)
+    private Task<List<FunctionCall>> AnalyzeWorkItemAsync(WorkItemRef workItem)
     {
         Logger.LogInformation("Analyzing work item {WorkItemId} to create execution plan", workItem.Id);
 
@@ -209,8 +218,8 @@ public class ExecutorAgent : AgentBase
                 Logger.LogInformation("Work item {WorkItemId} identified as development task", workItem.Id);
                 
                 // Create a feature branch with policy-aware naming using ClaimUtilities
-                var claimUtil = new ClaimUtilities(Context!);
-                var branchName = claimUtil.GenerateBranchName(workItem, Context!.Config.Policy.ProtectedBranches);
+                var claimUtil = new ClaimUtilities(Ctx!);
+                var branchName = claimUtil.GenerateBranchName(workItem, Ctx!.Config.Policy.ProtectedBranches);
 
                 functionCalls.Add(new FunctionCall
                 {
@@ -219,7 +228,7 @@ public class ExecutorAgent : AgentBase
                     Description = $"Create feature branch for {workItem.Id}",
                     Arguments = new KernelArguments
                     {
-                        ["repoName"] = Context.Config.Repo.Name,
+                        ["repoName"] = Ctx!.Config.Repo.Name,
                         ["branchName"] = branchName,
                         ["fromRef"] = "main"
                     },
@@ -234,7 +243,7 @@ public class ExecutorAgent : AgentBase
                     Description = $"Implement changes for {workItem.Id}",
                     Arguments = new KernelArguments
                     {
-                        ["repoName"] = Context.Config.Repo.Name,
+                        ["repoName"] = Ctx!.Config.Repo.Name,
                         ["message"] = $"Implement {workItem.Id}: Development work completed",
                         ["amend"] = false
                     },
@@ -242,7 +251,7 @@ public class ExecutorAgent : AgentBase
                 });
 
                 // Add testing if required by policy
-                if (Context!.Config.Policy.RequireTestsBeforePush)
+                if (Ctx!.Config.Policy.RequireTestsBeforePush)
                 {
                     functionCalls.Add(new FunctionCall
                     {
@@ -251,14 +260,14 @@ public class ExecutorAgent : AgentBase
                         Description = "Run tests before push",
                         Arguments = new KernelArguments
                         {
-                            ["repoName"] = Context.Config.Repo.Name
+                            ["repoName"] = Ctx!.Config.Repo.Name
                         },
                         IsRisky = false
                     });
                 }
 
                 // Add approval request if required by policy
-                if (Context.Config.Policy.RequireApprovalForPush)
+                if (Ctx!.Config.Policy.RequireApprovalForPush)
                 {
                     functionCalls.Add(new FunctionCall
                     {
@@ -282,7 +291,7 @@ public class ExecutorAgent : AgentBase
                     Description = $"Push changes for {workItem.Id}",
                     Arguments = new KernelArguments
                     {
-                        ["repoName"] = Context.Config.Repo.Name,
+                        ["repoName"] = Ctx!.Config.Repo.Name,
                         ["branchName"] = branchName
                     },
                     IsRisky = true
@@ -300,8 +309,8 @@ public class ExecutorAgent : AgentBase
             // Fallback to basic analysis if anything fails
             if (workItem.Id.Contains("FEATURE") || workItem.Id.Contains("TASK") || workItem.Id.Contains("BUG"))
             {
-                var claimUtil = new ClaimUtilities(Context!);
-                var branchName = claimUtil.GenerateBranchName(workItem, Context!.Config.Policy.ProtectedBranches);
+                var claimUtil = new ClaimUtilities(Ctx!);
+                var branchName = claimUtil.GenerateBranchName(workItem, Ctx!.Config.Policy.ProtectedBranches);
 
                 functionCalls.Add(new FunctionCall
                 {
@@ -310,7 +319,7 @@ public class ExecutorAgent : AgentBase
                     Description = $"Create feature branch for {workItem.Id}",
                     Arguments = new KernelArguments
                     {
-                        ["repoName"] = Context.Config.Repo.Name,
+                        ["repoName"] = Ctx.Config.Repo.Name,
                         ["branchName"] = branchName
                     },
                     IsRisky = false
@@ -323,14 +332,14 @@ public class ExecutorAgent : AgentBase
                     Description = $"Implement changes for {workItem.Id}",
                     Arguments = new KernelArguments
                     {
-                        ["repoName"] = Context.Config.Repo.Name,
+                        ["repoName"] = Ctx.Config.Repo.Name,
                         ["message"] = $"Implement {workItem.Id}",
                         ["amend"] = false
                     },
                     IsRisky = false
                 });
 
-                if (Context!.Config.Policy.RequireTestsBeforePush)
+                if (Ctx.Config.Policy.RequireTestsBeforePush)
                 {
                     functionCalls.Add(new FunctionCall
                     {
@@ -339,13 +348,13 @@ public class ExecutorAgent : AgentBase
                         Description = "Run tests before push",
                         Arguments = new KernelArguments
                         {
-                            ["repoName"] = Context.Config.Repo.Name
+                            ["repoName"] = Ctx.Config.Repo.Name
                         },
                         IsRisky = false
                     });
                 }
 
-                if (Context.Config.Policy.RequireApprovalForPush)
+                if (Ctx.Config.Policy.RequireApprovalForPush)
                 {
                     functionCalls.Add(new FunctionCall
                     {
@@ -368,7 +377,7 @@ public class ExecutorAgent : AgentBase
                     Description = $"Push changes for {workItem.Id}",
                     Arguments = new KernelArguments
                     {
-                        ["repoName"] = Context.Config.Repo.Name,
+                        ["repoName"] = Ctx.Config.Repo.Name,
                         ["branchName"] = branchName
                     },
                     IsRisky = true
@@ -379,7 +388,7 @@ public class ExecutorAgent : AgentBase
         Logger.LogInformation("Created execution plan with {CallCount} function calls for work item {WorkItemId}",
             functionCalls.Count, workItem.Id);
 
-        return functionCalls;
+        return Task.FromResult(functionCalls);
     }
 
     private async Task ExecutePlanAsync(List<FunctionCall> plan, WorkItemRef workItem)
@@ -401,7 +410,7 @@ public class ExecutorAgent : AgentBase
 
             // Dry-run mode skips risky operations (already handled by OrchestratorFunctionBindings)
             // but we log them here for visibility
-            if (Context!.AgentConfig.DryRun && call.IsRisky)
+            if (Ctx!.AgentConfig.DryRun && call.IsRisky)
             {
                 Logger.LogInformation("[DRY RUN] Would execute: {Description}", call.Description);
                 // Still invoke - the function binding will handle dry-run mode
@@ -414,7 +423,7 @@ public class ExecutorAgent : AgentBase
                 if (!CanExecutePush(workItem))
                 {
                     Logger.LogWarning("Push operation blocked by policy for work item {WorkItemId}", workItem.Id);
-                    await _functionBindings!.CommentAsync(workItem.Id, "Push operation blocked by policy requirements (tests and/or approval needed).");
+                    await FunctionBindings!.CommentAsync(workItem.Id, "Push operation blocked by policy requirements (tests and/or approval needed).");
                     continue;
                 }
             }
@@ -458,26 +467,26 @@ public class ExecutorAgent : AgentBase
         {
             "vcs" => call.FunctionName switch
             {
-                "create_branch" => await _functionBindings.CreateBranchAsync(
+                "create_branch" => await FunctionBindings.CreateBranchAsync(
                     call.Arguments["repoName"] as string ?? throw new ArgumentException("repoName is required"),
                     call.Arguments["branchName"] as string ?? throw new ArgumentException("branchName is required"),
                     call.Arguments.TryGetValue("fromRef", out var fromRef) ? fromRef as string : null),
                 
-                "commit" => await _functionBindings.CommitAsync(
+                "commit" => await FunctionBindings.CommitAsync(
                     call.Arguments["repoName"] as string ?? throw new ArgumentException("repoName is required"),
                     call.Arguments["message"] as string ?? throw new ArgumentException("message is required"),
                     call.Arguments.TryGetValue("amend", out var amend) && amend is bool b ? b : false),
                 
-                "run_tests" => await _functionBindings.RunTestsAsync(
+                "run_tests" => await FunctionBindings.RunTestsAsync(
                     call.Arguments["repoName"] as string ?? throw new ArgumentException("repoName is required"),
                     call.Arguments.TryGetValue("filter", out var filter) ? filter as string : null,
                     call.Arguments.TryGetValue("timeoutSeconds", out var timeout) && timeout is int i ? i : (int?)null),
                 
-                "push" => await _functionBindings.PushAsync(
+                "push" => await FunctionBindings.PushAsync(
                     call.Arguments["repoName"] as string ?? throw new ArgumentException("repoName is required"),
                     call.Arguments["branchName"] as string ?? throw new ArgumentException("branchName is required")),
                 
-                "get_diff" => await _functionBindings.GetDiffAsync(
+                "get_diff" => await FunctionBindings.GetDiffAsync(
                     call.Arguments["repoName"] as string ?? throw new ArgumentException("repoName is required"),
                     call.Arguments.TryGetValue("refName", out var refName) ? refName as string : null),
                 
@@ -486,14 +495,14 @@ public class ExecutorAgent : AgentBase
             
             "workitems" => call.FunctionName switch
             {
-                "claim_item" => await _functionBindings.ClaimItemAsync(
+                "claim_item" => await FunctionBindings.ClaimItemAsync(
                     call.Arguments["itemId"] as string ?? throw new ArgumentException("itemId is required")),
                 
-                "comment" => await _functionBindings.CommentAsync(
+                "comment" => await FunctionBindings.CommentAsync(
                     call.Arguments["itemId"] as string ?? throw new ArgumentException("itemId is required"),
                     call.Arguments["comment"] as string ?? throw new ArgumentException("comment is required")),
                 
-                "transition" => await _functionBindings.TransitionAsync(
+                "transition" => await FunctionBindings.TransitionAsync(
                     call.Arguments["itemId"] as string ?? throw new ArgumentException("itemId is required"),
                     call.Arguments["newState"] as string ?? throw new ArgumentException("newState is required")),
                 
@@ -502,7 +511,7 @@ public class ExecutorAgent : AgentBase
             
             "general" => call.FunctionName switch
             {
-                "request_approval" => await _functionBindings.RequestApprovalAsync(
+                "request_approval" => await FunctionBindings.RequestApprovalAsync(
                     call.Arguments["reason"] as string ?? throw new ArgumentException("reason is required"),
                     call.Arguments["requiredActions"] as string[] ?? throw new ArgumentException("requiredActions is required")),
                 
@@ -521,14 +530,14 @@ public class ExecutorAgent : AgentBase
         Logger.LogInformation("Marking work item {WorkItemId} as completed", workItem.Id);
 
         // Use function bindings for consistency
-        await _functionBindings.TransitionAsync(workItem.Id, "Done");
-        await _functionBindings.CommentAsync(workItem.Id, "Implementation completed successfully");
+        await FunctionBindings!.TransitionAsync(workItem.Id, "Done");
+        await FunctionBindings!.CommentAsync(workItem.Id, "Implementation completed successfully");
     }
 
     private async Task HandleExecutionErrorAsync(WorkItemRef workItem, Exception ex)
     {
-        await _functionBindings.CommentAsync(workItem.Id, $"Execution failed: {ex.Message}");
-        await _functionBindings.TransitionAsync(workItem.Id, "Blocked");
+        await FunctionBindings!.CommentAsync(workItem.Id, $"Execution failed: {ex.Message}");
+        await FunctionBindings!.TransitionAsync(workItem.Id, "Blocked");
     }
 
     private Task HandleCommandCompleted(CommandCompleted completed)
@@ -543,9 +552,9 @@ public class ExecutorAgent : AgentBase
         Logger.LogWarning("Command {CommandId} was rejected: {Reason}", rejected.CommandId, rejected.Reason);
 
         // Surface the rejection to the work item
-        if (Context!.Config.WorkItem != null)
+        if (Ctx!.Config.WorkItem != null)
         {
-            await _functionBindings.CommentAsync(Context.Config.WorkItem.Id, $"Command rejected: {rejected.Reason}");
+            await FunctionBindings!.CommentAsync(Ctx!.Config.WorkItem.Id, $"Command rejected: {rejected.Reason}");
         }
     }
 
@@ -562,9 +571,9 @@ public class ExecutorAgent : AgentBase
         }
 
         // Surface the throttling to the work item
-        if (Context!.Config.WorkItem != null)
+        if (Ctx!.Config.WorkItem != null)
         {
-            await _functionBindings!.CommentAsync(Context.Config.WorkItem.Id, $"Operation throttled for scope '{throttled.Scope}'. Retried after backoff period.");
+            await FunctionBindings!.CommentAsync(Ctx!.Config.WorkItem.Id, $"Operation throttled for scope '{throttled.Scope}'. Retried after backoff period.");
         }
 
         // Retry the last pending operation if any
@@ -601,9 +610,9 @@ public class ExecutorAgent : AgentBase
     {
         Logger.LogWarning("Conflict detected in repo {Repo}: {Details}", conflict.Repo.Name, conflict.Details);
 
-        if (Context!.Config.WorkItem != null)
+        if (Ctx!.Config.WorkItem != null)
         {
-            await _functionBindings!.CommentAsync(Context.Config.WorkItem.Id, $"Conflict detected: {conflict.Details}. Attempting automatic resolution.");
+            await FunctionBindings!.CommentAsync(Ctx!.Config.WorkItem.Id, $"Conflict detected: {conflict.Details}. Attempting automatic resolution.");
 
             // Attempt automatic conflict resolution using patch content
             if (!string.IsNullOrEmpty(conflict.PatchContent))
@@ -613,16 +622,16 @@ public class ExecutorAgent : AgentBase
                 try
                 {
                     // Apply the patch to resolve the conflict
-                    await _functionBindings.ApplyPatchAsync(conflict.Repo.Name, conflict.PatchContent);
+                    await FunctionBindings!.ApplyPatchAsync(conflict.Repo.Name, conflict.PatchContent);
                     
                     // Commit the resolved changes
-                    await _functionBindings.CommitAsync(
+                    await FunctionBindings!.CommitAsync(
                         conflict.Repo.Name,
-                        $"Resolve conflict for {Context.Config.WorkItem.Id}",
+                        $"Resolve conflict for {Ctx!.Config.WorkItem.Id}",
                         false);
                     
-                    await _functionBindings.CommentAsync(Context.Config.WorkItem.Id, "Conflict automatically resolved using patch content.");
-                    Logger.LogInformation("Successfully resolved conflict for work item {WorkItemId}", Context.Config.WorkItem.Id);
+                    await FunctionBindings!.CommentAsync(Ctx!.Config.WorkItem.Id, "Conflict automatically resolved using patch content.");
+                    Logger.LogInformation("Successfully resolved conflict for work item {WorkItemId}", Ctx!.Config.WorkItem.Id);
                     
                     // Continue with pending operations if any
                     if (_pendingOperations.Any())
@@ -636,23 +645,23 @@ public class ExecutorAgent : AgentBase
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogError(ex, "Failed to automatically resolve conflict for work item {WorkItemId}", Context.Config.WorkItem.Id);
-                    await _functionBindings.CommentAsync(Context.Config.WorkItem.Id, $"Automatic conflict resolution failed: {ex.Message}. Manual resolution required.");
+                    Logger.LogError(ex, "Failed to automatically resolve conflict for work item {WorkItemId}", Ctx!.Config.WorkItem.Id);
+                    await FunctionBindings!.CommentAsync(Ctx!.Config.WorkItem.Id, $"Automatic conflict resolution failed: {ex.Message}. Manual resolution required.");
                 }
             }
             else
             {
-                await _functionBindings.CommentAsync(Context.Config.WorkItem.Id, "No patch content available for automatic resolution. Manual resolution required.");
+                await FunctionBindings!.CommentAsync(Ctx!.Config.WorkItem.Id, "No patch content available for automatic resolution. Manual resolution required.");
             }
 
             // If auto-resolution failed or no patch available, block the work item
-            await _functionBindings.TransitionAsync(Context.Config.WorkItem.Id, "Blocked");
+            await FunctionBindings!.TransitionAsync(Ctx!.Config.WorkItem.Id, "Blocked");
         }
     }
 
     private bool CanExecutePush(WorkItemRef workItem)
     {
-        var policy = Context!.Config.Policy;
+        var policy = Ctx!.Config.Policy;
         
         // Check if tests are required and have been executed
         if (policy.RequireTestsBeforePush && !_testsExecuted)
@@ -669,7 +678,7 @@ public class ExecutorAgent : AgentBase
         }
         
         // Check dry-run mode
-        if (Context.AgentConfig.DryRun)
+        if (Ctx!.AgentConfig.DryRun)
         {
             Logger.LogInformation("Push blocked: Dry-run mode enabled for work item {WorkItemId}", workItem.Id);
             return false;
