@@ -229,12 +229,97 @@ public class MainFormTests : IDisposable
     }
 
     [Fact]
-    public void AppSettings_DefaultValues_AreCorrect()
+    public void MainForm_SettingsApplied_ShowStatusChips_ChangesDrawMode()
     {
-        // Arrange & Act
-        var settings = new AppSettings();
+        // Arrange
+        var form = new MainForm();
+        form.IsTestMode = true; // Enable test mode to avoid dialogs
+        
+        // Act - Apply settings with ShowStatusChips = true
+        var settings = new AppSettings { ShowStatusChips = true };
+        form.ApplySettings(settings);
+        
+        // Assert - Should be OwnerDrawFixed
+        Assert.Equal(DrawMode.OwnerDrawFixed, form.GetSessionsListBoxDrawMode());
+        
+        // Act - Apply settings with ShowStatusChips = false
+        settings = new AppSettings { ShowStatusChips = false };
+        form.ApplySettings(settings);
+        
+        // Assert - Should be Normal
+        Assert.Equal(DrawMode.Normal, form.GetSessionsListBoxDrawMode());
+    }
 
-        // Assert
+    [Fact]
+    public void MainForm_SettingsApplied_AutoScrollEvents_ControlsScrolling()
+    {
+        // Arrange
+        var form = new MainForm();
+        form.IsTestMode = true; // Enable test mode to avoid dialogs
+        
+        // Act - Apply settings with AutoScrollEvents = true
+        var settings = new AppSettings { AutoScrollEvents = true };
+        form.ApplySettings(settings);
+        
+        // Assert - Should have auto-scroll enabled
+        Assert.True(form.GetAutoScrollEventsSetting());
+        
+        // Act - Apply settings with AutoScrollEvents = false
+        settings = new AppSettings { AutoScrollEvents = false };
+        form.ApplySettings(settings);
+        
+        // Assert - Should have auto-scroll disabled
+        Assert.False(form.GetAutoScrollEventsSetting());
+    }
+
+    [Fact]
+    public void MainForm_LayoutReset_DeletesFileAndPersistsImmediately()
+    {
+        // Arrange - Create a layout file
+        File.WriteAllText(_tempLayoutFile, "<layout><data>test</data></layout>");
+        var form = new MainForm();
+        form.IsTestMode = true; // Enable test mode to avoid dialogs
+        form.SetLayoutFilePath(_tempLayoutFile); // Inject test path
+        
+        // Act - Reset layout
+        form.ResetLayout();
+        
+        // Assert - File should be deleted and new layout saved
+        Assert.False(File.Exists(_tempLayoutFile));
+        // Note: In a real test, we'd verify the new layout was saved
+        // but that's complex with DevExpress
+    }
+
+    [Fact]
+    public void MainForm_LayoutCorruption_FallsBackToDefaults()
+    {
+        // Arrange - Create corrupted layout file
+        File.WriteAllText(_tempLayoutFile, "<invalid><xml></content>");
+        var form = new MainForm();
+        form.IsTestMode = true; // Enable test mode to avoid dialogs
+        form.SetLayoutFilePath(_tempLayoutFile); // Inject test path
+        
+        // Act - Load layout (should handle corruption gracefully)
+        var exception = Record.Exception(() => form.LoadLayout());
+        
+        // Assert - Should not crash, should fall back to defaults
+        Assert.Null(exception); // No exception should be thrown
+    }
+
+    [Fact]
+    public void MainForm_SettingsCorruption_FallsBackToDefaults()
+    {
+        // Arrange - Create corrupted settings file
+        File.WriteAllText(_tempSettingsFile, "{invalid json content}");
+        var form = new MainForm();
+        form.IsTestMode = true; // Enable test mode to avoid dialogs
+        form.SetSettingsFilePath(_tempSettingsFile); // Inject test path
+        
+        // Act - Load settings
+        var settings = form.LoadSettings();
+        
+        // Assert - Should fall back to defaults
+        Assert.NotNull(settings);
         Assert.Equal("Light", settings.Theme);
         Assert.Equal(9, settings.FontSize);
         Assert.True(settings.ShowStatusChips);

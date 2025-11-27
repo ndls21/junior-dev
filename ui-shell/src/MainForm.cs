@@ -8,6 +8,8 @@ using DevExpress.XtraTreeList;
 using System.Xml;
 using System.Linq;
 
+#pragma warning disable CS8602 // Dereference of possibly null reference - suppressed for fields initialized in constructor
+
 namespace Ui.Shell;
 
 public enum SessionStatus
@@ -53,14 +55,14 @@ public class AppSettings
 
 public class SettingsDialog : Form
 {
-    private System.Windows.Forms.ComboBox themeCombo;
-    private System.Windows.Forms.NumericUpDown fontSizeSpinner;
-    private System.Windows.Forms.CheckBox statusChipsCheck;
-    private System.Windows.Forms.CheckBox autoScrollCheck;
-    private System.Windows.Forms.Button okButton;
-    private System.Windows.Forms.Button cancelButton;
+    private System.Windows.Forms.ComboBox? themeCombo;
+    private System.Windows.Forms.NumericUpDown? fontSizeSpinner;
+    private System.Windows.Forms.CheckBox? statusChipsCheck;
+    private System.Windows.Forms.CheckBox? autoScrollCheck;
+    private System.Windows.Forms.Button? okButton;
+    private System.Windows.Forms.Button? cancelButton;
 
-    public AppSettings Settings { get; private set; }
+    public AppSettings Settings { get; private set; } = new();
 
     public SettingsDialog()
     {
@@ -119,43 +121,54 @@ public class SettingsDialog : Form
     {
         // Load from saved settings - in a real app this would be passed in
         Settings = new AppSettings();
-        themeCombo.SelectedItem = Settings.Theme;
-        fontSizeSpinner.Value = Settings.FontSize;
-        statusChipsCheck.Checked = Settings.ShowStatusChips;
-        autoScrollCheck.Checked = Settings.AutoScrollEvents;
+        themeCombo!.SelectedItem = Settings.Theme;
+        fontSizeSpinner!.Value = Settings.FontSize;
+        statusChipsCheck!.Checked = Settings.ShowStatusChips;
+        autoScrollCheck!.Checked = Settings.AutoScrollEvents;
     }
 
-    private void OkButton_Click(object sender, EventArgs e)
+    private void OkButton_Click(object? sender, EventArgs e)
     {
         Settings = new AppSettings
         {
-            Theme = themeCombo.SelectedItem?.ToString() ?? "Light",
-            FontSize = (int)fontSizeSpinner.Value,
-            ShowStatusChips = statusChipsCheck.Checked,
-            AutoScrollEvents = autoScrollCheck.Checked
+            Theme = themeCombo!.SelectedItem?.ToString() ?? "Light",
+            FontSize = (int)fontSizeSpinner!.Value,
+            ShowStatusChips = statusChipsCheck!.Checked,
+            AutoScrollEvents = autoScrollCheck!.Checked
         };
     }
 }
 
 public partial class MainForm : Form
 {
-    private DockManager dockManager;
+    private DockManager? dockManager;
 
     // Panels
-    private DockPanel sessionsPanel;
-    private DockPanel conversationPanel;
-    private DockPanel artifactsPanel;
+    private DockPanel? sessionsPanel;
+    private DockPanel? conversationPanel;
+    private DockPanel? artifactsPanel;
 
     // Controls within panels
-    private System.Windows.Forms.ListBox sessionsListBox;
-    private MemoEdit conversationMemo;
-    private TreeList artifactsTree;
+    private System.Windows.Forms.ListBox? sessionsListBox;
+    private MemoEdit? conversationMemo;
+    private TreeList? artifactsTree;
 
-    private bool isTestMode = false;
-    private System.Windows.Forms.Timer testTimer;
-    private MenuStrip mainMenu;
-    private System.Windows.Forms.Timer eventTimer;
+    internal bool isTestMode = false;
+
+    // Public property for testing
+    public bool IsTestMode
+    {
+        get => isTestMode;
+        set => isTestMode = value;
+    }
+    private System.Windows.Forms.Timer? testTimer;
+    private MenuStrip? mainMenu;
+    private System.Windows.Forms.Timer? eventTimer;
     private AppSettings currentSettings = new();
+    
+    // Test helper fields
+    private string? _testLayoutFilePath;
+    private string? _testSettingsFilePath;
 
     public MainForm()
     {
@@ -231,10 +244,10 @@ public partial class MainForm : Form
         // Log UI state for inspection
         Console.WriteLine("=== UI TEST MODE INSPECTION ===");
         Console.WriteLine($"Window Size: {this.Size.Width}x{this.Size.Height}");
-        Console.WriteLine($"Sessions Panel: Visible={sessionsPanel.Visible}, Width={sessionsPanel.Width}");
-        Console.WriteLine($"Conversation Panel: Visible={conversationPanel.Visible}");
-        Console.WriteLine($"Artifacts Panel: Visible={artifactsPanel.Visible}, Width={artifactsPanel.Width}");
-        Console.WriteLine($"Sessions in list: {sessionsListBox.Items.Count}");
+        Console.WriteLine($"Sessions Panel: Visible={sessionsPanel!.Visible}, Width={sessionsPanel!.Width}");
+        Console.WriteLine($"Conversation Panel: Visible={conversationPanel!.Visible}");
+        Console.WriteLine($"Artifacts Panel: Visible={artifactsPanel!.Visible}, Width={artifactsPanel!.Width}");
+        Console.WriteLine($"Sessions in list: {sessionsListBox!.Items.Count}");
         Console.WriteLine("Mock data loaded successfully");
         Console.WriteLine("Auto-exit in 2 seconds...");
         Console.WriteLine("===============================");
@@ -354,30 +367,8 @@ public partial class MainForm : Form
     {
         // Panels are already docked via DockingStyle in AddPanel
         // Configure panel sizes
-        sessionsPanel.Width = 250;
-        artifactsPanel.Width = 300;
-    }
-
-    private void LoadLayout()
-    {
-        try
-        {
-            string layoutFile = GetLayoutFilePath();
-            if (File.Exists(layoutFile))
-            {
-                dockManager.RestoreLayoutFromXml(layoutFile);
-            }
-            else
-            {
-                LoadDefaultLayout();
-            }
-        }
-        catch (Exception ex)
-        {
-            // If layout is corrupted, fall back to default
-            Console.WriteLine($"Failed to load layout: {ex.Message}");
-            LoadDefaultLayout();
-        }
+        sessionsPanel!.Width = 250;
+        artifactsPanel!.Width = 300;
     }
 
     private void LoadDefaultLayout()
@@ -391,12 +382,12 @@ public partial class MainForm : Form
         try
         {
             string layoutFile = GetLayoutFilePath();
-            string directory = Path.GetDirectoryName(layoutFile);
+            string directory = Path.GetDirectoryName(layoutFile)!;
             if (!Directory.Exists(directory))
             {
                 Directory.CreateDirectory(directory);
             }
-            dockManager.SaveLayoutToXml(layoutFile);
+            dockManager!.SaveLayoutToXml(layoutFile);
         }
         catch (Exception ex)
         {
@@ -409,34 +400,6 @@ public partial class MainForm : Form
         string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         string appFolder = Path.Combine(appData, "JuniorDev");
         return Path.Combine(appFolder, "layout.xml");
-    }
-
-    private void ResetLayout()
-    {
-        try
-        {
-            // Delete the layout file to reset to defaults
-            string layoutFile = GetLayoutFilePath();
-            if (File.Exists(layoutFile))
-            {
-                File.Delete(layoutFile);
-            }
-            
-            // Explicitly reset panels to default layout
-            sessionsPanel.Dock = DockingStyle.Left;
-            sessionsPanel.Width = 250;
-            artifactsPanel.Dock = DockingStyle.Right;
-            artifactsPanel.Width = 300;
-            conversationPanel.Dock = DockingStyle.Fill;
-            
-            MessageBox.Show("Layout has been reset to default.", "Layout Reset", 
-                          MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Failed to reset layout: {ex.Message}", "Error", 
-                          MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -455,7 +418,7 @@ public partial class MainForm : Form
 
     private void AddMockEvent()
     {
-        if (conversationMemo == null) return;
+        if (conversationMemo is null) return;
 
         var mockEvents = new[]
         {
@@ -502,7 +465,7 @@ public partial class MainForm : Form
         ApplySettings(settings);
     }
 
-    private void ApplySettings(AppSettings settings)
+    public void ApplySettings(AppSettings settings)
     {
         // Apply theme to form and child controls
         Color backColor, foreColor;
@@ -557,7 +520,7 @@ public partial class MainForm : Form
         try
         {
             string settingsFile = GetSettingsFilePath();
-            string directory = Path.GetDirectoryName(settingsFile);
+            string directory = Path.GetDirectoryName(settingsFile)!;
             if (!Directory.Exists(directory))
             {
                 Directory.CreateDirectory(directory);
@@ -572,37 +535,11 @@ public partial class MainForm : Form
         }
     }
 
-    private AppSettings LoadSettings()
+    private void SessionsListBox_DrawItem(object? sender, DrawItemEventArgs e)
     {
-        try
-        {
-            string settingsFile = GetSettingsFilePath();
-            if (File.Exists(settingsFile))
-            {
-                var json = File.ReadAllText(settingsFile);
-                return System.Text.Json.JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to load settings: {ex.Message}");
-        }
+        if (e.Index < 0 || e.Index >= sessionsListBox!.Items.Count) return;
 
-        return new AppSettings();
-    }
-
-    private string GetSettingsFilePath()
-    {
-        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        string appFolder = Path.Combine(appData, "JuniorDev");
-        return Path.Combine(appFolder, "settings.json");
-    }
-
-    private void SessionsListBox_DrawItem(object sender, DrawItemEventArgs e)
-    {
-        if (e.Index < 0 || e.Index >= sessionsListBox.Items.Count) return;
-
-        var item = sessionsListBox.Items[e.Index] as SessionItem;
+        var item = sessionsListBox!.Items[e.Index] as SessionItem;
         if (item == null) return;
 
         // Clear background
@@ -614,7 +551,7 @@ public partial class MainForm : Form
         // Draw session name
         using (var brush = new SolidBrush(e.ForeColor))
         {
-            e.Graphics.DrawString(item.Name, e.Font, brush, e.Bounds.X + 80, e.Bounds.Y + 5);
+            e.Graphics.DrawString(item.Name, e.Font!, brush, e.Bounds.X + 80, e.Bounds.Y + 5);
         }
 
         // Draw status chip (badge)
@@ -636,7 +573,7 @@ public partial class MainForm : Form
 
     private void FilterSessions(string status)
     {
-        sessionsListBox.Items.Clear();
+        sessionsListBox!.Items.Clear();
 
         // Mock session data - in real app this would come from session manager
         var allSessions = new[]
@@ -660,8 +597,164 @@ public partial class MainForm : Form
 
             if (shouldShow)
             {
-                sessionsListBox.Items.Add(session);
+                sessionsListBox!.Items.Add(session);
             }
         }
+    }
+
+    // Test helper methods
+    public System.Windows.Forms.DrawMode GetSessionsListBoxDrawMode()
+    {
+        return sessionsListBox?.DrawMode ?? System.Windows.Forms.DrawMode.Normal;
+    }
+
+    public bool GetAutoScrollEventsSetting()
+    {
+        return currentSettings.AutoScrollEvents;
+    }
+
+    public void SetLayoutFilePath(string path)
+    {
+        // For testing only
+        _testLayoutFilePath = path;
+    }
+
+    public void SetSettingsFilePath(string path)
+    {
+        // For testing only
+        _testSettingsFilePath = path;
+    }
+
+    private string GetSettingsFilePath()
+    {
+        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string appFolder = Path.Combine(appData, "JuniorDev");
+        return Path.Combine(appFolder, "settings.json");
+    }
+
+    public AppSettings LoadSettings()
+    {
+        try
+        {
+            string settingsFile = _testSettingsFilePath ?? GetSettingsFilePath();
+            if (File.Exists(settingsFile))
+            {
+                var json = File.ReadAllText(settingsFile);
+                return System.Text.Json.JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load settings: {ex.Message}");
+        }
+
+        return new AppSettings();
+    }
+
+    public void LoadLayout()
+    {
+        try
+        {
+            string layoutFile = _testLayoutFilePath ?? GetLayoutFilePath();
+            if (File.Exists(layoutFile))
+            {
+                dockManager!.RestoreLayoutFromXml(layoutFile);
+            }
+            else
+            {
+                LoadDefaultLayout();
+            }
+        }
+        catch (Exception ex)
+        {
+            // If layout is corrupted, fall back to default
+            Console.WriteLine($"Failed to load layout: {ex.Message}");
+            LoadDefaultLayout();
+        }
+    }
+
+    public void ResetLayout()
+    {
+        try
+        {
+            // Delete the layout file to reset to defaults
+            string layoutFile = _testLayoutFilePath ?? GetLayoutFilePath();
+            if (File.Exists(layoutFile))
+            {
+                File.Delete(layoutFile);
+            }
+            
+            // Explicitly reset panels to default layout
+            sessionsPanel!.Dock = DockingStyle.Left;
+            sessionsPanel!.Width = 250;
+            artifactsPanel!.Dock = DockingStyle.Right;
+            artifactsPanel!.Width = 300;
+            conversationPanel!.Dock = DockingStyle.Fill;
+            
+            // Save the reset layout immediately
+            SaveLayout();
+            
+            // Show message box only in normal mode (skip in test mode for automation)
+            if (!isTestMode)
+            {
+                MessageBox.Show("Layout has been reset to default.", "Layout Reset", 
+                              MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!isTestMode)
+            {
+                MessageBox.Show($"Failed to reset layout: {ex.Message}", "Error", 
+                              MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            else
+            {
+                Console.WriteLine($"Failed to reset layout: {ex.Message}");
+            }
+        }
+    }
+
+    private void ShowAutoClosingMessageBox(string message, string title, int seconds)
+    {
+        var form = new Form
+        {
+            Text = title,
+            Size = new Size(300, 150),
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            TopMost = true,
+            Owner = this // Set owner for proper parenting
+        };
+
+        var label = new System.Windows.Forms.Label
+        {
+            Text = message,
+            AutoSize = true,
+            Location = new Point(20, 20)
+        };
+
+        form.Controls.Add(label);
+
+        var timer = new System.Windows.Forms.Timer
+        {
+            Interval = seconds * 1000
+        };
+        timer.Tick += (s, e) =>
+        {
+            timer.Stop();
+            if (!form.IsDisposed)
+            {
+                form.Invoke(new Action(() => form.Close()));
+            }
+        };
+
+        form.FormClosed += (s, e) => timer.Stop();
+
+        timer.Start();
+        form.Show();
     }
 }
