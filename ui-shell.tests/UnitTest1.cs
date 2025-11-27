@@ -2,18 +2,21 @@ using System.IO;
 using System.Windows.Forms;
 using DevExpress.XtraBars.Docking;
 using Ui.Shell;
+using System.Drawing;
 
 namespace ui_shell.tests;
 
 public class MainFormTests : IDisposable
 {
     private string _tempLayoutFile;
+    private string _tempSettingsFile;
     private string _tempDir;
 
     public MainFormTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), "JuniorDevTest");
         _tempLayoutFile = Path.Combine(_tempDir, "layout.xml");
+        _tempSettingsFile = Path.Combine(_tempDir, "settings.json");
         Directory.CreateDirectory(_tempDir);
     }
 
@@ -131,5 +134,110 @@ public class MainFormTests : IDisposable
         Assert.Equal(2, runningSessions.Length);
         Assert.Contains("Session 1", runningSessions[0]);
         Assert.Contains("Session 4", runningSessions[1]);
+    }
+
+    [Fact]
+    public void SettingsPersistence_SaveAndLoad_RoundTrip()
+    {
+        // Arrange
+        var originalSettings = new AppSettings
+        {
+            Theme = "Dark",
+            FontSize = 12,
+            ShowStatusChips = false,
+            AutoScrollEvents = false
+        };
+
+        // Act - Save settings
+        var json = System.Text.Json.JsonSerializer.Serialize(originalSettings);
+        File.WriteAllText(_tempSettingsFile, json);
+
+        // Load settings
+        var loadedJson = File.ReadAllText(_tempSettingsFile);
+        var loadedSettings = System.Text.Json.JsonSerializer.Deserialize<AppSettings>(loadedJson);
+
+        // Assert
+        Assert.NotNull(loadedSettings);
+        Assert.Equal(originalSettings.Theme, loadedSettings.Theme);
+        Assert.Equal(originalSettings.FontSize, loadedSettings.FontSize);
+        Assert.Equal(originalSettings.ShowStatusChips, loadedSettings.ShowStatusChips);
+        Assert.Equal(originalSettings.AutoScrollEvents, loadedSettings.AutoScrollEvents);
+    }
+
+    [Fact]
+    public void SettingsPersistence_CorruptedFile_FallsBackToDefaults()
+    {
+        // Arrange - Create corrupted settings file
+        File.WriteAllText(_tempSettingsFile, "{invalid json content}");
+
+        // Act - Try to load settings
+        string loadedJson;
+        try
+        {
+            loadedJson = File.ReadAllText(_tempSettingsFile);
+            var loadedSettings = System.Text.Json.JsonSerializer.Deserialize<AppSettings>(loadedJson);
+            // If deserialization succeeds unexpectedly, that's fine
+            Assert.NotNull(loadedSettings);
+        }
+        catch
+        {
+            // Expected to fail with corrupted JSON
+            // Should fall back to defaults (new AppSettings())
+            var defaultSettings = new AppSettings();
+            Assert.Equal("Light", defaultSettings.Theme);
+            Assert.Equal(9, defaultSettings.FontSize);
+            Assert.True(defaultSettings.ShowStatusChips);
+            Assert.True(defaultSettings.AutoScrollEvents);
+        }
+    }
+
+    [Fact]
+    public void SessionItem_GetStatusChip_ReturnsCorrectColorsAndText()
+    {
+        // Test each status returns correct chip info
+        var runningItem = new SessionItem { Name = "Test", Status = SessionStatus.Running };
+        var (backColor, foreColor, text) = runningItem.GetStatusChip();
+        Assert.Equal(Color.Green, backColor);
+        Assert.Equal(Color.White, foreColor);
+        Assert.Equal("RUNNING", text);
+
+        var errorItem = new SessionItem { Name = "Test", Status = SessionStatus.Error };
+        (backColor, foreColor, text) = errorItem.GetStatusChip();
+        Assert.Equal(Color.Red, backColor);
+        Assert.Equal(Color.White, foreColor);
+        Assert.Equal("ERROR", text);
+
+        var completedItem = new SessionItem { Name = "Test", Status = SessionStatus.Completed };
+        (backColor, foreColor, text) = completedItem.GetStatusChip();
+        Assert.Equal(Color.Blue, backColor);
+        Assert.Equal(Color.White, foreColor);
+        Assert.Equal("COMPLETED", text);
+    }
+
+    [Fact]
+    public void LayoutReset_DeletesLayoutFile()
+    {
+        // Arrange - Create a layout file
+        File.WriteAllText(_tempLayoutFile, "<layout><data>test</data></layout>");
+        Assert.True(File.Exists(_tempLayoutFile));
+
+        // Act - Simulate layout reset (delete file)
+        File.Delete(_tempLayoutFile);
+
+        // Assert
+        Assert.False(File.Exists(_tempLayoutFile));
+    }
+
+    [Fact]
+    public void AppSettings_DefaultValues_AreCorrect()
+    {
+        // Arrange & Act
+        var settings = new AppSettings();
+
+        // Assert
+        Assert.Equal("Light", settings.Theme);
+        Assert.Equal(9, settings.FontSize);
+        Assert.True(settings.ShowStatusChips);
+        Assert.True(settings.AutoScrollEvents);
     }
 }

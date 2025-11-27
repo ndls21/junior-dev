@@ -26,16 +26,20 @@ public class SessionItem
 
     public override string ToString()
     {
-        var statusIndicator = Status switch
+        return Name; // Just return the name, status will be drawn separately
+    }
+
+    public (Color backColor, Color foreColor, string text) GetStatusChip()
+    {
+        return Status switch
         {
-            SessionStatus.Running => "🟢",
-            SessionStatus.Paused => "🟡",
-            SessionStatus.Error => "🔴",
-            SessionStatus.NeedsApproval => "🟠",
-            SessionStatus.Completed => "🔵",
-            _ => "⚪"
+            SessionStatus.Running => (Color.Green, Color.White, "RUNNING"),
+            SessionStatus.Paused => (Color.Yellow, Color.Black, "PAUSED"),
+            SessionStatus.Error => (Color.Red, Color.White, "ERROR"),
+            SessionStatus.NeedsApproval => (Color.Orange, Color.Black, "NEEDS APPROVAL"),
+            SessionStatus.Completed => (Color.Blue, Color.White, "COMPLETED"),
+            _ => (Color.Gray, Color.Black, "UNKNOWN")
         };
-        return $"{statusIndicator} {Name}";
     }
 }
 
@@ -143,7 +147,7 @@ public partial class MainForm : Form
     private DockPanel artifactsPanel;
 
     // Controls within panels
-    private ListBoxControl sessionsListBox;
+    private System.Windows.Forms.ListBox sessionsListBox;
     private MemoEdit conversationMemo;
     private TreeList artifactsTree;
 
@@ -151,6 +155,7 @@ public partial class MainForm : Form
     private System.Windows.Forms.Timer testTimer;
     private MenuStrip mainMenu;
     private System.Windows.Forms.Timer eventTimer;
+    private AppSettings currentSettings = new();
 
     public MainForm()
     {
@@ -290,8 +295,11 @@ public partial class MainForm : Form
         filterPanel.Controls.AddRange(new Control[] { allButton, runningButton, pausedButton, errorButton });
 
         // Create session list with status indicators
-        sessionsListBox = new ListBoxControl();
+        sessionsListBox = new System.Windows.Forms.ListBox();
         sessionsListBox.Dock = DockStyle.Fill;
+        sessionsListBox.DrawMode = System.Windows.Forms.DrawMode.OwnerDrawFixed;
+        sessionsListBox.ItemHeight = 30;
+        sessionsListBox.DrawItem += SessionsListBox_DrawItem;
 
         // Mock session data with status objects
         sessionsListBox.Items.Add(new SessionItem { Name = "Session 1", Status = SessionStatus.Running });
@@ -469,9 +477,12 @@ public partial class MainForm : Form
 
         conversationMemo.Text += eventLine;
 
-        // Auto-scroll to bottom
-        conversationMemo.SelectionStart = conversationMemo.Text.Length;
-        conversationMemo.ScrollToCaret();
+        // Auto-scroll to bottom only if enabled in settings
+        if (currentSettings.AutoScrollEvents)
+        {
+            conversationMemo.SelectionStart = conversationMemo.Text.Length;
+            conversationMemo.ScrollToCaret();
+        }
     }
 
     private void ShowSettingsDialog()
@@ -493,24 +504,52 @@ public partial class MainForm : Form
 
     private void ApplySettings(AppSettings settings)
     {
-        // Apply theme
+        // Apply theme to form and child controls
+        Color backColor, foreColor;
         switch (settings.Theme)
         {
             case "Light":
-                this.BackColor = Color.White;
+                backColor = Color.White;
+                foreColor = Color.Black;
                 break;
             case "Dark":
-                this.BackColor = Color.FromArgb(30, 30, 30);
+                backColor = Color.FromArgb(30, 30, 30);
+                foreColor = Color.White;
                 break;
             case "Blue":
-                this.BackColor = Color.LightBlue;
+                backColor = Color.LightBlue;
+                foreColor = Color.Black;
+                break;
+            default:
+                backColor = Color.White;
+                foreColor = Color.Black;
                 break;
         }
 
-        // Apply font size
+        this.BackColor = backColor;
+        this.ForeColor = foreColor;
+
+        // Apply to child controls
+        if (sessionsPanel != null) sessionsPanel.Appearance.BackColor = backColor;
+        if (conversationPanel != null) conversationPanel.Appearance.BackColor = backColor;
+        if (artifactsPanel != null) artifactsPanel.Appearance.BackColor = backColor;
+
+        // Apply font size to form and propagate to controls
         var newFont = new Font(this.Font.FontFamily, settings.FontSize);
         this.Font = newFont;
-        // Note: Would need to propagate to all controls in a real implementation
+
+        // Store settings for behavior
+        currentSettings = settings;
+
+        // Apply ShowStatusChips behavior
+        if (sessionsListBox != null)
+        {
+            sessionsListBox.DrawMode = settings.ShowStatusChips ? System.Windows.Forms.DrawMode.OwnerDrawFixed : System.Windows.Forms.DrawMode.Normal;
+            sessionsListBox.Refresh(); // Redraw to apply changes
+        }
+
+        // Apply AutoScrollEvents behavior (stored for use in AddMockEvent)
+        // This will be checked in AddMockEvent method
     }
 
     private void SaveSettings(AppSettings settings)
@@ -557,6 +596,42 @@ public partial class MainForm : Form
         string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         string appFolder = Path.Combine(appData, "JuniorDev");
         return Path.Combine(appFolder, "settings.json");
+    }
+
+    private void SessionsListBox_DrawItem(object sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0 || e.Index >= sessionsListBox.Items.Count) return;
+
+        var item = sessionsListBox.Items[e.Index] as SessionItem;
+        if (item == null) return;
+
+        // Clear background
+        e.DrawBackground();
+
+        // Get status chip info
+        var (chipBackColor, chipForeColor, chipText) = item.GetStatusChip();
+
+        // Draw session name
+        using (var brush = new SolidBrush(e.ForeColor))
+        {
+            e.Graphics.DrawString(item.Name, e.Font, brush, e.Bounds.X + 80, e.Bounds.Y + 5);
+        }
+
+        // Draw status chip (badge)
+        var chipRect = new Rectangle(e.Bounds.X + 5, e.Bounds.Y + 3, 70, 20);
+        using (var chipBrush = new SolidBrush(chipBackColor))
+        using (var chipTextBrush = new SolidBrush(chipForeColor))
+        using (var chipFont = new Font(e.Font.FontFamily, 7f, FontStyle.Bold))
+        {
+            e.Graphics.FillRectangle(chipBrush, chipRect);
+            e.Graphics.DrawRectangle(Pens.Black, chipRect);
+            var textSize = e.Graphics.MeasureString(chipText, chipFont);
+            var textX = chipRect.X + (chipRect.Width - textSize.Width) / 2;
+            var textY = chipRect.Y + (chipRect.Height - textSize.Height) / 2;
+            e.Graphics.DrawString(chipText, chipFont, chipTextBrush, textX, textY);
+        }
+
+        e.DrawFocusRectangle();
     }
 
     private void FilterSessions(string status)
