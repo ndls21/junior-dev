@@ -34,18 +34,25 @@ public class AgentSessionContext
     /// </summary>
     public ILogger Logger { get; }
 
+    /// <summary>
+    /// The ID of the agent this context belongs to.
+    /// </summary>
+    public string AgentId { get; }
+
     public AgentSessionContext(
         Guid sessionId,
         SessionConfig config,
         ISessionManager sessionManager,
         AgentConfig agentConfig,
-        ILogger logger)
+        ILogger logger,
+        string agentId)
     {
         SessionId = sessionId;
         Config = config ?? throw new ArgumentNullException(nameof(config));
         SessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
         AgentConfig = agentConfig ?? throw new ArgumentNullException(nameof(agentConfig));
         Logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        AgentId = agentId ?? throw new ArgumentNullException(nameof(agentId));
     }
 
     /// <summary>
@@ -55,7 +62,7 @@ public class AgentSessionContext
     /// <param name="planNodeId">The plan node ID, if any.</param>
     public Correlation CreateCorrelation(Guid? parentCommandId = null, string? planNodeId = null)
     {
-        return new Correlation(SessionId, null, parentCommandId, planNodeId);
+        return new Correlation(SessionId, null, parentCommandId, planNodeId, AgentId);
     }
 
     /// <summary>
@@ -66,6 +73,6 @@ public class AgentSessionContext
     /// <param name="planNodeId">The plan node ID, if any.</param>
     public Correlation CreateCorrelationForCommand(Guid commandId, Guid? parentCommandId = null, string? planNodeId = null)
     {
-        return new Correlation(SessionId, commandId, parentCommandId, planNodeId);
+        return new Correlation(SessionId, commandId, parentCommandId, planNodeId, AgentId);
     }
 }

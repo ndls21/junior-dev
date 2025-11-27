@@ -17,7 +17,7 @@ Contracts are serialized using System.Text.Json with the following options:
 - `WorkItemDetails { string Id, string Title, string Description, string Status, string? Assignee, string[] Tags }`
 - `RepoRef { string Name, string Path }`
 - `WorkspaceRef { string Path }` (per-session workspace root)
-- `Correlation { CommandId?, ParentCommandId?, PlanNodeId?, SessionId }`
+- `Correlation { SessionId, CommandId?, ParentCommandId?, PlanNodeId?, IssuerAgentId? }`
 
 ## Commands (intent)
 - `CreateBranch { RepoRef Repo, string BranchName, string? FromRef }`
@@ -72,5 +72,6 @@ Contracts are serialized using System.Text.Json with the following options:
 - Any contract/schema change must update this file (with date/rationale) and ARCHITECTURE.md; add/adjust serialization tests; CI should enforce the rule.
 
 ## Change Log
+- **2025-11-28**: Added IssuerAgentId to Correlation record for proper command response routing. Bumped version to v1.2. Response events (CommandCompleted, CommandRejected, etc.) now only route to the originating agent instead of broadcasting to all agents in the session.
 - **2025-11-28**: Added QueryBacklog/QueryWorkItem commands and BacklogQueried/WorkItemQueried events to support work item queries via unified IAdapter model. Bumped version to v1.1. Removed legacy IVcsAdapter interface placeholder.
 - **2025-11-28**: Implemented SK function bindings for list_backlog/get_item in OrchestratorFunctionBindings, completing end-to-end work item query functionality.

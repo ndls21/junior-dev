@@ -51,7 +51,7 @@ public class ContractSerializationTests
     [Fact]
     public void Correlation_SerializesCorrectly()
     {
-        var correlation = new Correlation(TestSessionId, TestCommandId, TestCommandId, "node1");
+        var correlation = new Correlation(TestSessionId, TestCommandId, TestCommandId, "node1", null);
         var json = JsonSerializer.Serialize(correlation, Options);
         var expected = File.ReadAllText("Fixtures/Correlation.json");
         Assert.Equal(expected.Trim(), json.Trim());

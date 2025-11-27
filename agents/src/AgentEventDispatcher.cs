@@ -123,13 +123,14 @@ public class AgentEventDispatcher
         }
 
         // 3. Correlation ID matching for command responses
-        // Agents are interested in events related to commands they issued
-        // This includes CommandCompleted, CommandRejected, and other response events
-        if (@event.Correlation.CommandId.HasValue)
+        // Response events (CommandCompleted, CommandRejected, etc.) should only go to the agent that issued the command
+        if (@event.Correlation.CommandId.HasValue && @event.Correlation.IssuerAgentId != null)
         {
-            // For now, we let all agents in the session receive command-related events
-            // In the future, we could track which agent issued which command
-            // and only send responses to the originating agent
+            // Only the originating agent should receive command response events
+            if (@event.Correlation.IssuerAgentId != agent.Id)
+            {
+                return false;
+            }
         }
 
         // 4. Agent-specific filtering could be added here in the future

@@ -42,7 +42,8 @@ public class FunctionDiscoveryTests
             sessionConfig,
             _sessionManagerMock.Object,
             agentConfig,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            "test-agent");
     }
 
     [Fact]
@@ -206,7 +207,8 @@ public class FunctionDiscoveryTests
             _context.Config with { WorkItem = new WorkItemRef("TEST-123") },
             _sessionManagerMock.Object,
             _context.AgentConfig,
-            _context.Logger);
+            _context.Logger,
+            "test-agent");
 
         await agent.StartAsync(contextWithWorkItem);
 

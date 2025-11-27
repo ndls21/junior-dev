@@ -37,7 +37,8 @@ public class OrchestratorFunctionBindingsTests
             sessionConfig,
             _sessionManagerMock.Object,
             agentConfig,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            "test-agent");
 
         _bindings = new OrchestratorFunctionBindings(_context);
     }
@@ -136,7 +137,8 @@ public class OrchestratorFunctionBindingsTests
             _context.Config,
             _sessionManagerMock.Object,
             agentConfig,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            "test-agent");
         var bindings = new OrchestratorFunctionBindings(context);
 
         // Act
@@ -160,7 +162,8 @@ public class OrchestratorFunctionBindingsTests
             _context.Config,
             _sessionManagerMock.Object,
             agentConfig,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            "test-agent");
         var bindings = new OrchestratorFunctionBindings(context);
 
         // Act
@@ -183,7 +186,8 @@ public class OrchestratorFunctionBindingsTests
             _context.Config,
             _sessionManagerMock.Object,
             agentConfig,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            "test-agent");
         var bindings = new OrchestratorFunctionBindings(context);
 
         // Act
@@ -207,7 +211,8 @@ public class OrchestratorFunctionBindingsTests
             _context.Config,
             _sessionManagerMock.Object,
             agentConfig,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            "test-agent");
         var bindings = new OrchestratorFunctionBindings(context);
 
         // Act
@@ -230,7 +235,8 @@ public class OrchestratorFunctionBindingsTests
             _context.Config,
             _sessionManagerMock.Object,
             agentConfig,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            "test-agent");
         var bindings = new OrchestratorFunctionBindings(context);
 
         // Act

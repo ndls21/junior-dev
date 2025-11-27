@@ -5,7 +5,7 @@ namespace JuniorDev.Contracts;
 
 public static class ContractVersion
 {
-    public const string Current = "v1.1";
+    public const string Current = "v1.2";
 }
 
 public sealed record WorkItemRef(string Id, string? ProviderHint = null);
@@ -18,7 +18,7 @@ public sealed record RepoRef(string Name, string Path);
 
 public sealed record WorkspaceRef(string Path);
 
-public sealed record Correlation(Guid SessionId, Guid? CommandId = null, Guid? ParentCommandId = null, string? PlanNodeId = null);
+public sealed record Correlation(Guid SessionId, Guid? CommandId = null, Guid? ParentCommandId = null, string? PlanNodeId = null, string? IssuerAgentId = null);
 
 public interface ICommand
 {

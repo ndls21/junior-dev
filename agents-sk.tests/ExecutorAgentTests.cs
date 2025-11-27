@@ -40,7 +40,8 @@ public class ExecutorAgentTests
             sessionConfig,
             _sessionManagerMock.Object,
             agentConfig,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            "test-agent");
 
         _agent = new ExecutorAgent(_kernel);
         // Don't start the agent in constructor to avoid plugin registration conflicts
@@ -70,7 +71,7 @@ public class ExecutorAgentTests
     }
 
     [Fact]
-    public async Task StartAsync_WithWorkItem_ExecutesWorkItem()
+    public async Task ExecuteWorkItemAsync_WithWorkItem_LogsExecution()
     {
         // Arrange
         var kernel = new Kernel();
@@ -81,7 +82,8 @@ public class ExecutorAgentTests
             sessionConfig,
             _sessionManagerMock.Object,
             _context.AgentConfig,
-            _context.Logger);
+            _context.Logger,
+            "test-agent");
 
         var agent = new ExecutorAgent(kernel);
 
@@ -160,7 +162,8 @@ public class ExecutorAgentTests
             sessionConfig,
             _sessionManagerMock.Object,
             _context.AgentConfig,
-            _context.Logger);
+            _context.Logger,
+            "test-agent");
 
         var agent = new ExecutorAgent(kernel);
         await agent.StartAsync(contextWithWorkItem);
@@ -203,7 +206,8 @@ public class ExecutorAgentTests
             sessionConfig,
             _sessionManagerMock.Object,
             _context.AgentConfig,
-            _context.Logger);
+            _context.Logger,
+            "test-agent");
 
         var agent = new ExecutorAgent(kernel);
         await agent.StartAsync(contextWithWorkItem);
@@ -246,7 +250,8 @@ public class ExecutorAgentTests
             sessionConfig,
             _sessionManagerMock.Object,
             _context.AgentConfig,
-            _context.Logger);
+            _context.Logger,
+            "test-agent");
 
         var agent = new ExecutorAgent(kernel);
         await agent.StartAsync(contextWithWorkItem);
@@ -302,7 +307,8 @@ public class ExecutorAgentTests
             sessionConfig,
             _sessionManagerMock.Object,
             agentConfig,
-            _context.Logger);
+            _context.Logger,
+            "test-agent");
 
         var agent = new ExecutorAgent(kernel);
         await agent.StartAsync(contextWithWorkItem);

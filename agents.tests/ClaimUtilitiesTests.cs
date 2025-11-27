@@ -36,7 +36,8 @@ public class ClaimUtilitiesTests
             sessionConfig,
             _sessionManagerMock.Object,
             agentConfig,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            "test-agent");
 
         _claimUtil = new ClaimUtilities(_context);
     }
