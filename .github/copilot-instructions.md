@@ -17,6 +17,10 @@ Junior Dev is a .NET-based platform for AI-assisted software development, featur
 - **Issue Management**: Prefix issue titles with the current stage name (e.g., "Envoy – Feature Name") to indicate the development phase. Create detailed GitHub issues for all TODO items with implementation requirements, technical considerations, and acceptance criteria.
 - **TODO Management**: When stubbing out functionality for later implementation, add detailed TODO comments with issue references. Format: `// TODO: [Brief description] - Issue: #[number]`. Create corresponding GitHub issues for tracking. TODOs should include implementation requirements, technical considerations, and acceptance criteria.
 
+## Copilot Workflow Rules
+- **Claiming Work**: When Copilot (or any automated coding agent) picks up an issue to implement, it MUST open or link to a GitHub issue and add a comment indicating it has started work. The issue number MUST be referenced in any `TODO` comments added to the code (format: `// TODO: ... - Issue: #[number]`).
+- **Branching Guidance**: By default prefer creating a feature branch named `agent/<issue-number>-short-desc` when implementing an issue. Working directly on `master` is allowed only when explicitly approved by the repository owner or maintainer and when the change is small, well-tested, and non-breaking. When working on `master`, include the issue number and rationale in the commit message.
+
 ## Conventions and Patterns
 - **DTOs**: Use sealed records for immutability (e.g., `WorkItemRef`, `SessionConfig`). Interfaces like `ICommand` with `Kind` for polymorphism.
 - **Versioning**: Bump `ContractVersion` on schema changes; update `CONTRACTS.md` with rationale.
