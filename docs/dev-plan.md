@@ -102,6 +102,11 @@ See `docs/module-plan.md` for per-module staged milestones and tests; use this s
   - Integration: full stack with fakes by default; optional live Jira/git.
   - Tests: E2E harness on event/command sequence, artifacts captured, push flag respected; throttling/backoff in live mode.
 
+## Status Checkpoint (2025-11-26)
+- Completed: Beacon (contracts stable with goldens/guard); Conductor (orchestrator with policy/rate/lifecycle, fakes); Dock baseline (git adapter with conflict handling, Jira adapter with retries/backoff and CommandRejected mapping, DI helper to choose fake vs real).
+- Pending Dock follow-ups: env-gated integration tests for Jira/git; richer git conflict/artifact coverage; align DI wiring into orchestrator startup.
+- Next active stage: Envoy (agents).
+
 ## Test Deployment per Stage
 - Stage A: CI build/check scripts only.
 - Stage B: Contract golden tests in CI; guard script wired.
@@ -122,6 +127,20 @@ See `docs/module-plan.md` for per-module staged milestones and tests; use this s
 - Any contract/architecture change must update docs with date/reason; CI guard enforces.
 - Default isolation: one workspace per session; no shared mutable FS.
 - Centralized rate limiting/policy gates live in orchestrator; adapters should remain lean and report errors cleanly.
+
+## Envoy Development Plan (agents)
+- Orchestrator selection: executor can run standalone for simple tickets; planner/reviewer are optional add-ons invoked by orchestrator policy for more complex work; reviewer runs in a separate optional loop.
+- Executor agent:
+  - Tasks: map chat/ticket context to commands (CreateBranch, ApplyPatch, Commit, Push, Comment, Transition); honor correlation IDs and policy/throttle signals; support dry-run flag; handle Throttled/CommandRejected gracefully.
+  - Tests: golden command emission for canned tickets; assert blocked/throttled surfaced; correlation preserved.
+- Planner agent:
+  - Tasks: emit single-node TaskPlan now; stub for future DAG; suggest branch names respecting protected list; emit PlanUpdated.
+  - Tests: golden planner outputs; PlanUpdated content stable; branch suggestion avoids protected branches.
+- Reviewer agent:
+  - Tasks: consume ArtifactAvailable (diffs/logs); emit Comment/SetAssignee/Transition (review state); no VCS writes.
+  - Tests: golden review comments for canned diffs; ensure no write commands; policy compliance.
+- Integration:
+  - Run against orchestrator + fake adapters first; no real Jira/git required. Mark any live/LLM/integration tests as `[Category=Integration]` and env-gate. Keep prompts deterministic (seeded) for goldens.
 
 ## Stage Acceptance Checklists (for tickets/Jira)
 - Stage A: docs in repo; tool versions noted; CI skeleton runs; baseline mirror plan documented (or explicitly skipped).
