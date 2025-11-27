@@ -511,31 +511,29 @@ public class ReviewerAgent : AgentBase
         }
     }
 
-    private Task PostReviewCommentsAsync(WorkItemRef workItem, ReviewResult review)
+    private async Task PostReviewCommentsAsync(WorkItemRef workItem, ReviewResult review)
     {
         Logger.LogInformation("Posting review comments for work item {WorkItemId}", workItem.Id);
 
         // Post summary comment
-        _functionBindings!.CommentAsync(workItem.Id, $"**Review Summary:** {review.Summary}");
+        await _functionBindings!.CommentAsync(workItem.Id, $"**Review Summary:** {review.Summary}");
 
         // Post issues if any
         if (review.Issues.Any())
         {
             var issuesText = string.Join("\n- ", review.Issues);
-            _functionBindings.CommentAsync(workItem.Id, $"**Issues Found:**\n- {issuesText}");
+            await _functionBindings.CommentAsync(workItem.Id, $"**Issues Found:**\n- {issuesText}");
         }
 
         // Post recommendations if any
         if (review.Recommendations.Any())
         {
             var recsText = string.Join("\n- ", review.Recommendations);
-            _functionBindings.CommentAsync(workItem.Id, $"**Recommendations:**\n- {recsText}");
+            await _functionBindings.CommentAsync(workItem.Id, $"**Recommendations:**\n- {recsText}");
         }
-
-        return Task.CompletedTask;
     }
 
-    private Task HandleReviewTransitionAsync(WorkItemRef workItem, ReviewResult review)
+    private async Task HandleReviewTransitionAsync(WorkItemRef workItem, ReviewResult review)
     {
         Logger.LogInformation("Evaluating work item transition based on review status: {Status}", review.Status);
 
@@ -543,7 +541,7 @@ public class ReviewerAgent : AgentBase
         if (workItem == null)
         {
             Logger.LogWarning("No work item provided for transition; skipping");
-            return Task.CompletedTask;
+            return;
         }
 
         // Transition based on review findings using centralized constants
@@ -558,26 +556,22 @@ public class ReviewerAgent : AgentBase
         {
             // Use the function bindings to transition the work item (Reviewer is read-only for VCS)
             Logger.LogDebug("Reviewer agent maintaining read-only policy - only work item operations allowed, no VCS commands");
-            _functionBindings!.TransitionAsync(workItem.Id, newState);
+            await _functionBindings!.TransitionAsync(workItem.Id, newState);
             Logger.LogInformation("Transitioned work item {WorkItemId} to '{NewState}'", workItem.Id, newState);
         }
-
-        return Task.CompletedTask;
     }
 
-    private Task HandleCommandRejected(CommandRejected rejected)
+    private async Task HandleCommandRejected(CommandRejected rejected)
     {
         Logger.LogWarning("Command {CommandId} was rejected: {Reason}", rejected.CommandId, rejected.Reason);
 
         // Surface the rejection to the work item
         if (Context!.Config.WorkItem != null)
         {
-            _functionBindings!.CommentAsync(
+            await _functionBindings!.CommentAsync(
                 Context.Config.WorkItem.Id,
                 $"Review operation blocked: {rejected.Reason}");
         }
-
-        return Task.CompletedTask;
     }
 
     private async Task HandleThrottled(Throttled throttled)
