@@ -1,9 +1,11 @@
 using System;
 using System.Drawing;
 using System.Windows.Forms;
+using System.IO;
 using DevExpress.XtraBars.Docking;
 using DevExpress.XtraEditors;
 using DevExpress.XtraTreeList;
+using System.Xml;
 
 namespace Ui.Shell;
 
@@ -21,11 +23,14 @@ public partial class MainForm : Form
     private MemoEdit conversationMemo;
     private TreeList artifactsTree;
 
+    private MenuStrip mainMenu;
+
     public MainForm()
     {
         InitializeComponent();
+        SetupMenu();
         SetupUI();
-        LoadDefaultLayout();
+        LoadLayout();
     }
 
     private void InitializeComponent()
@@ -33,6 +38,26 @@ public partial class MainForm : Form
         this.Text = "Junior Dev - AI-Assisted Development Platform";
         this.Size = new Size(1200, 800);
         this.StartPosition = FormStartPosition.CenterScreen;
+        
+        // Setup main menu
+        mainMenu = new MenuStrip();
+        this.MainMenuStrip = mainMenu;
+        this.Controls.Add(mainMenu);
+    }
+
+    private void SetupMenu()
+    {
+        // View menu
+        var viewMenu = new ToolStripMenuItem("View");
+        
+        // Reset Layout menu item
+        var resetLayoutItem = new ToolStripMenuItem("Reset Layout");
+        resetLayoutItem.Click += (s, e) => ResetLayout();
+        resetLayoutItem.ShortcutKeys = Keys.Control | Keys.R;
+        resetLayoutItem.ShowShortcutKeys = true;
+        
+        viewMenu.DropDownItems.Add(resetLayoutItem);
+        mainMenu.Items.Add(viewMenu);
     }
 
     private void SetupUI()
@@ -150,10 +175,87 @@ public partial class MainForm : Form
         artifactsPanel.Width = 300;
     }
 
+    private void LoadLayout()
+    {
+        try
+        {
+            string layoutFile = GetLayoutFilePath();
+            if (File.Exists(layoutFile))
+            {
+                dockManager.RestoreLayoutFromXml(layoutFile);
+            }
+            else
+            {
+                LoadDefaultLayout();
+            }
+        }
+        catch (Exception ex)
+        {
+            // If layout is corrupted, fall back to default
+            Console.WriteLine($"Failed to load layout: {ex.Message}");
+            LoadDefaultLayout();
+        }
+    }
+
     private void LoadDefaultLayout()
     {
-        // For now, just ensure the layout is set up
-        // TODO: Implement layout persistence (save/restore from user settings)
+        // Default layout is already set up in SetupLayout()
+        // Panels are docked via DockingStyle in AddPanel
+    }
+
+    private void SaveLayout()
+    {
+        try
+        {
+            string layoutFile = GetLayoutFilePath();
+            string directory = Path.GetDirectoryName(layoutFile);
+            if (!Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+            dockManager.SaveLayoutToXml(layoutFile);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save layout: {ex.Message}");
+        }
+    }
+
+    private string GetLayoutFilePath()
+    {
+        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string appFolder = Path.Combine(appData, "JuniorDev");
+        return Path.Combine(appFolder, "layout.xml");
+    }
+
+    private void ResetLayout()
+    {
+        try
+        {
+            // Delete the layout file to reset to defaults
+            string layoutFile = GetLayoutFilePath();
+            if (File.Exists(layoutFile))
+            {
+                File.Delete(layoutFile);
+            }
+            
+            // Reset panels to default layout
+            LoadDefaultLayout();
+            
+            MessageBox.Show("Layout has been reset to default.", "Layout Reset", 
+                          MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Failed to reset layout: {ex.Message}", "Error", 
+                          MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        SaveLayout();
+        base.OnFormClosing(e);
     }
 
     private void FilterSessions(string status)
@@ -181,11 +283,5 @@ public partial class MainForm : Form
                 sessionsListBox.Items.Add(session);
             }
         }
-    }
-
-    protected override void OnFormClosing(FormClosingEventArgs e)
-    {
-        // TODO: Save layout before closing
-        base.OnFormClosing(e);
     }
 }
