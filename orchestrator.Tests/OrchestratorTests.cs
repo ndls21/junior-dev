@@ -590,4 +590,96 @@ public class OrchestratorTests
         Assert.Contains(events, e => e is CommandCompleted);
         Console.WriteLine("Test passed: Command queued until approval, then executed.");
     }
+
+    [Fact]
+    public async Task QueryBacklog_EmitsBacklogQueriedWithItems()
+    {
+        Console.WriteLine("Test: QueryBacklog_EmitsBacklogQueriedWithItems");
+        Console.WriteLine("Purpose: Verify that QueryBacklog command emits BacklogQueried event with work item summaries.");
+
+        // Arrange
+        Console.WriteLine("Arrange: Creating a session for backlog querying.");
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile("test", null, null, new[] { "main" }, null, false, false, null, null),
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+        Console.WriteLine("Session created.");
+
+        var command = new QueryBacklog(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            null); // No filter
+        Console.WriteLine("Created QueryBacklog command.");
+
+        // Act
+        Console.WriteLine("Act: Publishing the query command.");
+        await _sessionManager.PublishCommand(command);
+        Console.WriteLine("Query command published.");
+
+        // Assert
+        Console.WriteLine("Assert: Verifying BacklogQueried event is emitted with expected items.");
+        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(1).ToListAsync(); // Skip status, take query result
+        Console.WriteLine($"Received {events.Count} event(s) after initial status.");
+
+        Assert.Single(events);
+        var queried = Assert.IsType<BacklogQueried>(events[0]);
+        Assert.Equal(3, queried.Items.Count); // Our fake data has 3 items
+        Assert.Contains(queried.Items, i => i.Id == "PROJ-123");
+        Assert.Contains(queried.Items, i => i.Title.Contains("authentication"));
+        Console.WriteLine("Test passed: BacklogQueried event emitted with correct fake data.");
+    }
+
+    [Fact]
+    public async Task QueryWorkItem_EmitsWorkItemQueriedWithDetails()
+    {
+        Console.WriteLine("Test: QueryWorkItem_EmitsWorkItemQueriedWithDetails");
+        Console.WriteLine("Purpose: Verify that QueryWorkItem command emits WorkItemQueried event with work item details.");
+
+        // Arrange
+        Console.WriteLine("Arrange: Creating a session for work item querying.");
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile("test", null, null, new[] { "main" }, null, false, false, null, null),
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+        Console.WriteLine("Session created.");
+
+        var command = new QueryWorkItem(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            new WorkItemRef("PROJ-124"));
+        Console.WriteLine("Created QueryWorkItem command for PROJ-124.");
+
+        // Act
+        Console.WriteLine("Act: Publishing the query command.");
+        await _sessionManager.PublishCommand(command);
+        Console.WriteLine("Query command published.");
+
+        // Assert
+        Console.WriteLine("Assert: Verifying WorkItemQueried event is emitted with expected details.");
+        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(1).ToListAsync(); // Skip status, take query result
+        Console.WriteLine($"Received {events.Count} event(s) after initial status.");
+
+        Assert.Single(events);
+        var queried = Assert.IsType<WorkItemQueried>(events[0]);
+        Assert.Equal("PROJ-124", queried.Details.Id);
+        Assert.Equal("Add database migration", queried.Details.Title);
+        Assert.Contains("database", queried.Details.Tags);
+        Console.WriteLine("Test passed: WorkItemQueried event emitted with correct fake data.");
+    }
 }

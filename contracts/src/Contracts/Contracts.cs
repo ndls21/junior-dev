@@ -10,6 +10,10 @@ public static class ContractVersion
 
 public sealed record WorkItemRef(string Id, string? ProviderHint = null);
 
+public sealed record WorkItemSummary(string Id, string Title, string Status, string? Assignee);
+
+public sealed record WorkItemDetails(string Id, string Title, string Description, string Status, string? Assignee, IReadOnlyList<string> Tags);
+
 public sealed record RepoRef(string Name, string Path);
 
 public sealed record WorkspaceRef(string Path);
@@ -65,6 +69,12 @@ public sealed record SpawnSession(Guid Id, Correlation Correlation, SessionConfi
 public sealed record LinkPlanNode(Guid Id, Correlation Correlation, string PlanNodeId)
     : CommandBase(Id, Correlation, nameof(LinkPlanNode));
 
+public sealed record QueryBacklog(Guid Id, Correlation Correlation, string? Filter = null)
+    : CommandBase(Id, Correlation, nameof(QueryBacklog));
+
+public sealed record QueryWorkItem(Guid Id, Correlation Correlation, WorkItemRef Item)
+    : CommandBase(Id, Correlation, nameof(QueryWorkItem));
+
 public interface IEvent
 {
     Guid Id { get; }
@@ -113,6 +123,12 @@ public sealed record SessionStatusChanged(Guid Id, Correlation Correlation, Sess
 
 public sealed record PlanUpdated(Guid Id, Correlation Correlation, TaskPlan Plan)
     : EventBase(Id, Correlation, nameof(PlanUpdated));
+
+public sealed record BacklogQueried(Guid Id, Correlation Correlation, IReadOnlyList<WorkItemSummary> Items)
+    : EventBase(Id, Correlation, nameof(BacklogQueried));
+
+public sealed record WorkItemQueried(Guid Id, Correlation Correlation, WorkItemDetails Details)
+    : EventBase(Id, Correlation, nameof(WorkItemQueried));
 
 public sealed record Artifact(string Kind, string Name, string? InlineText = null, string? PathHint = null, Uri? DownloadUri = null, string? ContentType = null);
 

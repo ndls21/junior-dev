@@ -15,6 +15,7 @@ Junior Dev is a .NET-based platform for AI-assisted software development, featur
 - **CI Guard**: Any contract/architecture change must update docs with date/reason (e.g., in `CONTRACTS.md`). Enforce in pre-commit hooks.
 - **Version Control Discipline**: Always `git commit` and `git push` when shifting gears into the next body of work to maintain a clean, shareable state and enable collaboration. Always `git commit` and `git push` when switching between GitHub issues to maintain a clean state and enable collaboration.
 - **Issue Management**: Prefix issue titles with the current stage name (e.g., "Envoy – Feature Name") to indicate the development phase. Create detailed GitHub issues for all TODO items with implementation requirements, technical considerations, and acceptance criteria.
+- **Dependencies**: When creating issues, note dependencies explicitly (e.g., "Blocked by #X", "Blocks #Y") in the body/comments so ordering is clear for developers.
 - **TODO Management**: When stubbing out functionality for later implementation, add detailed TODO comments with issue references. Format: `// TODO: [Brief description] - Issue: #[number]`. Create corresponding GitHub issues for tracking. TODOs should include implementation requirements, technical considerations, and acceptance criteria.
 
 ## Copilot Workflow Rules

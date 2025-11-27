@@ -13,6 +13,8 @@ Contracts are serialized using System.Text.Json with the following options:
 ## Core Types
 - `SessionId`, `CommandId`, `EventId`, `PlanNodeId`: GUIDs/strings with stable casing.
 - `WorkItemRef { string Id, string? ProviderHint }`
+- `WorkItemSummary { string Id, string Title, string Status, string? Assignee }`
+- `WorkItemDetails { string Id, string Title, string Description, string Status, string? Assignee, string[] Tags }`
 - `RepoRef { string Name, string Path }`
 - `WorkspaceRef { string Path }` (per-session workspace root)
 - `Correlation { CommandId?, ParentCommandId?, PlanNodeId?, SessionId }`
@@ -29,6 +31,8 @@ Contracts are serialized using System.Text.Json with the following options:
 - `SetAssignee { WorkItemRef Item, string Assignee }`
 - `UploadArtifact { string Name, string ContentType, byte[]/Stream Content }`
 - `RequestApproval { string Reason, string[] RequiredActions }`
+- `QueryBacklog { string? Filter }`
+- `QueryWorkItem { WorkItemRef Item }`
 - Reserved for future: `SpawnSession`, `LinkPlanNode`.
 
 ## Events (results/notifications)
@@ -40,6 +44,8 @@ Contracts are serialized using System.Text.Json with the following options:
 - `ConflictDetected { RepoRef Repo, string Details, string? PatchContent }`
 - `SessionStatusChanged { SessionId, Status, string? Reason }`
 - `PlanUpdated { SessionId, Plan }`
+- `BacklogQueried { WorkItemSummary[] Items }`
+- `WorkItemQueried { WorkItemDetails Details }`
 
 ## Artifacts (by Kind)
 - `Diff`, `Patch`, `TestResults`, `Log`, `Plan`, `ErrorReport`, `Conflict`.
