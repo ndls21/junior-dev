@@ -77,32 +77,37 @@ public class OrchestratorFunctionBindingsTests
     }
 
     [Fact]
-    public async Task ListBacklogAsync_ReturnsNotImplementedMessage()
+    public async Task ListBacklogAsync_PublishesQueryCommand()
     {
+        // Arrange
+        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .Returns(Task.CompletedTask);
+
         // Act
-        var result = await _bindings.ListBacklogAsync();
+        var result = await _bindings.ListBacklogAsync("status=open");
 
         // Assert
-        Assert.Contains("not yet implemented", result);
-        _loggerMock.Verify(
-            x => x.Log(
-                LogLevel.Warning,
-                It.IsAny<EventId>(),
-                It.IsAny<It.IsAnyType>(),
-                It.IsAny<Exception>(),
-                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+        Assert.Contains("Backlog query initiated", result);
+        Assert.Contains("BacklogQueried event", result);
+        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.Is<QueryBacklog>(cmd =>
+            cmd.Filter == "status=open")), Times.Once);
     }
 
     [Fact]
-    public async Task GetItemAsync_ReturnsNotImplementedMessage()
+    public async Task GetItemAsync_PublishesQueryCommand()
     {
+        // Arrange
+        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .Returns(Task.CompletedTask);
+
         // Act
         var result = await _bindings.GetItemAsync("TEST-123");
 
         // Assert
-        Assert.Contains("not yet implemented", result);
-        Assert.Contains("TEST-123", result);
+        Assert.Contains("Work item TEST-123 query initiated", result);
+        Assert.Contains("WorkItemQueried event", result);
+        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.Is<QueryWorkItem>(cmd =>
+            cmd.Item.Id == "TEST-123")), Times.Once);
     }
 
     [Fact]
@@ -187,6 +192,52 @@ public class OrchestratorFunctionBindingsTests
         // Assert
         Assert.Contains("[DRY RUN]", result);
         Assert.Contains("This is a test comment", result);
+        Assert.Contains("TEST-123", result);
+        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<ICommand>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ListBacklogAsync_DryRun_ReturnsDryRunMessage()
+    {
+        // Arrange
+        var agentConfig = AgentConfig.CreateDeterministic();
+        agentConfig.DryRun = true;
+        var context = new AgentSessionContext(
+            Guid.NewGuid(),
+            _context.Config,
+            _sessionManagerMock.Object,
+            agentConfig,
+            _loggerMock.Object);
+        var bindings = new OrchestratorFunctionBindings(context);
+
+        // Act
+        var result = await bindings.ListBacklogAsync("status=open");
+
+        // Assert
+        Assert.Contains("[DRY RUN]", result);
+        Assert.Contains("status=open", result);
+        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<ICommand>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetItemAsync_DryRun_ReturnsDryRunMessage()
+    {
+        // Arrange
+        var agentConfig = AgentConfig.CreateDeterministic();
+        agentConfig.DryRun = true;
+        var context = new AgentSessionContext(
+            Guid.NewGuid(),
+            _context.Config,
+            _sessionManagerMock.Object,
+            agentConfig,
+            _loggerMock.Object);
+        var bindings = new OrchestratorFunctionBindings(context);
+
+        // Act
+        var result = await bindings.GetItemAsync("TEST-123");
+
+        // Assert
+        Assert.Contains("[DRY RUN]", result);
         Assert.Contains("TEST-123", result);
         _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<ICommand>()), Times.Never);
     }

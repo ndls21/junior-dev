@@ -393,7 +393,15 @@ public void BacklogQueriedEvent_RoundTrip()
     var original = new BacklogQueried(TestCommandId, correlation, items);
     var json = JsonSerializer.Serialize(original, Options);
     var deserialized = JsonSerializer.Deserialize<BacklogQueried>(json, Options);
-    Assert.Equal(original, deserialized);
+    // Check individual properties since collection types may differ (array vs List)
+    Assert.Equal(original.Id, deserialized.Id);
+    Assert.Equal(original.Correlation, deserialized.Correlation);
+    Assert.Equal(original.Kind, deserialized.Kind);
+    Assert.Equal(original.Items.Count, deserialized.Items.Count);
+    for (int i = 0; i < original.Items.Count; i++)
+    {
+        Assert.Equal(original.Items[i], deserialized.Items[i]);
+    }
 }
 
 [Fact]
@@ -404,6 +412,19 @@ public void WorkItemQueriedEvent_RoundTrip()
     var original = new WorkItemQueried(TestCommandId, correlation, details);
     var json = JsonSerializer.Serialize(original, Options);
     var deserialized = JsonSerializer.Deserialize<WorkItemQueried>(json, Options);
-    Assert.Equal(original, deserialized);
+    // Check individual properties since collection types may differ (array vs List)
+    Assert.Equal(original.Id, deserialized.Id);
+    Assert.Equal(original.Correlation, deserialized.Correlation);
+    Assert.Equal(original.Kind, deserialized.Kind);
+    Assert.Equal(original.Details.Id, deserialized.Details.Id);
+    Assert.Equal(original.Details.Title, deserialized.Details.Title);
+    Assert.Equal(original.Details.Description, deserialized.Details.Description);
+    Assert.Equal(original.Details.Status, deserialized.Details.Status);
+    Assert.Equal(original.Details.Assignee, deserialized.Details.Assignee);
+    Assert.Equal(original.Details.Tags.Count, deserialized.Details.Tags.Count);
+    for (int i = 0; i < original.Details.Tags.Count; i++)
+    {
+        Assert.Equal(original.Details.Tags[i], deserialized.Details.Tags[i]);
+    }
 }
 }
