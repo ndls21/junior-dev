@@ -7,6 +7,7 @@ using DevExpress.XtraEditors;
 using DevExpress.XtraTreeList;
 using System.Xml;
 using System.Linq;
+using JuniorDev.Contracts;
 
 #pragma warning disable CS8602 // Dereference of possibly null reference - suppressed for fields initialized in constructor
 
@@ -42,6 +43,98 @@ public class SessionItem
             SessionStatus.Completed => (Color.Blue, Color.White, "COMPLETED"),
             _ => (Color.Gray, Color.Black, "UNKNOWN")
         };
+    }
+}
+
+// Event rendering classes
+public class EventRenderer
+{
+    private readonly RichTextBox _richTextBox;
+    private readonly Dictionary<string, Color> _eventColors = new()
+    {
+        { "CommandAccepted", Color.Green },
+        { "CommandCompleted", Color.Blue },
+        { "CommandRejected", Color.Red },
+        { "Throttled", Color.Orange },
+        { "ConflictDetected", Color.DarkRed },
+        { "ArtifactAvailable", Color.Purple },
+        { "SessionStatusChanged", Color.Teal },
+        { "Info", Color.Black },
+        { "Warning", Color.DarkOrange },
+        { "Error", Color.Red }
+    };
+
+    public EventRenderer(RichTextBox richTextBox)
+    {
+        _richTextBox = richTextBox;
+    }
+
+    public void RenderEvent(IEvent @event, DateTimeOffset timestamp)
+    {
+        var formattedEvent = FormatEvent(@event, timestamp);
+        AppendFormattedText(formattedEvent);
+        
+        // Auto-scroll if enabled
+        if (_richTextBox.Parent?.Parent is MainForm mainForm && mainForm.GetAutoScrollEventsSetting())
+        {
+            _richTextBox.SelectionStart = _richTextBox.Text.Length;
+            _richTextBox.ScrollToCaret();
+        }
+    }
+
+    private (string text, Color color) FormatEvent(IEvent @event, DateTimeOffset timestamp)
+    {
+        var timeStr = timestamp.ToString("HH:mm:ss.fff");
+        var sessionId = @event.Correlation.SessionId.ToString("N")[..8]; // First 8 chars
+        var commandId = @event.Correlation.CommandId?.ToString("N")[..8] ?? "--------";
+
+        var baseText = $"[{timeStr}] [{sessionId}] [{commandId}] ";
+
+        switch (@event)
+        {
+            case CommandAccepted accepted:
+                return ($"{baseText}✅ Command {accepted.CommandId.ToString("N")[..8]} ACCEPTED\r\n", _eventColors["CommandAccepted"]);
+            
+            case CommandCompleted completed:
+            {
+                var outcome = completed.Outcome == CommandOutcome.Success ? "SUCCESS" : "FAILED";
+                var message = string.IsNullOrEmpty(completed.Message) ? "" : $" - {completed.Message}";
+                return ($"{baseText}🏁 Command {completed.CommandId.ToString("N")[..8]} {outcome}{message}\r\n", 
+                       completed.Outcome == CommandOutcome.Success ? _eventColors["CommandCompleted"] : _eventColors["CommandRejected"]);
+            }
+            
+            case CommandRejected rejected:
+                return ($"{baseText}❌ Command {rejected.CommandId.ToString("N")[..8]} REJECTED: {rejected.Reason}\r\n", _eventColors["CommandRejected"]);
+            
+            case Throttled throttled:
+                return ($"{baseText}⏱️ THROTTLED ({throttled.Scope}) - Retry after {throttled.RetryAfter}\r\n", _eventColors["Throttled"]);
+            
+            case ConflictDetected conflict:
+                return ($"{baseText}⚠️ CONFLICT: {conflict.Details}\r\n", _eventColors["ConflictDetected"]);
+            
+            case ArtifactAvailable artifact:
+            {
+                var summary = artifact.Artifact.InlineText?.Length > 100 
+                    ? artifact.Artifact.InlineText[..100] + "..." 
+                    : artifact.Artifact.InlineText ?? "[Binary artifact]";
+                return ($"{baseText}📎 ARTIFACT: {artifact.Artifact.Name} ({artifact.Artifact.Kind}) - {summary}\r\n", _eventColors["ArtifactAvailable"]);
+            }
+            
+            case SessionStatusChanged status:
+                return ($"{baseText}🔄 Session {status.Status}{(string.IsNullOrEmpty(status.Reason) ? "" : $" - {status.Reason}")}\r\n", _eventColors["SessionStatusChanged"]);
+            
+            default:
+                return ($"{baseText}📝 {@event.Kind}: {System.Text.Json.JsonSerializer.Serialize(@event)}\r\n", _eventColors["Info"]);
+        }
+    }
+
+    private void AppendFormattedText((string text, Color color) formattedEvent)
+    {
+        _richTextBox.SelectionStart = _richTextBox.Text.Length;
+        _richTextBox.SelectionLength = 0;
+        _richTextBox.SelectionColor = formattedEvent.color;
+        _richTextBox.AppendText(formattedEvent.text);
+        _richTextBox.SelectionColor = _richTextBox.ForeColor; // Reset color
     }
 }
 
@@ -150,10 +243,10 @@ public partial class MainForm : Form
 
     // Controls within panels
     private System.Windows.Forms.ListBox? sessionsListBox;
-    private MemoEdit? conversationMemo;
+    private RichTextBox? conversationRichTextBox;
     private TreeList? artifactsTree;
 
-    internal bool isTestMode = false;
+    private bool isTestMode = false;
 
     // Public property for testing
     public bool IsTestMode
@@ -161,6 +254,8 @@ public partial class MainForm : Form
         get => isTestMode;
         set => isTestMode = value;
     }
+
+    private EventRenderer? eventRenderer;
     private System.Windows.Forms.Timer? testTimer;
     private MenuStrip? mainMenu;
     private System.Windows.Forms.Timer? eventTimer;
@@ -181,6 +276,7 @@ public partial class MainForm : Form
         InitializeComponent();
         SetupMenu();
         SetupUI();
+        eventRenderer = new EventRenderer(conversationRichTextBox!);
         LoadLayout();
         LoadAndApplySettings();
 
@@ -333,11 +429,13 @@ public partial class MainForm : Form
         conversationPanel = dockManager.AddPanel(DockingStyle.Fill);
         conversationPanel.Text = "Conversation & Events";
 
-        conversationMemo = new MemoEdit();
-        conversationMemo.Dock = DockStyle.Fill;
-        conversationMemo.Text = "Event log and conversation will appear here...\r\n\r\n[Mock Event] Session started\r\n[Mock Event] Agent initialized\r\n[Mock Event] Command executed";
+        conversationRichTextBox = new RichTextBox();
+        conversationRichTextBox.Dock = DockStyle.Fill;
+        conversationRichTextBox.ReadOnly = true;
+        conversationRichTextBox.BackColor = Color.White;
+        conversationRichTextBox.Font = new Font("Consolas", 9f); // Monospace for better formatting
 
-        conversationPanel.Controls.Add(conversationMemo);
+        conversationPanel.Controls.Add(conversationRichTextBox);
     }
 
     private void CreateArtifactsPanel()
@@ -418,34 +516,33 @@ public partial class MainForm : Form
 
     private void AddMockEvent()
     {
-        if (conversationMemo is null) return;
+        if (eventRenderer is null) return;
 
-        var mockEvents = new[]
-        {
-            "[INFO] Agent initialized successfully",
-            "[COMMAND] Running git status",
-            "[RESULT] Repository is clean",
-            "[INFO] Starting code analysis",
-            "[WARNING] Found 2 style violations",
-            "[COMMAND] Executing tests",
-            "[SUCCESS] All tests passed (15/15)",
-            "[INFO] Build completed successfully",
-            "[EVENT] Session state updated",
-            "[INFO] Waiting for user input"
-        };
-
+        // Generate mock events with proper correlation
+        var mockEvents = GenerateMockEventSequence();
         var randomEvent = mockEvents[new Random().Next(mockEvents.Length)];
-        var timestamp = DateTime.Now.ToString("HH:mm:ss");
-        var eventLine = $"[{timestamp}] {randomEvent}\r\n";
+        
+        eventRenderer.RenderEvent(randomEvent, DateTimeOffset.Now);
+    }
 
-        conversationMemo.Text += eventLine;
+    private IEvent[] GenerateMockEventSequence()
+    {
+        var sessionId = Guid.NewGuid();
+        var commandId = Guid.NewGuid();
+        var correlation = new Correlation(sessionId, commandId);
 
-        // Auto-scroll to bottom only if enabled in settings
-        if (currentSettings.AutoScrollEvents)
+        return new IEvent[]
         {
-            conversationMemo.SelectionStart = conversationMemo.Text.Length;
-            conversationMemo.ScrollToCaret();
-        }
+            new CommandAccepted(Guid.NewGuid(), correlation, commandId),
+            new CommandCompleted(Guid.NewGuid(), correlation, commandId, CommandOutcome.Success, "Tests passed (15/15)"),
+            new ArtifactAvailable(Guid.NewGuid(), correlation, new Artifact("test-results", "Test Results", "All 15 tests passed successfully")),
+            new SessionStatusChanged(Guid.NewGuid(), correlation, JuniorDev.Contracts.SessionStatus.Running, "Processing next command"),
+            new CommandAccepted(Guid.NewGuid(), new Correlation(sessionId, Guid.NewGuid()), Guid.NewGuid()),
+            new Throttled(Guid.NewGuid(), correlation, "git-operations", DateTimeOffset.Now.AddSeconds(30)),
+            new CommandRejected(Guid.NewGuid(), correlation, commandId, "Rate limit exceeded", "throttle-policy"),
+            new ConflictDetected(Guid.NewGuid(), correlation, new RepoRef("test-repo", "/path/to/repo"), "Merge conflict in main.cs"),
+            new CommandCompleted(Guid.NewGuid(), correlation, commandId, CommandOutcome.Failure, "Build failed", "COMPILATION_ERROR")
+        };
     }
 
     private void ShowSettingsDialog()
@@ -496,6 +593,7 @@ public partial class MainForm : Form
         if (sessionsPanel != null) sessionsPanel.Appearance.BackColor = backColor;
         if (conversationPanel != null) conversationPanel.Appearance.BackColor = backColor;
         if (artifactsPanel != null) artifactsPanel.Appearance.BackColor = backColor;
+        if (conversationRichTextBox != null) conversationRichTextBox.BackColor = backColor;
 
         // Apply font size to form and propagate to controls
         var newFont = new Font(this.Font.FontFamily, settings.FontSize);
