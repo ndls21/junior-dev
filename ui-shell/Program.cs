@@ -10,7 +10,6 @@ static class Program
     {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        // TODO: Implement UI shell
-        Application.Run(new Form()); // Placeholder
+        Application.Run(new MainForm());
     }
 }
