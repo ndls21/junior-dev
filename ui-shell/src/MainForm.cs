@@ -6,8 +6,132 @@ using DevExpress.XtraBars.Docking;
 using DevExpress.XtraEditors;
 using DevExpress.XtraTreeList;
 using System.Xml;
+using System.Linq;
 
 namespace Ui.Shell;
+
+public enum SessionStatus
+{
+    Running,
+    Paused,
+    Error,
+    NeedsApproval,
+    Completed
+}
+
+public class SessionItem
+{
+    public string Name { get; set; } = "";
+    public SessionStatus Status { get; set; }
+
+    public override string ToString()
+    {
+        var statusIndicator = Status switch
+        {
+            SessionStatus.Running => "🟢",
+            SessionStatus.Paused => "🟡",
+            SessionStatus.Error => "🔴",
+            SessionStatus.NeedsApproval => "🟠",
+            SessionStatus.Completed => "🔵",
+            _ => "⚪"
+        };
+        return $"{statusIndicator} {Name}";
+    }
+}
+
+public class AppSettings
+{
+    public string Theme { get; set; } = "Light";
+    public int FontSize { get; set; } = 9;
+    public bool ShowStatusChips { get; set; } = true;
+    public bool AutoScrollEvents { get; set; } = true;
+}
+
+public class SettingsDialog : Form
+{
+    private System.Windows.Forms.ComboBox themeCombo;
+    private System.Windows.Forms.NumericUpDown fontSizeSpinner;
+    private System.Windows.Forms.CheckBox statusChipsCheck;
+    private System.Windows.Forms.CheckBox autoScrollCheck;
+    private System.Windows.Forms.Button okButton;
+    private System.Windows.Forms.Button cancelButton;
+
+    public AppSettings Settings { get; private set; }
+
+    public SettingsDialog()
+    {
+        InitializeDialog();
+        LoadCurrentSettings();
+    }
+
+    private void InitializeDialog()
+    {
+        this.Text = "Settings";
+        this.Size = new Size(300, 200);
+        this.StartPosition = FormStartPosition.CenterParent;
+        this.FormBorderStyle = FormBorderStyle.FixedDialog;
+        this.MaximizeBox = false;
+        this.MinimizeBox = false;
+
+        // Theme
+        var themeLabel = new System.Windows.Forms.Label { Text = "Theme:", Location = new Point(10, 10), AutoSize = true };
+        themeCombo = new System.Windows.Forms.ComboBox
+        {
+            Location = new Point(100, 10),
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
+        themeCombo.Items.AddRange(new[] { "Light", "Dark", "Blue" });
+
+        // Font Size
+        var fontLabel = new System.Windows.Forms.Label { Text = "Font Size:", Location = new Point(10, 40), AutoSize = true };
+        fontSizeSpinner = new System.Windows.Forms.NumericUpDown
+        {
+            Location = new Point(100, 40),
+            Minimum = 8,
+            Maximum = 16,
+            Value = 9
+        };
+
+        // Checkboxes
+        statusChipsCheck = new System.Windows.Forms.CheckBox { Text = "Show status chips", Location = new Point(10, 70), AutoSize = true };
+        autoScrollCheck = new System.Windows.Forms.CheckBox { Text = "Auto-scroll events", Location = new Point(10, 95), AutoSize = true, Checked = true };
+
+        // Buttons
+        okButton = new System.Windows.Forms.Button { Text = "OK", Location = new Point(120, 130), DialogResult = DialogResult.OK };
+        cancelButton = new System.Windows.Forms.Button { Text = "Cancel", Location = new Point(200, 130), DialogResult = DialogResult.Cancel };
+
+        okButton.Click += OkButton_Click;
+
+        this.Controls.AddRange(new System.Windows.Forms.Control[] {
+            themeLabel, themeCombo, fontLabel, fontSizeSpinner,
+            statusChipsCheck, autoScrollCheck, okButton, cancelButton
+        });
+
+        this.AcceptButton = okButton;
+        this.CancelButton = cancelButton;
+    }
+
+    private void LoadCurrentSettings()
+    {
+        // Load from saved settings - in a real app this would be passed in
+        Settings = new AppSettings();
+        themeCombo.SelectedItem = Settings.Theme;
+        fontSizeSpinner.Value = Settings.FontSize;
+        statusChipsCheck.Checked = Settings.ShowStatusChips;
+        autoScrollCheck.Checked = Settings.AutoScrollEvents;
+    }
+
+    private void OkButton_Click(object sender, EventArgs e)
+    {
+        Settings = new AppSettings
+        {
+            Theme = themeCombo.SelectedItem?.ToString() ?? "Light",
+            FontSize = (int)fontSizeSpinner.Value,
+            ShowStatusChips = statusChipsCheck.Checked,
+            AutoScrollEvents = autoScrollCheck.Checked
+        };
+    }
+}
 
 public partial class MainForm : Form
 {
@@ -26,6 +150,7 @@ public partial class MainForm : Form
     private bool isTestMode = false;
     private System.Windows.Forms.Timer testTimer;
     private MenuStrip mainMenu;
+    private System.Windows.Forms.Timer eventTimer;
 
     public MainForm()
     {
@@ -39,6 +164,7 @@ public partial class MainForm : Form
         SetupMenu();
         SetupUI();
         LoadLayout();
+        LoadAndApplySettings();
 
         if (isTestMode)
         {
@@ -46,6 +172,7 @@ public partial class MainForm : Form
         }
         else
         {
+            SetupMockEventFeed();
             Console.WriteLine("UI initialized successfully. Close window to exit.");
         }
     }
@@ -72,8 +199,13 @@ public partial class MainForm : Form
         resetLayoutItem.Click += (s, e) => ResetLayout();
         resetLayoutItem.ShortcutKeys = Keys.Control | Keys.R;
         resetLayoutItem.ShowShortcutKeys = true;
-        
+
+        // Settings menu item
+        var settingsItem = new ToolStripMenuItem("Settings...");
+        settingsItem.Click += (s, e) => ShowSettingsDialog();
+
         viewMenu.DropDownItems.Add(resetLayoutItem);
+        viewMenu.DropDownItems.Add(settingsItem);
         mainMenu.Items.Add(viewMenu);
     }
 
@@ -157,17 +289,17 @@ public partial class MainForm : Form
 
         filterPanel.Controls.AddRange(new Control[] { allButton, runningButton, pausedButton, errorButton });
 
-        // Create session list
+        // Create session list with status indicators
         sessionsListBox = new ListBoxControl();
         sessionsListBox.Dock = DockStyle.Fill;
 
-        // Mock session data with status
-        sessionsListBox.Items.Add("🔄 Session 1 - Running");
-        sessionsListBox.Items.Add("⏸️ Session 2 - Paused");
-        sessionsListBox.Items.Add("❌ Session 3 - Error");
-        sessionsListBox.Items.Add("🔄 Session 4 - Running");
-        sessionsListBox.Items.Add("⚠️ Session 5 - NeedsApproval");
-        sessionsListBox.Items.Add("✅ Session 6 - Completed");
+        // Mock session data with status objects
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 1", Status = SessionStatus.Running });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 2", Status = SessionStatus.Paused });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 3", Status = SessionStatus.Error });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 4", Status = SessionStatus.Running });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 5", Status = SessionStatus.NeedsApproval });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 6", Status = SessionStatus.Completed });
 
         panel.Controls.Add(sessionsListBox);
         panel.Controls.Add(filterPanel);
@@ -282,8 +414,12 @@ public partial class MainForm : Form
                 File.Delete(layoutFile);
             }
             
-            // Reset panels to default layout
-            LoadDefaultLayout();
+            // Explicitly reset panels to default layout
+            sessionsPanel.Dock = DockingStyle.Left;
+            sessionsPanel.Width = 250;
+            artifactsPanel.Dock = DockingStyle.Right;
+            artifactsPanel.Width = 300;
+            conversationPanel.Dock = DockingStyle.Fill;
             
             MessageBox.Show("Layout has been reset to default.", "Layout Reset", 
                           MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -301,6 +437,128 @@ public partial class MainForm : Form
         base.OnFormClosing(e);
     }
 
+    private void SetupMockEventFeed()
+    {
+        eventTimer = new System.Windows.Forms.Timer();
+        eventTimer.Interval = 3000; // Add event every 3 seconds
+        eventTimer.Tick += (s, e) => AddMockEvent();
+        eventTimer.Start();
+    }
+
+    private void AddMockEvent()
+    {
+        if (conversationMemo == null) return;
+
+        var mockEvents = new[]
+        {
+            "[INFO] Agent initialized successfully",
+            "[COMMAND] Running git status",
+            "[RESULT] Repository is clean",
+            "[INFO] Starting code analysis",
+            "[WARNING] Found 2 style violations",
+            "[COMMAND] Executing tests",
+            "[SUCCESS] All tests passed (15/15)",
+            "[INFO] Build completed successfully",
+            "[EVENT] Session state updated",
+            "[INFO] Waiting for user input"
+        };
+
+        var randomEvent = mockEvents[new Random().Next(mockEvents.Length)];
+        var timestamp = DateTime.Now.ToString("HH:mm:ss");
+        var eventLine = $"[{timestamp}] {randomEvent}\r\n";
+
+        conversationMemo.Text += eventLine;
+
+        // Auto-scroll to bottom
+        conversationMemo.SelectionStart = conversationMemo.Text.Length;
+        conversationMemo.ScrollToCaret();
+    }
+
+    private void ShowSettingsDialog()
+    {
+        using var dialog = new SettingsDialog();
+        if (dialog.ShowDialog() == DialogResult.OK)
+        {
+            // Apply settings
+            ApplySettings(dialog.Settings);
+            SaveSettings(dialog.Settings);
+        }
+    }
+
+    private void LoadAndApplySettings()
+    {
+        var settings = LoadSettings();
+        ApplySettings(settings);
+    }
+
+    private void ApplySettings(AppSettings settings)
+    {
+        // Apply theme
+        switch (settings.Theme)
+        {
+            case "Light":
+                this.BackColor = Color.White;
+                break;
+            case "Dark":
+                this.BackColor = Color.FromArgb(30, 30, 30);
+                break;
+            case "Blue":
+                this.BackColor = Color.LightBlue;
+                break;
+        }
+
+        // Apply font size
+        var newFont = new Font(this.Font.FontFamily, settings.FontSize);
+        this.Font = newFont;
+        // Note: Would need to propagate to all controls in a real implementation
+    }
+
+    private void SaveSettings(AppSettings settings)
+    {
+        try
+        {
+            string settingsFile = GetSettingsFilePath();
+            string directory = Path.GetDirectoryName(settingsFile);
+            if (!Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var json = System.Text.Json.JsonSerializer.Serialize(settings);
+            File.WriteAllText(settingsFile, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save settings: {ex.Message}");
+        }
+    }
+
+    private AppSettings LoadSettings()
+    {
+        try
+        {
+            string settingsFile = GetSettingsFilePath();
+            if (File.Exists(settingsFile))
+            {
+                var json = File.ReadAllText(settingsFile);
+                return System.Text.Json.JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load settings: {ex.Message}");
+        }
+
+        return new AppSettings();
+    }
+
+    private string GetSettingsFilePath()
+    {
+        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string appFolder = Path.Combine(appData, "JuniorDev");
+        return Path.Combine(appFolder, "settings.json");
+    }
+
     private void FilterSessions(string status)
     {
         sessionsListBox.Items.Clear();
@@ -308,20 +566,24 @@ public partial class MainForm : Form
         // Mock session data - in real app this would come from session manager
         var allSessions = new[]
         {
-            "🔄 Session 1 - Running",
-            "⏸️ Session 2 - Paused",
-            "❌ Session 3 - Error",
-            "🔄 Session 4 - Running",
-            "⚠️ Session 5 - NeedsApproval",
-            "✅ Session 6 - Completed"
+            new SessionItem { Name = "Session 1", Status = SessionStatus.Running },
+            new SessionItem { Name = "Session 2", Status = SessionStatus.Paused },
+            new SessionItem { Name = "Session 3", Status = SessionStatus.Error },
+            new SessionItem { Name = "Session 4", Status = SessionStatus.Running },
+            new SessionItem { Name = "Session 5", Status = SessionStatus.NeedsApproval },
+            new SessionItem { Name = "Session 6", Status = SessionStatus.Completed }
         };
 
         foreach (var session in allSessions)
         {
-            if (status == "All" ||
-                (status == "Running" && session.Contains("Running")) ||
-                (status == "Paused" && session.Contains("Paused")) ||
-                (status == "Error" && session.Contains("Error")))
+            bool shouldShow = status == "All" ||
+                (status == "Running" && session.Status == SessionStatus.Running) ||
+                (status == "Paused" && session.Status == SessionStatus.Paused) ||
+                (status == "Error" && session.Status == SessionStatus.Error) ||
+                (status == "NeedsApproval" && session.Status == SessionStatus.NeedsApproval) ||
+                (status == "Completed" && session.Status == SessionStatus.Completed);
+
+            if (shouldShow)
             {
                 sessionsListBox.Items.Add(session);
             }
