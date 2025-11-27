@@ -7,12 +7,48 @@ using Microsoft.SemanticKernel;
 namespace JuniorDev.Agents.Sk;
 
 /// <summary>
+/// Represents a function call to be executed by the orchestrator.
+/// </summary>
+public record FunctionCall
+{
+    /// <summary>
+    /// The plugin name (e.g., "vcs", "workitems", "general").
+    /// </summary>
+    public required string PluginName { get; init; }
+    
+    /// <summary>
+    /// The function name within the plugin.
+    /// </summary>
+    public required string FunctionName { get; init; }
+    
+    /// <summary>
+    /// Human-readable description of what this function call does.
+    /// </summary>
+    public required string Description { get; init; }
+    
+    /// <summary>
+    /// Arguments to pass to the function.
+    /// </summary>
+    public required KernelArguments Arguments { get; init; }
+    
+    /// <summary>
+    /// Whether this operation is considered risky (requires retry logic).
+    /// </summary>
+    public bool IsRisky { get; init; }
+}
+
+/// <summary>
 /// Executor agent that processes work items by analyzing requirements and executing development tasks.
 /// </summary>
 public class ExecutorAgent : AgentBase
 {
     private readonly Kernel _kernel;
     private OrchestratorFunctionBindings? _functionBindings;
+    
+    // Track execution state
+    private readonly List<FunctionCall> _pendingOperations = new();
+    private bool _testsExecuted = false;
+    private bool _approvalGranted = false;
 
     public override string AgentType => "executor";
 
@@ -27,6 +63,9 @@ public class ExecutorAgent : AgentBase
         _functionBindings = new OrchestratorFunctionBindings(Context!);
         _functionBindings.RegisterFunctions(_kernel);
         
+        // Register this agent's functions as SK functions
+        RegisterAgentFunctions();
+
         Logger.LogInformation("Executor agent started for session {SessionId}", Context!.Config.SessionId);
 
         // Check if we have a work item to execute (auto-execution mode)
@@ -44,6 +83,23 @@ public class ExecutorAgent : AgentBase
     {
         Logger.LogInformation("Executor agent stopped for session {SessionId}", Context!.Config.SessionId);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Registers this agent's capabilities as Semantic Kernel functions.
+    /// This makes the agent's high-level operations discoverable by LLMs.
+    /// </summary>
+    private void RegisterAgentFunctions()
+    {
+        try
+        {
+            _kernel.Plugins.AddFromObject(this, "executor_agent");
+            Logger.LogInformation("Registered executor agent functions with kernel");
+        }
+        catch (ArgumentException ex) when (ex.Message.Contains("An item with the same key has already been added"))
+        {
+            Logger.LogDebug("Executor agent functions already registered");
+        }
     }
 
     protected override async Task OnEventAsync(IEvent @event)
@@ -66,6 +122,16 @@ public class ExecutorAgent : AgentBase
                 Logger.LogDebug("Ignoring event {EventType}", @event.Kind);
                 break;
         }
+    }
+
+    [KernelFunction("execute_work_item")]
+    [Description("Executes a work item by analyzing it and performing the necessary development tasks.")]
+    public async Task<string> ExecuteWorkItemKernelFunctionAsync(
+        [Description("The work item ID to execute")] string workItemId)
+    {
+        var workItem = new WorkItemRef(workItemId);
+        await ExecuteWorkItemAsync(workItem);
+        return $"Executed work item {workItemId}";
     }
 
     private async Task ExecuteWorkItemAsync(WorkItemRef workItem)
@@ -117,132 +183,264 @@ public class ExecutorAgent : AgentBase
         }
     }
 
-    private Task<List<FunctionCall>> AnalyzeWorkItemAsync(WorkItemRef workItem)
+    private async Task<List<FunctionCall>> AnalyzeWorkItemAsync(WorkItemRef workItem)
     {
         Logger.LogInformation("Analyzing work item {WorkItemId} to create execution plan", workItem.Id);
 
-        // Use SK functions to analyze the work item and determine what needs to be done
-        // For now, we'll use a simple analysis, but this could be enhanced with LLM analysis
-        var analysisPrompt = $"Analyze this work item: {workItem.Id}. Determine what development tasks need to be performed.";
-
-        // TODO: Replace with SK/LLM-driven analysis that directly outputs function calls
-        // The LLM would:
-        // 1. Query work item details via get_item function
-        // 2. Analyze requirements and constraints
-        // 3. Generate a sequence of function calls to accomplish the task
-        // 4. Consider policy constraints in its planning
-        // For now, generate function calls programmatically
-
         var functionCalls = new List<FunctionCall>();
 
-        // For now, keep the basic logic but express as SK function calls
-        if (workItem.Id.Contains("FEATURE") || workItem.Id.Contains("TASK") || workItem.Id.Contains("BUG"))
+        try
         {
-            // Create a feature branch with policy-aware naming using ClaimUtilities
-            var claimUtil = new ClaimUtilities(Context!);
-            var branchName = claimUtil.GenerateBranchName(workItem, Context!.Config.Policy.ProtectedBranches);
+            // TODO: Use SK/LLM to analyze work item details once get_item function is implemented
+            // For now, analyze based on work item ID patterns and basic heuristics
+            
+            // Check if this appears to be a development task based on ID patterns
+            bool isDevelopmentTask = workItem.Id.Contains("FEATURE") || 
+                                   workItem.Id.Contains("TASK") || 
+                                   workItem.Id.Contains("BUG") ||
+                                   workItem.Id.Contains("STORY") ||
+                                   workItem.Id.Contains("EPIC");
 
-            functionCalls.Add(new FunctionCall
-            {
-                PluginName = "vcs",
-                FunctionName = "create_branch",
-                Description = $"Create feature branch for {workItem.Id}",
-                Arguments = new KernelArguments
-                {
-                    ["repoName"] = Context.Config.Repo.Name,
-                    ["branchName"] = branchName,
-                    ["fromRef"] = "main"
-                },
-                IsRisky = false
-            });
+            // Additional heuristics could be added here when work item details are available
+            // e.g., check description, tags, etc.
 
-            // Add implementation step (placeholder - real implementation would apply patches)
-            functionCalls.Add(new FunctionCall
+            if (isDevelopmentTask)
             {
-                PluginName = "vcs",
-                FunctionName = "commit",
-                Description = $"Implement changes for {workItem.Id}",
-                Arguments = new KernelArguments
-                {
-                    ["repoName"] = Context.Config.Repo.Name,
-                    ["message"] = $"Implement {workItem.Id}: Development work completed",
-                    ["amend"] = false
-                },
-                IsRisky = false
-            });
+                Logger.LogInformation("Work item {WorkItemId} identified as development task", workItem.Id);
+                
+                // Create a feature branch with policy-aware naming using ClaimUtilities
+                var claimUtil = new ClaimUtilities(Context!);
+                var branchName = claimUtil.GenerateBranchName(workItem, Context!.Config.Policy.ProtectedBranches);
 
-            // Add testing if required by policy
-            if (Context!.Config.Policy.RequireTestsBeforePush)
-            {
                 functionCalls.Add(new FunctionCall
                 {
                     PluginName = "vcs",
-                    FunctionName = "run_tests",
-                    Description = "Run tests before push",
+                    FunctionName = "create_branch",
+                    Description = $"Create feature branch for {workItem.Id}",
                     Arguments = new KernelArguments
                     {
-                        ["repoName"] = Context.Config.Repo.Name
+                        ["repoName"] = Context.Config.Repo.Name,
+                        ["branchName"] = branchName,
+                        ["fromRef"] = "main"
                     },
                     IsRisky = false
                 });
-            }
 
-            // Add approval request if required by policy
-            if (Context.Config.Policy.RequireApprovalForPush)
-            {
+                // Add implementation step (placeholder - real implementation would apply patches)
                 functionCalls.Add(new FunctionCall
                 {
-                    PluginName = "general",
-                    FunctionName = "request_approval",
-                    Description = $"Request approval before pushing {workItem.Id}",
+                    PluginName = "vcs",
+                    FunctionName = "commit",
+                    Description = $"Implement changes for {workItem.Id}",
                     Arguments = new KernelArguments
                     {
-                        ["reason"] = $"Push changes for {workItem.Id} to branch {branchName}",
-                        ["requiredActions"] = new[] { "Push" }
+                        ["repoName"] = Context.Config.Repo.Name,
+                        ["message"] = $"Implement {workItem.Id}: Development work completed",
+                        ["amend"] = false
                     },
                     IsRisky = false
                 });
-            }
 
-            // Add push (marked as risky for dry-run handling)
-            functionCalls.Add(new FunctionCall
-            {
-                PluginName = "vcs",
-                FunctionName = "push",
-                Description = $"Push changes for {workItem.Id}",
-                Arguments = new KernelArguments
+                // Add testing if required by policy
+                if (Context!.Config.Policy.RequireTestsBeforePush)
                 {
-                    ["repoName"] = Context.Config.Repo.Name,
-                    ["branchName"] = branchName
-                },
-                IsRisky = true
-            });
+                    functionCalls.Add(new FunctionCall
+                    {
+                        PluginName = "vcs",
+                        FunctionName = "run_tests",
+                        Description = "Run tests before push",
+                        Arguments = new KernelArguments
+                        {
+                            ["repoName"] = Context.Config.Repo.Name
+                        },
+                        IsRisky = false
+                    });
+                }
+
+                // Add approval request if required by policy
+                if (Context.Config.Policy.RequireApprovalForPush)
+                {
+                    functionCalls.Add(new FunctionCall
+                    {
+                        PluginName = "general",
+                        FunctionName = "request_approval",
+                        Description = $"Request approval before pushing {workItem.Id}",
+                        Arguments = new KernelArguments
+                        {
+                            ["reason"] = $"Push changes for {workItem.Id} to branch {branchName}",
+                            ["requiredActions"] = new[] { "Push" }
+                        },
+                        IsRisky = false
+                    });
+                }
+
+                // Add push (marked as risky for dry-run handling)
+                functionCalls.Add(new FunctionCall
+                {
+                    PluginName = "vcs",
+                    FunctionName = "push",
+                    Description = $"Push changes for {workItem.Id}",
+                    Arguments = new KernelArguments
+                    {
+                        ["repoName"] = Context.Config.Repo.Name,
+                        ["branchName"] = branchName
+                    },
+                    IsRisky = true
+                });
+            }
+            else
+            {
+                Logger.LogInformation("Work item {WorkItemId} does not appear to require development tasks", workItem.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to analyze work item {WorkItemId}, using fallback analysis", workItem.Id);
+            
+            // Fallback to basic analysis if anything fails
+            if (workItem.Id.Contains("FEATURE") || workItem.Id.Contains("TASK") || workItem.Id.Contains("BUG"))
+            {
+                var claimUtil = new ClaimUtilities(Context!);
+                var branchName = claimUtil.GenerateBranchName(workItem, Context!.Config.Policy.ProtectedBranches);
+
+                functionCalls.Add(new FunctionCall
+                {
+                    PluginName = "vcs",
+                    FunctionName = "create_branch",
+                    Description = $"Create feature branch for {workItem.Id}",
+                    Arguments = new KernelArguments
+                    {
+                        ["repoName"] = Context.Config.Repo.Name,
+                        ["branchName"] = branchName
+                    },
+                    IsRisky = false
+                });
+
+                functionCalls.Add(new FunctionCall
+                {
+                    PluginName = "vcs",
+                    FunctionName = "commit",
+                    Description = $"Implement changes for {workItem.Id}",
+                    Arguments = new KernelArguments
+                    {
+                        ["repoName"] = Context.Config.Repo.Name,
+                        ["message"] = $"Implement {workItem.Id}",
+                        ["amend"] = false
+                    },
+                    IsRisky = false
+                });
+
+                if (Context!.Config.Policy.RequireTestsBeforePush)
+                {
+                    functionCalls.Add(new FunctionCall
+                    {
+                        PluginName = "vcs",
+                        FunctionName = "run_tests",
+                        Description = "Run tests before push",
+                        Arguments = new KernelArguments
+                        {
+                            ["repoName"] = Context.Config.Repo.Name
+                        },
+                        IsRisky = false
+                    });
+                }
+
+                if (Context.Config.Policy.RequireApprovalForPush)
+                {
+                    functionCalls.Add(new FunctionCall
+                    {
+                        PluginName = "general",
+                        FunctionName = "request_approval",
+                        Description = $"Request approval before pushing {workItem.Id}",
+                        Arguments = new KernelArguments
+                        {
+                            ["reason"] = $"Push changes for {workItem.Id}",
+                            ["requiredActions"] = new[] { "Push" }
+                        },
+                        IsRisky = false
+                    });
+                }
+
+                functionCalls.Add(new FunctionCall
+                {
+                    PluginName = "vcs",
+                    FunctionName = "push",
+                    Description = $"Push changes for {workItem.Id}",
+                    Arguments = new KernelArguments
+                    {
+                        ["repoName"] = Context.Config.Repo.Name,
+                        ["branchName"] = branchName
+                    },
+                    IsRisky = true
+                });
+            }
         }
 
         Logger.LogInformation("Created execution plan with {CallCount} function calls for work item {WorkItemId}",
             functionCalls.Count, workItem.Id);
 
-        return Task.FromResult(functionCalls);
+        return functionCalls;
     }
 
     private async Task ExecutePlanAsync(List<FunctionCall> plan, WorkItemRef workItem)
     {
         Logger.LogInformation("Executing {CallCount} function calls for work item {WorkItemId}", plan.Count, workItem.Id);
 
+        // Reset execution state for this work item
+        _pendingOperations.Clear();
+        _testsExecuted = false;
+        _approvalGranted = false;
+
         foreach (var call in plan)
         {
+            // Track risky operations for retry logic
+            if (call.IsRisky)
+            {
+                _pendingOperations.Add(call);
+            }
+
             // Dry-run mode skips risky operations (already handled by OrchestratorFunctionBindings)
             // but we log them here for visibility
             if (Context!.AgentConfig.DryRun && call.IsRisky)
             {
                 Logger.LogInformation("[DRY RUN] Would execute: {Description}", call.Description);
                 // Still invoke - the function binding will handle dry-run mode
+                continue;
+            }
+
+            // Check push gating before executing push operations
+            if (call.PluginName == "vcs" && call.FunctionName == "push")
+            {
+                if (!CanExecutePush(workItem))
+                {
+                    Logger.LogWarning("Push operation blocked by policy for work item {WorkItemId}", workItem.Id);
+                    await _functionBindings!.CommentAsync(workItem.Id, "Push operation blocked by policy requirements (tests and/or approval needed).");
+                    continue;
+                }
             }
 
             try
             {
                 await ExecuteFunctionCallAsync(call);
                 Logger.LogInformation("Completed function call: {Description}", call.Description);
+                
+                // Update execution state
+                if (call.PluginName == "vcs" && call.FunctionName == "run_tests")
+                {
+                    _testsExecuted = true;
+                }
+                else if (call.PluginName == "general" && call.FunctionName == "request_approval")
+                {
+                    // Note: In a real implementation, approval would be granted asynchronously
+                    // For now, we'll assume approval is granted when requested
+                    _approvalGranted = true;
+                }
+                
+                // Remove from pending operations on success
+                if (call.IsRisky)
+                {
+                    _pendingOperations.Remove(call);
+                }
             }
             catch (Exception ex)
             {
@@ -254,48 +452,83 @@ public class ExecutorAgent : AgentBase
 
     private async Task ExecuteFunctionCallAsync(FunctionCall call)
     {
-        // Invoke the SK function via the kernel
-        // This delegates all policy enforcement to the orchestrator through OrchestratorFunctionBindings
-        var result = await _kernel.InvokeAsync(
-            call.PluginName,
-            call.FunctionName,
-            call.Arguments);
+        // Call the appropriate method on _functionBindings based on plugin and function name
+        // This provides direct method invocation with proper policy enforcement
+        var result = call.PluginName switch
+        {
+            "vcs" => call.FunctionName switch
+            {
+                "create_branch" => await _functionBindings.CreateBranchAsync(
+                    call.Arguments["repoName"] as string ?? throw new ArgumentException("repoName is required"),
+                    call.Arguments["branchName"] as string ?? throw new ArgumentException("branchName is required"),
+                    call.Arguments.TryGetValue("fromRef", out var fromRef) ? fromRef as string : null),
+                
+                "commit" => await _functionBindings.CommitAsync(
+                    call.Arguments["repoName"] as string ?? throw new ArgumentException("repoName is required"),
+                    call.Arguments["message"] as string ?? throw new ArgumentException("message is required"),
+                    call.Arguments.TryGetValue("amend", out var amend) && amend is bool b ? b : false),
+                
+                "run_tests" => await _functionBindings.RunTestsAsync(
+                    call.Arguments["repoName"] as string ?? throw new ArgumentException("repoName is required"),
+                    call.Arguments.TryGetValue("filter", out var filter) ? filter as string : null,
+                    call.Arguments.TryGetValue("timeoutSeconds", out var timeout) && timeout is int i ? i : (int?)null),
+                
+                "push" => await _functionBindings.PushAsync(
+                    call.Arguments["repoName"] as string ?? throw new ArgumentException("repoName is required"),
+                    call.Arguments["branchName"] as string ?? throw new ArgumentException("branchName is required")),
+                
+                "get_diff" => await _functionBindings.GetDiffAsync(
+                    call.Arguments["repoName"] as string ?? throw new ArgumentException("repoName is required"),
+                    call.Arguments.TryGetValue("refName", out var refName) ? refName as string : null),
+                
+                _ => throw new ArgumentException($"Unknown VCS function: {call.FunctionName}")
+            },
+            
+            "workitems" => call.FunctionName switch
+            {
+                "claim_item" => await _functionBindings.ClaimItemAsync(
+                    call.Arguments["itemId"] as string ?? throw new ArgumentException("itemId is required")),
+                
+                "comment" => await _functionBindings.CommentAsync(
+                    call.Arguments["itemId"] as string ?? throw new ArgumentException("itemId is required"),
+                    call.Arguments["comment"] as string ?? throw new ArgumentException("comment is required")),
+                
+                "transition" => await _functionBindings.TransitionAsync(
+                    call.Arguments["itemId"] as string ?? throw new ArgumentException("itemId is required"),
+                    call.Arguments["newState"] as string ?? throw new ArgumentException("newState is required")),
+                
+                _ => throw new ArgumentException($"Unknown workitems function: {call.FunctionName}")
+            },
+            
+            "general" => call.FunctionName switch
+            {
+                "request_approval" => await _functionBindings.RequestApprovalAsync(
+                    call.Arguments["reason"] as string ?? throw new ArgumentException("reason is required"),
+                    call.Arguments["requiredActions"] as string[] ?? throw new ArgumentException("requiredActions is required")),
+                
+                _ => throw new ArgumentException($"Unknown general function: {call.FunctionName}")
+            },
+            
+            _ => throw new ArgumentException($"Unknown plugin: {call.PluginName}")
+        };
 
         Logger.LogDebug("Function {Plugin}.{Function} returned: {Result}",
-            call.PluginName, call.FunctionName, result.ToString());
+            call.PluginName, call.FunctionName, result);
     }
 
     private async Task CompleteWorkItemAsync(WorkItemRef workItem)
     {
         Logger.LogInformation("Marking work item {WorkItemId} as completed", workItem.Id);
 
-        // Use kernel invocations for consistency
-        await _kernel.InvokeAsync("workitems", "transition", new KernelArguments
-        {
-            ["itemId"] = workItem.Id,
-            ["newState"] = "Done"
-        });
-
-        await _kernel.InvokeAsync("workitems", "comment", new KernelArguments
-        {
-            ["itemId"] = workItem.Id,
-            ["comment"] = "Implementation completed successfully"
-        });
+        // Use function bindings for consistency
+        await _functionBindings.TransitionAsync(workItem.Id, "Done");
+        await _functionBindings.CommentAsync(workItem.Id, "Implementation completed successfully");
     }
 
     private async Task HandleExecutionErrorAsync(WorkItemRef workItem, Exception ex)
     {
-        await _kernel.InvokeAsync("workitems", "comment", new KernelArguments
-        {
-            ["itemId"] = workItem.Id,
-            ["comment"] = $"Execution failed: {ex.Message}"
-        });
-
-        await _kernel.InvokeAsync("workitems", "transition", new KernelArguments
-        {
-            ["itemId"] = workItem.Id,
-            ["newState"] = "Blocked"
-        });
+        await _functionBindings.CommentAsync(workItem.Id, $"Execution failed: {ex.Message}");
+        await _functionBindings.TransitionAsync(workItem.Id, "Blocked");
     }
 
     private Task HandleCommandCompleted(CommandCompleted completed)
@@ -312,11 +545,7 @@ public class ExecutorAgent : AgentBase
         // Surface the rejection to the work item
         if (Context!.Config.WorkItem != null)
         {
-            await _kernel.InvokeAsync("workitems", "comment", new KernelArguments
-            {
-                ["itemId"] = Context.Config.WorkItem.Id,
-                ["comment"] = $"Command rejected: {rejected.Reason}"
-            });
+            await _functionBindings.CommentAsync(Context.Config.WorkItem.Id, $"Command rejected: {rejected.Reason}");
         }
     }
 
@@ -335,15 +564,37 @@ public class ExecutorAgent : AgentBase
         // Surface the throttling to the work item
         if (Context!.Config.WorkItem != null)
         {
-            await _kernel.InvokeAsync("workitems", "comment", new KernelArguments
-            {
-                ["itemId"] = Context.Config.WorkItem.Id,
-                ["comment"] = $"Operation throttled for scope '{throttled.Scope}'. Retried after backoff period."
-            });
+            await _functionBindings!.CommentAsync(Context.Config.WorkItem.Id, $"Operation throttled for scope '{throttled.Scope}'. Retried after backoff period.");
         }
 
-        // TODO: Implement retry logic for the specific operation that was throttled
-        // This would require tracking pending operations and retrying them
+        // Retry the last pending operation if any
+        if (_pendingOperations.Any())
+        {
+            var lastOperation = _pendingOperations.Last();
+            Logger.LogInformation("Retrying throttled operation: {Description}", lastOperation.Description);
+            
+            try
+            {
+                await ExecuteFunctionCallAsync(lastOperation);
+                Logger.LogInformation("Successfully retried operation: {Description}", lastOperation.Description);
+                
+                // Remove from pending operations
+                _pendingOperations.RemoveAt(_pendingOperations.Count - 1);
+                
+                // Continue with next operation if any
+                if (_pendingOperations.Any())
+                {
+                    var nextOperation = _pendingOperations.First();
+                    _pendingOperations.RemoveAt(0);
+                    await ExecuteFunctionCallAsync(nextOperation);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Failed to retry throttled operation: {Description}", lastOperation.Description);
+                // Keep the operation in pending list for potential future retry
+            }
+        }
     }
 
     private async Task HandleConflictDetected(ConflictDetected conflict)
@@ -352,36 +603,78 @@ public class ExecutorAgent : AgentBase
 
         if (Context!.Config.WorkItem != null)
         {
-            await _kernel.InvokeAsync("workitems", "comment", new KernelArguments
-            {
-                ["itemId"] = Context.Config.WorkItem.Id,
-                ["comment"] = $"Conflict detected: {conflict.Details}. Manual resolution required."
-            });
+            await _functionBindings!.CommentAsync(Context.Config.WorkItem.Id, $"Conflict detected: {conflict.Details}. Attempting automatic resolution.");
 
-            // If we have patch content, we could try to apply it, but for now just block
+            // Attempt automatic conflict resolution using patch content
             if (!string.IsNullOrEmpty(conflict.PatchContent))
             {
-                Logger.LogInformation("Conflict includes patch content - could attempt automatic resolution");
-                // TODO: Implement automatic conflict resolution using the patch
+                Logger.LogInformation("Attempting automatic conflict resolution with patch content");
+                
+                try
+                {
+                    // Apply the patch to resolve the conflict
+                    await _functionBindings.ApplyPatchAsync(conflict.Repo.Name, conflict.PatchContent);
+                    
+                    // Commit the resolved changes
+                    await _functionBindings.CommitAsync(
+                        conflict.Repo.Name,
+                        $"Resolve conflict for {Context.Config.WorkItem.Id}",
+                        false);
+                    
+                    await _functionBindings.CommentAsync(Context.Config.WorkItem.Id, "Conflict automatically resolved using patch content.");
+                    Logger.LogInformation("Successfully resolved conflict for work item {WorkItemId}", Context.Config.WorkItem.Id);
+                    
+                    // Continue with pending operations if any
+                    if (_pendingOperations.Any())
+                    {
+                        var nextOperation = _pendingOperations.First();
+                        _pendingOperations.RemoveAt(0);
+                        await ExecuteFunctionCallAsync(nextOperation);
+                    }
+                    
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Failed to automatically resolve conflict for work item {WorkItemId}", Context.Config.WorkItem.Id);
+                    await _functionBindings.CommentAsync(Context.Config.WorkItem.Id, $"Automatic conflict resolution failed: {ex.Message}. Manual resolution required.");
+                }
+            }
+            else
+            {
+                await _functionBindings.CommentAsync(Context.Config.WorkItem.Id, "No patch content available for automatic resolution. Manual resolution required.");
             }
 
-            await _kernel.InvokeAsync("workitems", "transition", new KernelArguments
-            {
-                ["itemId"] = Context.Config.WorkItem.Id,
-                ["newState"] = "Blocked"
-            });
+            // If auto-resolution failed or no patch available, block the work item
+            await _functionBindings.TransitionAsync(Context.Config.WorkItem.Id, "Blocked");
         }
     }
 
-    /// <summary>
-    /// Represents a planned function call to be executed via Semantic Kernel.
-    /// </summary>
-    private class FunctionCall
+    private bool CanExecutePush(WorkItemRef workItem)
     {
-        public string PluginName { get; set; } = "";
-        public string FunctionName { get; set; } = "";
-        public string Description { get; set; } = "";
-        public KernelArguments Arguments { get; set; } = new();
-        public bool IsRisky { get; set; }
+        var policy = Context!.Config.Policy;
+        
+        // Check if tests are required and have been executed
+        if (policy.RequireTestsBeforePush && !_testsExecuted)
+        {
+            Logger.LogWarning("Push blocked: Tests required but not executed for work item {WorkItemId}", workItem.Id);
+            return false;
+        }
+        
+        // Check if approval is required and has been granted
+        if (policy.RequireApprovalForPush && !_approvalGranted)
+        {
+            Logger.LogWarning("Push blocked: Approval required but not granted for work item {WorkItemId}", workItem.Id);
+            return false;
+        }
+        
+        // Check dry-run mode
+        if (Context.AgentConfig.DryRun)
+        {
+            Logger.LogInformation("Push blocked: Dry-run mode enabled for work item {WorkItemId}", workItem.Id);
+            return false;
+        }
+        
+        return true;
     }
 }
