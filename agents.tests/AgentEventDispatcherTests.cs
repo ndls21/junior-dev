@@ -181,4 +181,70 @@ public class AgentEventDispatcherTests
         // Assert - agent should not receive event from different session
         agent.Verify(a => a.HandleEventAsync(It.IsAny<IEvent>()), Times.Never);
     }
+
+    [Fact]
+    public async Task DispatchEventAsync_RoutesCommandResponseToOriginatingAgent_WhenIssuerAgentIdIsSet()
+    {
+        // Arrange
+        var originatingAgent = new Mock<IAgent>();
+        originatingAgent.Setup(a => a.AgentType).Returns("TestAgent");
+        originatingAgent.Setup(a => a.Id).Returns("originating-agent");
+
+        var otherAgent = new Mock<IAgent>();
+        otherAgent.Setup(a => a.AgentType).Returns("TestAgent");
+        otherAgent.Setup(a => a.Id).Returns("other-agent");
+
+        _dispatcher.RegisterAgent(originatingAgent.Object);
+        _dispatcher.RegisterAgent(otherAgent.Object);
+
+        var sessionId = Guid.NewGuid();
+        var commandId = Guid.NewGuid();
+
+        // Create a command response event with IssuerAgentId set to the originating agent
+        var commandCompletedEvent = new CommandCompleted(
+            Id: Guid.NewGuid(),
+            Correlation: new Correlation(sessionId, commandId, null, null, "originating-agent"),
+            CommandId: commandId,
+            Outcome: CommandOutcome.Success);
+
+        // Act
+        await _dispatcher.DispatchEventAsync(commandCompletedEvent, sessionId);
+
+        // Assert - only the originating agent should receive the event
+        originatingAgent.Verify(a => a.HandleEventAsync(commandCompletedEvent), Times.Once);
+        otherAgent.Verify(a => a.HandleEventAsync(It.IsAny<IEvent>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DispatchEventAsync_BroadcastsToAllAgents_WhenIssuerAgentIdIsNull()
+    {
+        // Arrange
+        var agent1 = new Mock<IAgent>();
+        agent1.Setup(a => a.AgentType).Returns("TestAgent");
+        agent1.Setup(a => a.Id).Returns("agent1");
+
+        var agent2 = new Mock<IAgent>();
+        agent2.Setup(a => a.AgentType).Returns("TestAgent");
+        agent2.Setup(a => a.Id).Returns("agent2");
+
+        _dispatcher.RegisterAgent(agent1.Object);
+        _dispatcher.RegisterAgent(agent2.Object);
+
+        var sessionId = Guid.NewGuid();
+        var commandId = Guid.NewGuid();
+
+        // Create a command response event with IssuerAgentId set to null (legacy behavior)
+        var commandCompletedEvent = new CommandCompleted(
+            Id: Guid.NewGuid(),
+            Correlation: new Correlation(sessionId, commandId, null, null, null),
+            CommandId: commandId,
+            Outcome: CommandOutcome.Success);
+
+        // Act
+        await _dispatcher.DispatchEventAsync(commandCompletedEvent, sessionId);
+
+        // Assert - all agents should receive the event (broadcast behavior)
+        agent1.Verify(a => a.HandleEventAsync(commandCompletedEvent), Times.Once);
+        agent2.Verify(a => a.HandleEventAsync(commandCompletedEvent), Times.Once);
+    }
 }

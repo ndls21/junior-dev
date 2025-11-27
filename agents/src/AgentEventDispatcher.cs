@@ -72,18 +72,21 @@ public class AgentEventDispatcher
 
         var tasks = new List<Task>();
 
-        foreach (var agents in _agentsByType.Values)
-        {
-            foreach (var agent in agents)
-            {
-                // Filter by session if specified
-                if (sessionId.HasValue && !ShouldAgentReceiveEvent(agent, @event, sessionId.Value))
-                {
-                    continue;
-                }
+        // Create a snapshot of agents to avoid concurrent modification issues
+        // during iteration if agents are registered/unregistered while dispatching
+        var agentSnapshot = _agentsByType.Values
+            .SelectMany(agents => agents)
+            .ToList();
 
-                tasks.Add(DispatchToAgentAsync(agent, @event));
+        foreach (var agent in agentSnapshot)
+        {
+            // Filter by session if specified
+            if (sessionId.HasValue && !ShouldAgentReceiveEvent(agent, @event, sessionId.Value))
+            {
+                continue;
             }
+
+            tasks.Add(DispatchToAgentAsync(agent, @event));
         }
 
         await Task.WhenAll(tasks);
