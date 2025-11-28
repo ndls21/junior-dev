@@ -28,6 +28,14 @@ public class FakeWorkItemsAdapter : FakeAdapter
 
     private async Task HandleQueryBacklog(QueryBacklog command, SessionState session)
     {
+        // Emit CommandAccepted
+        var acceptedEvent = new CommandAccepted(
+            Guid.NewGuid(),
+            command.Correlation,
+            command.Id);
+
+        await session.AddEvent(acceptedEvent);
+
         // Fake implementation: return some sample work items
         var items = new List<WorkItemSummary>
         {
@@ -49,10 +57,27 @@ public class FakeWorkItemsAdapter : FakeAdapter
             items);
 
         await session.AddEvent(queriedEvent);
+
+        // Emit CommandCompleted
+        var completedEvent = new CommandCompleted(
+            Guid.NewGuid(),
+            command.Correlation,
+            command.Id,
+            CommandOutcome.Success);
+
+        await session.AddEvent(completedEvent);
     }
 
     private async Task HandleQueryWorkItem(QueryWorkItem command, SessionState session)
     {
+        // Emit CommandAccepted
+        var acceptedEvent = new CommandAccepted(
+            Guid.NewGuid(),
+            command.Correlation,
+            command.Id);
+
+        await session.AddEvent(acceptedEvent);
+
         // Fake implementation: return details for the requested item
         var details = command.Item.Id switch
         {
@@ -92,5 +117,14 @@ public class FakeWorkItemsAdapter : FakeAdapter
             details);
 
         await session.AddEvent(queriedEvent);
+
+        // Emit CommandCompleted
+        var completedEvent = new CommandCompleted(
+            Guid.NewGuid(),
+            command.Correlation,
+            command.Id,
+            CommandOutcome.Success);
+
+        await session.AddEvent(completedEvent);
     }
 }

@@ -30,6 +30,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ui.Shell", "ui-shell\Ui.She
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ui-shell.tests", "ui-shell.tests\ui-shell.tests.csproj", "{9E819584-4EC2-52ED-CD78-AA7BA4C26215}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Gauntlet.E2E", "Gauntlet.E2E\Gauntlet.E2E.csproj", "{4D6B3AE5-EB6D-4ED5-84DE-5F623607CD72}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -92,6 +94,10 @@ Global
 		{BH819584-4EC2-52ED-CD78-AA7BA4C26224}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BH819584-4EC2-52ED-CD78-AA7BA4C26224}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BH819584-4EC2-52ED-CD78-AA7BA4C26224}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4D6B3AE5-EB6D-4ED5-84DE-5F623607CD72}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4D6B3AE5-EB6D-4ED5-84DE-5F623607CD72}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4D6B3AE5-EB6D-4ED5-84DE-5F623607CD72}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4D6B3AE5-EB6D-4ED5-84DE-5F623607CD72}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

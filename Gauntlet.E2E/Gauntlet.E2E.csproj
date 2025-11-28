@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\orchestrator\Orchestrator.csproj" />
+    <ProjectReference Include="..\contracts\Contracts.csproj" />
+    <ProjectReference Include="..\agents\Agents.csproj" />
+    <ProjectReference Include="..\agents-sk\Agents.Sk.csproj" />
+    <ProjectReference Include="..\build-dotnet\Build.Dotnet.csproj" />
+  </ItemGroup>
+
+</Project>
