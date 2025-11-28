@@ -1,11 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JuniorDev.Agents;
 using JuniorDev.Agents.Sk;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
+using JuniorDev.VcsGit;
+using JuniorDev.WorkItems.Jira;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using Xunit.Abstractions;
@@ -39,42 +43,55 @@ public class GauntletSmokeTest
     [Trait("Category", "Integration")]
     public async Task LiveModeSmokeTest_QueriesBacklog_ProcessesWorkItem_ExecutesVcsOperations()
     {
-        // Check for required environment variables
-        var jiraUrl = Environment.GetEnvironmentVariable("JIRA_URL");
-        var jiraUser = Environment.GetEnvironmentVariable("JIRA_USER");
-        var jiraToken = Environment.GetEnvironmentVariable("JIRA_TOKEN");
-        var jiraProject = Environment.GetEnvironmentVariable("JIRA_PROJECT");
+        // Load configuration using ConfigBuilder (appsettings + env + user-secrets)
+        var config = ConfigBuilder.Build("Development", Path.GetFullPath("../../.."));
+        var appConfig = ConfigBuilder.GetAppConfig(config);
 
-        var hasJiraCreds = !string.IsNullOrEmpty(jiraUrl) &&
-                          !string.IsNullOrEmpty(jiraUser) &&
-                          !string.IsNullOrEmpty(jiraToken) &&
-                          !string.IsNullOrEmpty(jiraProject);
-
-        // For Git, we can use the repo URL from the test, but check if we have git credentials
-        var hasGitCreds = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_USER")) ||
-                         !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_TOKEN"));
-
-        // Skip if live mode is not enabled or credentials are missing
+        // Check if live mode is enabled
         var runLive = Environment.GetEnvironmentVariable("RUN_LIVE") == "1";
-        if (!runLive || !hasJiraCreds)
+        if (!runLive)
         {
             _output.WriteLine("=== LIVE MODE SMOKE TEST SKIPPED ===");
-            _output.WriteLine($"RUN_LIVE=1: {runLive}");
-            _output.WriteLine($"Jira credentials present: {hasJiraCreds}");
-            _output.WriteLine($"Git credentials present: {hasGitCreds}");
-            _output.WriteLine("Set RUN_LIVE=1 and provide JIRA_URL/JIRA_USER/JIRA_TOKEN/JIRA_PROJECT to enable live testing");
+            _output.WriteLine("Set RUN_LIVE=1 to enable live testing");
+            return;
+        }
+
+        // Validate required configuration
+        var hasJiraConfig = appConfig.Auth?.Jira != null &&
+                           !string.IsNullOrEmpty(appConfig.Auth.Jira.BaseUrl) &&
+                           !string.IsNullOrEmpty(appConfig.Auth.Jira.Username) &&
+                           !string.IsNullOrEmpty(appConfig.Auth.Jira.ApiToken);
+
+        var hasGitConfig = appConfig.Auth?.Git != null &&
+                          (!string.IsNullOrEmpty(appConfig.Auth.Git.PersonalAccessToken) ||
+                           !string.IsNullOrEmpty(appConfig.Auth.Git.SshKeyPath));
+
+        if (!hasJiraConfig)
+        {
+            _output.WriteLine("=== LIVE MODE SMOKE TEST SKIPPED ===");
+            _output.WriteLine("Missing required Jira configuration in appsettings.json, environment variables, or user-secrets");
+            _output.WriteLine("Required: Auth.Jira.BaseUrl, Auth.Jira.Username, Auth.Jira.ApiToken");
+            return;
+        }
+
+        if (!hasGitConfig)
+        {
+            _output.WriteLine("=== LIVE MODE SMOKE TEST SKIPPED ===");
+            _output.WriteLine("Missing required Git configuration in appsettings.json, environment variables, or user-secrets");
+            _output.WriteLine("Required: Auth.Git.PersonalAccessToken or Auth.Git.SshKeyPath");
             return;
         }
 
         _output.WriteLine("=== GAUNTLET E2E SMOKE TEST (LIVE MODE) STARTED ===");
         _output.WriteLine("Purpose: Test full pipeline with real Jira/Git adapters");
         _output.WriteLine("WARNING: This test interacts with real external services!");
-        _output.WriteLine($"Jira: {jiraUrl} (project: {jiraProject})");
+        _output.WriteLine($"Jira: {appConfig.Auth!.Jira!.BaseUrl}");
+        _output.WriteLine($"Git: Configured with {(appConfig.Auth!.Git!.PersonalAccessToken != null ? "PAT" : "SSH key")}");
 
-        await RunSmokeTest(useLiveAdapters: true);
+        await RunSmokeTest(useLiveAdapters: true, appConfig: appConfig);
     }
 
-    private async Task RunSmokeTest(bool useLiveAdapters)
+    private async Task RunSmokeTest(bool useLiveAdapters, AppConfig? appConfig = null)
     {
         // Setup DI container with all services
         var services = new ServiceCollection();
@@ -85,8 +102,18 @@ public class GauntletSmokeTest
         services.AddAgent<ReviewerAgent>();
 
         // Configure adapters based on mode
-        if (useLiveAdapters)
+        if (useLiveAdapters && appConfig != null)
         {
+            // Set environment variables from configuration for live adapters
+            if (appConfig.Auth?.Jira != null)
+            {
+                Environment.SetEnvironmentVariable("JIRA_URL", appConfig.Auth.Jira.BaseUrl);
+                Environment.SetEnvironmentVariable("JIRA_USER", appConfig.Auth.Jira.Username);
+                Environment.SetEnvironmentVariable("JIRA_TOKEN", appConfig.Auth.Jira.ApiToken);
+                // Note: JIRA_PROJECT is not in the config, so we'll use a default or skip project-specific operations
+                Environment.SetEnvironmentVariable("JIRA_PROJECT", "TEST"); // Default for testing
+            }
+
             // Override with real adapters for live mode
             services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter());
             services.AddSingleton<IAdapter>(new JuniorDev.VcsGit.VcsGitAdapter(new JuniorDev.VcsGit.VcsConfig

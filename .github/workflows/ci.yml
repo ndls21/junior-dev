@@ -35,12 +35,18 @@ jobs:
       env:
         RUN_LIVE: 1
         RUN_LIVE_PUSH: 0
+        # Adapter environment variables
         JIRA_URL: ${{ secrets.JIRA_URL }}
         JIRA_USER: ${{ secrets.JIRA_USER }}
         JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
         JIRA_PROJECT: ${{ secrets.JIRA_PROJECT }}
         GIT_USER: ${{ secrets.GIT_USER }}
         GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+        # ConfigBuilder environment variables (for AppConfig.Auth)
+        JUNIORDEV__APPCONFIG__AUTH__JIRA__BASEURL: ${{ secrets.JIRA_URL }}
+        JUNIORDEV__APPCONFIG__AUTH__JIRA__USERNAME: ${{ secrets.JIRA_USER }}
+        JUNIORDEV__APPCONFIG__AUTH__JIRA__APITOKEN: ${{ secrets.JIRA_TOKEN }}
+        JUNIORDEV__APPCONFIG__AUTH__GIT__PERSONALACCESSTOKEN: ${{ secrets.GIT_TOKEN }}
       if: ${{ github.event_name == 'schedule' || contains(github.event.head_commit.message, '[run-live]') }}
 
     - name: Check contracts
