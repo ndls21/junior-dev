@@ -374,7 +374,9 @@ public partial class MainForm : Form
         {
             foreach (var stream in _accordionManager.ChatStreams)
             {
+                var preview = stream.GetCollapsedPreview();
                 Console.WriteLine($"  - {stream.AgentName}: {stream.Status}, Expanded={stream.IsExpanded}");
+                Console.WriteLine($"    Preview: {preview}");
             }
         }
         Console.WriteLine($"Events Panel: Visible={eventsPanel!.Visible}, Height={eventsPanel!.Height}");
@@ -479,6 +481,12 @@ public partial class MainForm : Form
         // Create initial chat stream
         var initialChatStream = new ChatStream(Guid.NewGuid(), "Agent 1");
         _accordionManager.AddChatStream(initialChatStream);
+        
+        // Add a few more streams for testing rich previews
+        if (isTestMode)
+        {
+            AddTestChatStreams();
+        }
 
         conversationPanel.Controls.Add(_chatContainerPanel);
     }
@@ -886,11 +894,44 @@ public partial class MainForm : Form
         var agentNumber = _accordionManager.ChatStreams.Count + 1;
         var agentName = $"Agent {agentNumber}";
         
-        // Create new chat stream
+        // Create new chat stream with mock status
         var chatStream = new ChatStream(Guid.NewGuid(), agentName);
+        
+        // Add some variety to the mock data
+        var mockTasks = new[] { "Analyzing code", "Running tests", "Fixing bugs", "Implementing feature", "Reviewing changes" };
+        var mockStatuses = new[] { SessionStatus.Running, SessionStatus.Paused, SessionStatus.Error, SessionStatus.NeedsApproval };
+        
+        var random = new Random();
+        chatStream.Status = mockStatuses[random.Next(mockStatuses.Length)];
+        chatStream.CurrentTask = mockTasks[random.Next(mockTasks.Length)];
+        chatStream.ProgressPercentage = random.Next(0, 101);
+        
         _accordionManager.AddChatStream(chatStream);
         
-        Console.WriteLine($"Added new chat stream: {agentName} (Session: {chatStream.SessionId})");
+        Console.WriteLine($"Added new chat stream: {agentName} ({chatStream.Status}) - {chatStream.CurrentTask}");
+    }
+
+    private void AddTestChatStreams()
+    {
+        if (_accordionManager == null) return;
+
+        // Add test streams with different statuses
+        var testStreams = new[]
+        {
+            ("Agent 2", SessionStatus.Running, "Analyzing code", 75),
+            ("Agent 3", SessionStatus.Paused, "Running tests", 45),
+            ("Agent 4", SessionStatus.Error, "Fixing bugs", 0),
+            ("Agent 5", SessionStatus.Completed, "Feature complete", 100)
+        };
+
+        foreach (var (name, status, task, progress) in testStreams)
+        {
+            var stream = new ChatStream(Guid.NewGuid(), name);
+            stream.Status = status;
+            stream.CurrentTask = task;
+            stream.ProgressPercentage = progress;
+            _accordionManager.AddChatStream(stream);
+        }
     }
 
     private void RemoveActiveChatStream()

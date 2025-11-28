@@ -62,6 +62,14 @@ public class AgentPanel : Panel
     private readonly MemoEdit _eventsMemo;
     private readonly EventRenderer _eventRenderer;
     private readonly SplitContainer _splitContainer;
+    
+    // Rich preview controls for collapsed state
+    private readonly Panel _previewPanel;
+    private readonly System.Windows.Forms.Label _agentNameLabel;
+    private readonly System.Windows.Forms.Label _statusLabel;
+    private readonly System.Windows.Forms.Label _taskLabel;
+    private readonly System.Windows.Forms.Label _progressLabel;
+    private readonly System.Windows.Forms.Label _timeLabel;
 
     public ChatStream ChatStream => _chatStream;
     public AIChatControl ChatControl => _chatControl;
@@ -71,6 +79,62 @@ public class AgentPanel : Panel
     {
         _chatStream = chatStream;
         _chatStream.Panel = this;
+
+        // Initialize rich preview controls
+        _previewPanel = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 60,
+            BackColor = Color.FromArgb(240, 240, 240),
+            BorderStyle = BorderStyle.FixedSingle,
+            Cursor = Cursors.Hand
+        };
+
+        _agentNameLabel = new System.Windows.Forms.Label
+        {
+            Location = new Point(5, 5),
+            Font = new Font(FontFamily.GenericSansSerif, 10, FontStyle.Bold),
+            AutoSize = true
+        };
+
+        _statusLabel = new System.Windows.Forms.Label
+        {
+            Location = new Point(5, 25),
+            Font = new Font(FontFamily.GenericSansSerif, 8),
+            AutoSize = true
+        };
+
+        _taskLabel = new System.Windows.Forms.Label
+        {
+            Location = new Point(5, 40),
+            Font = new Font(FontFamily.GenericSansSerif, 8),
+            AutoSize = true,
+            ForeColor = Color.Gray
+        };
+
+        _progressLabel = new System.Windows.Forms.Label
+        {
+            Location = new Point(200, 5),
+            Font = new Font(FontFamily.GenericSansSerif, 8),
+            AutoSize = true,
+            TextAlign = ContentAlignment.TopRight
+        };
+
+        _timeLabel = new System.Windows.Forms.Label
+        {
+            Location = new Point(200, 40),
+            Font = new Font(FontFamily.GenericSansSerif, 7),
+            AutoSize = true,
+            ForeColor = Color.Gray,
+            TextAlign = ContentAlignment.TopRight
+        };
+
+        _previewPanel.Controls.AddRange(new Control[] { 
+            _agentNameLabel, _statusLabel, _taskLabel, _progressLabel, _timeLabel 
+        });
+
+        // Handle click to expand
+        _previewPanel.Click += (s, e) => OnPreviewPanelClicked();
 
         // Initialize components
         _chatControl = new AIChatControl
@@ -106,9 +170,22 @@ public class AgentPanel : Panel
         _splitContainer.Panel2.Controls.Add(_eventsMemo);
 
         this.Controls.Add(_splitContainer);
+        this.Controls.Add(_previewPanel); // Add preview panel on top
         this.BorderStyle = BorderStyle.FixedSingle;
         this.Padding = new Padding(2);
+
+        // Initially show preview (collapsed state)
+        UpdatePreviewDisplay();
+        SetCollapsedState();
     }
+
+    private void OnPreviewPanelClicked()
+    {
+        // Notify parent to expand this panel
+        ExpandRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    public event EventHandler? ExpandRequested;
 
     public void RenderEvent(IEvent @event, DateTimeOffset timestamp)
     {
@@ -117,6 +194,7 @@ public class AgentPanel : Panel
         {
             _eventRenderer.RenderEvent(@event, timestamp);
             _chatStream.LastActivity = timestamp;
+            UpdatePreviewDisplay();
         }
     }
 
@@ -126,6 +204,71 @@ public class AgentPanel : Panel
         if (currentTask != null) _chatStream.CurrentTask = currentTask;
         if (progress.HasValue) _chatStream.ProgressPercentage = progress.Value;
         _chatStream.LastActivity = DateTimeOffset.Now;
+        UpdatePreviewDisplay();
+    }
+
+    public void SetExpandedState()
+    {
+        _chatStream.IsExpanded = true;
+        _previewPanel.Visible = false;
+        _splitContainer.Visible = true;
+        this.Height = 400; // Expanded height
+        this.BackColor = Color.White;
+    }
+
+    public void SetCollapsedState()
+    {
+        _chatStream.IsExpanded = false;
+        _previewPanel.Visible = true;
+        _splitContainer.Visible = false;
+        this.Height = 60; // Collapsed height
+        this.BackColor = Color.FromArgb(245, 245, 245);
+        UpdatePreviewDisplay();
+    }
+
+    private void UpdatePreviewDisplay()
+    {
+        _agentNameLabel.Text = _chatStream.AgentName;
+        
+        // Status with emoji
+        var statusText = _chatStream.Status switch
+        {
+            SessionStatus.Running => $"🔄 {_chatStream.CurrentTask}",
+            SessionStatus.Paused => "⏸️ Paused",
+            SessionStatus.Error => "❌ Error",
+            SessionStatus.NeedsApproval => "⚠️ Needs Approval",
+            SessionStatus.Completed => "✅ Completed",
+            _ => "❓ Unknown"
+        };
+        _statusLabel.Text = statusText;
+
+        // Current task (truncated if too long)
+        var taskText = string.IsNullOrEmpty(_chatStream.CurrentTask) 
+            ? "Idle" 
+            : _chatStream.CurrentTask.Length > 25 
+                ? _chatStream.CurrentTask[..22] + "..." 
+                : _chatStream.CurrentTask;
+        _taskLabel.Text = taskText;
+
+        // Progress percentage
+        _progressLabel.Text = _chatStream.ProgressPercentage > 0 
+            ? $"{_chatStream.ProgressPercentage}%" 
+            : "";
+
+        // Last activity time
+        _timeLabel.Text = _chatStream.LastActivity.ToString("HH:mm");
+
+        // Color coding based on status
+        var statusColor = _chatStream.Status switch
+        {
+            SessionStatus.Running => Color.Green,
+            SessionStatus.Paused => Color.Orange,
+            SessionStatus.Error => Color.Red,
+            SessionStatus.NeedsApproval => Color.DarkOrange,
+            SessionStatus.Completed => Color.Blue,
+            _ => Color.Gray
+        };
+        _statusLabel.ForeColor = statusColor;
     }
 
     protected override void Dispose(bool disposing)
@@ -135,6 +278,7 @@ public class AgentPanel : Panel
             _chatControl?.Dispose();
             _eventsMemo?.Dispose();
             _splitContainer?.Dispose();
+            _previewPanel?.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -198,8 +342,9 @@ public class AccordionLayoutManager
 
         if (chatStream.Panel != null)
         {
-            chatStream.Panel.Height = 400; // Expanded height
-            chatStream.Panel.Visible = true;
+            chatStream.Panel.SetExpandedState();
+            // Wire up the expand requested event
+            chatStream.Panel.ExpandRequested += (s, e) => ExpandStream(chatStream);
         }
 
         StreamExpanded?.Invoke(this, chatStream);
@@ -212,8 +357,7 @@ public class AccordionLayoutManager
 
         if (chatStream.Panel != null)
         {
-            chatStream.Panel.Height = 60; // Collapsed height for preview
-            chatStream.Panel.Visible = true;
+            chatStream.Panel.SetCollapsedState();
         }
 
         if (_expandedStream == chatStream)
