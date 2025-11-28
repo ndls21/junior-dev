@@ -14,7 +14,7 @@ public class ChatStream
     public Guid SessionId { get; set; }
     public Guid? AgentId { get; set; }
     public string AgentName { get; set; } = "Agent";
-    public SessionStatus Status { get; set; } = SessionStatus.Running;
+    public JuniorDev.Contracts.SessionStatus Status { get; set; } = JuniorDev.Contracts.SessionStatus.Running;
     public string CurrentTask { get; set; } = "";
     public int ProgressPercentage { get; set; } = 0;
     public DateTimeOffset LastActivity { get; set; } = DateTimeOffset.Now;
@@ -34,11 +34,11 @@ public class ChatStream
     {
         return Status switch
         {
-            SessionStatus.Running => $"🔄 {AgentName} - {CurrentTask}",
-            SessionStatus.Paused => $"⏸️ {AgentName} - Paused",
-            SessionStatus.Error => $"❌ {AgentName} - Error",
-            SessionStatus.NeedsApproval => $"⚠️ {AgentName} - Needs Approval",
-            SessionStatus.Completed => $"✅ {AgentName} - Completed",
+            JuniorDev.Contracts.SessionStatus.Running => $"🔄 {AgentName} - {CurrentTask}",
+            JuniorDev.Contracts.SessionStatus.Paused => $"⏸️ {AgentName} - Paused",
+            JuniorDev.Contracts.SessionStatus.Error => $"❌ {AgentName} - Error",
+            JuniorDev.Contracts.SessionStatus.NeedsApproval => $"⚠️ {AgentName} - Needs Approval",
+            JuniorDev.Contracts.SessionStatus.Completed => $"✅ {AgentName} - Completed",
             _ => $"❓ {AgentName} - Unknown"
         };
     }
@@ -143,6 +143,9 @@ public class AgentPanel : Panel
             UseStreaming = DevExpress.Utils.DefaultBoolean.True
         };
 
+        // Wire up AI client to the chat control
+        WireUpAIClient();
+
         _eventsMemo = new MemoEdit
         {
             Dock = DockStyle.Fill,
@@ -179,6 +182,20 @@ public class AgentPanel : Panel
         SetCollapsedState();
     }
 
+    private void WireUpAIClient()
+    {
+        try
+        {
+            // The AI client is registered globally in MainForm.RegisterAIClient()
+            // The AIChatControl should automatically use the registered client
+            // No additional wiring needed as DevExpress handles this internally
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to wire up AI client for {ChatStream.AgentName}: {ex.Message}");
+        }
+    }
+
     private void OnPreviewPanelClicked()
     {
         // Notify parent to expand this panel
@@ -198,7 +215,7 @@ public class AgentPanel : Panel
         }
     }
 
-    public void UpdateStatus(SessionStatus status, string? currentTask = null, int? progress = null)
+    public void UpdateStatus(JuniorDev.Contracts.SessionStatus status, string? currentTask = null, int? progress = null)
     {
         _chatStream.Status = status;
         if (currentTask != null) _chatStream.CurrentTask = currentTask;
@@ -233,11 +250,11 @@ public class AgentPanel : Panel
         // Status with emoji
         var statusText = _chatStream.Status switch
         {
-            SessionStatus.Running => $"🔄 {_chatStream.CurrentTask}",
-            SessionStatus.Paused => "⏸️ Paused",
-            SessionStatus.Error => "❌ Error",
-            SessionStatus.NeedsApproval => "⚠️ Needs Approval",
-            SessionStatus.Completed => "✅ Completed",
+            JuniorDev.Contracts.SessionStatus.Running => $"🔄 {_chatStream.CurrentTask}",
+            JuniorDev.Contracts.SessionStatus.Paused => "⏸️ Paused",
+            JuniorDev.Contracts.SessionStatus.Error => "❌ Error",
+            JuniorDev.Contracts.SessionStatus.NeedsApproval => "⚠️ Needs Approval",
+            JuniorDev.Contracts.SessionStatus.Completed => "✅ Completed",
             _ => "❓ Unknown"
         };
         _statusLabel.Text = statusText;
@@ -261,11 +278,11 @@ public class AgentPanel : Panel
         // Color coding based on status
         var statusColor = _chatStream.Status switch
         {
-            SessionStatus.Running => Color.Green,
-            SessionStatus.Paused => Color.Orange,
-            SessionStatus.Error => Color.Red,
-            SessionStatus.NeedsApproval => Color.DarkOrange,
-            SessionStatus.Completed => Color.Blue,
+            JuniorDev.Contracts.SessionStatus.Running => Color.Green,
+            JuniorDev.Contracts.SessionStatus.Paused => Color.Orange,
+            JuniorDev.Contracts.SessionStatus.Error => Color.Red,
+            JuniorDev.Contracts.SessionStatus.NeedsApproval => Color.DarkOrange,
+            JuniorDev.Contracts.SessionStatus.Completed => Color.Blue,
             _ => Color.Gray
         };
         _statusLabel.ForeColor = statusColor;

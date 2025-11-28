@@ -16,19 +16,26 @@ using JuniorDev.Contracts;
 
 namespace Ui.Shell;
 
-public enum SessionStatus
+public enum BlockingType
 {
-    Running,
-    Paused,
-    Error,
     NeedsApproval,
-    Completed
+    ConflictDetected,
+    Throttled
+}
+
+public class BlockingCondition
+{
+    public Guid SessionId { get; set; }
+    public BlockingType Type { get; set; }
+    public string Message { get; set; } = "";
+    public string ActionText { get; set; } = "";
+    public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.Now;
 }
 
 public class SessionItem
 {
     public string Name { get; set; } = "";
-    public SessionStatus Status { get; set; }
+    public JuniorDev.Contracts.SessionStatus Status { get; set; }
 
     public override string ToString()
     {
@@ -39,11 +46,11 @@ public class SessionItem
     {
         return Status switch
         {
-            SessionStatus.Running => (Color.Green, Color.White, "RUNNING"),
-            SessionStatus.Paused => (Color.Yellow, Color.Black, "PAUSED"),
-            SessionStatus.Error => (Color.Red, Color.White, "ERROR"),
-            SessionStatus.NeedsApproval => (Color.Orange, Color.Black, "NEEDS APPROVAL"),
-            SessionStatus.Completed => (Color.Blue, Color.White, "COMPLETED"),
+            JuniorDev.Contracts.SessionStatus.Running => (Color.Green, Color.White, "RUNNING"),
+            JuniorDev.Contracts.SessionStatus.Paused => (Color.Yellow, Color.Black, "PAUSED"),
+            JuniorDev.Contracts.SessionStatus.Error => (Color.Red, Color.White, "ERROR"),
+            JuniorDev.Contracts.SessionStatus.NeedsApproval => (Color.Orange, Color.Black, "NEEDS APPROVAL"),
+            JuniorDev.Contracts.SessionStatus.Completed => (Color.Blue, Color.White, "COMPLETED"),
             _ => (Color.Gray, Color.Black, "UNKNOWN")
         };
     }
@@ -116,6 +123,17 @@ public class EventRenderer
                 return $"{baseText}📝 {@event.Kind}: {System.Text.Json.JsonSerializer.Serialize(@event)}";
         }
     }
+}
+
+public class ChatStreamData
+{
+    public Guid SessionId { get; set; }
+    public Guid? AgentId { get; set; }
+    public string AgentName { get; set; } = "Agent";
+    public JuniorDev.Contracts.SessionStatus Status { get; set; } = JuniorDev.Contracts.SessionStatus.Running;
+    public string CurrentTask { get; set; } = "";
+    public int ProgressPercentage { get; set; } = 0;
+    public bool IsExpanded { get; set; } = false;
 }
 
 public class AppSettings
@@ -222,9 +240,13 @@ public partial class MainForm : Form
     private DockPanel? eventsPanel;
     private DockPanel? artifactsPanel;
 
+    // Blocking banners
+    private Panel? _blockingBannerPanel;
+    private System.Windows.Forms.Label? _blockingBannerLabel;
+    private SimpleButton? _blockingBannerActionButton;
+
     // Controls within panels
     private System.Windows.Forms.ListBox? sessionsListBox;
-    private AIChatControl? conversationChatControl; // Keep for backward compatibility
     private MemoEdit? eventsMemoEdit;
     private TreeList? artifactsTree;
 
@@ -233,6 +255,9 @@ public partial class MainForm : Form
     private Panel? _chatContainerPanel;
     private System.Windows.Forms.ComboBox? _chatFilterCombo;
     private Dictionary<Guid, List<Artifact>> _chatArtifacts = new();
+
+    // Blocking state tracking
+    private List<BlockingCondition> _blockingConditions = new();
 
     private bool isTestMode = false;
 
@@ -252,14 +277,14 @@ public partial class MainForm : Form
     // Test helper fields
     private string? _testLayoutFilePath;
     private string? _testSettingsFilePath;
+    private string? _testChatStreamsFilePath;
 
-    public MainForm()
+    public MainForm(bool isTestMode = false)
     {
-        // Check for test mode argument
-        string[] args = Environment.GetCommandLineArgs();
-        isTestMode = args.Contains("--test") || args.Contains("-t");
+        // Check for test mode argument or parameter
+        this.isTestMode = isTestMode || Environment.GetCommandLineArgs().Contains("--test") || Environment.GetCommandLineArgs().Contains("-t");
 
-        Console.WriteLine($"Junior Dev starting... Test mode: {isTestMode}");
+        Console.WriteLine($"Junior Dev starting... Test mode: {this.isTestMode}");
 
         // Register AI client for chat functionality
         RegisterAIClient();
@@ -268,11 +293,18 @@ public partial class MainForm : Form
         SetupMenu();
         SetupUI();
         eventRenderer = new EventRenderer(eventsMemoEdit!);
-        LoadLayout();
-        LoadAndApplySettings();
-
-        if (isTestMode)
+        
+        // Only load layout if not in test mode, or let tests control it
+        if (!this.isTestMode)
         {
+            LoadLayout();
+            LoadAndApplySettings();
+        }
+
+        if (this.isTestMode)
+        {
+            // Add mock blocking events before test inspection
+            AddMockBlockingEvents();
             SetupTestMode();
         }
         else
@@ -390,10 +422,45 @@ public partial class MainForm : Form
             var chatName = _accordionManager?.ChatStreams.FirstOrDefault(s => s.SessionId == kvp.Key)?.AgentName ?? "Unknown";
             Console.WriteLine($"  - {chatName}: {kvp.Value.Count} artifacts");
         }
+        Console.WriteLine($"Blocking Banners: {_blockingConditions.Count} active");
+        foreach (var condition in _blockingConditions)
+        {
+            Console.WriteLine($"  - {condition.Type}: {condition.Message}");
+        }
         Console.WriteLine($"Sessions in list: {sessionsListBox!.Items.Count}");
         Console.WriteLine("Mock data loaded successfully");
         Console.WriteLine("Auto-exit in 2 seconds...");
         Console.WriteLine("===============================");
+    }
+
+    private void AddMockBlockingEvents()
+    {
+        // Add some mock blocking conditions for demonstration
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+
+        Console.WriteLine("Adding mock blocking conditions...");
+        
+        AddBlockingCondition(new BlockingCondition
+        {
+            SessionId = sessionId1,
+            Type = BlockingType.Throttled,
+            Message = $"⚠️ Session throttled: git-operations. Retry after 14:37:05",
+            ActionText = "Wait"
+        });
+        
+        Console.WriteLine($"After adding throttled: {_blockingConditions.Count} conditions");
+
+        AddBlockingCondition(new BlockingCondition
+        {
+            SessionId = sessionId2,
+            Type = BlockingType.ConflictDetected,
+            Message = $"⚠️ Merge conflict detected: Merge conflict in main.cs",
+            ActionText = "Resolve"
+        });
+        
+        Console.WriteLine($"After adding conflict: {_blockingConditions.Count} conditions");
+        Console.WriteLine("Mock blocking events added for demonstration");
     }
 
     private void SetupUI()
@@ -401,6 +468,9 @@ public partial class MainForm : Form
         // Initialize DevExpress DockManager
         dockManager = new DockManager();
         dockManager.Form = this;
+
+        // Create blocking banner (initially hidden)
+        CreateBlockingBanner();
 
         // Create panels
         CreateSessionsPanel();
@@ -459,12 +529,12 @@ public partial class MainForm : Form
         sessionsListBox.DrawItem += SessionsListBox_DrawItem;
 
         // Mock session data with status objects
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 1", Status = SessionStatus.Running });
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 2", Status = SessionStatus.Paused });
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 3", Status = SessionStatus.Error });
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 4", Status = SessionStatus.Running });
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 5", Status = SessionStatus.NeedsApproval });
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 6", Status = SessionStatus.Completed });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 1", Status = JuniorDev.Contracts.SessionStatus.Running });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 2", Status = JuniorDev.Contracts.SessionStatus.Paused });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 3", Status = JuniorDev.Contracts.SessionStatus.Error });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 4", Status = JuniorDev.Contracts.SessionStatus.Running });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 5", Status = JuniorDev.Contracts.SessionStatus.NeedsApproval });
+        sessionsListBox.Items.Add(new SessionItem { Name = "Session 6", Status = JuniorDev.Contracts.SessionStatus.Completed });
 
         panel.Controls.Add(sessionsListBox);
         panel.Controls.Add(filterPanel);
@@ -558,6 +628,9 @@ public partial class MainForm : Form
         artifactsTree.Columns[0].Caption = "Artifacts";
         artifactsTree.Columns[0].VisibleIndex = 0;
 
+        // Add double-click handler for artifact linking
+        artifactsTree.DoubleClick += ArtifactsTree_DoubleClick;
+
         // Store filter combo for later updates
         _chatFilterCombo = chatFilterCombo;
 
@@ -568,6 +641,42 @@ public partial class MainForm : Form
 
         // Initialize with mock data
         RefreshArtifactsTree();
+    }
+
+    private void CreateBlockingBanner()
+    {
+        _blockingBannerPanel = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 50,
+            BackColor = Color.FromArgb(255, 255, 200), // Light yellow
+            BorderStyle = BorderStyle.FixedSingle,
+            Visible = false
+        };
+
+        _blockingBannerLabel = new System.Windows.Forms.Label
+        {
+            Location = new Point(10, 10),
+            AutoSize = true,
+            Font = new Font(FontFamily.GenericSansSerif, 10, FontStyle.Bold),
+            ForeColor = Color.DarkRed
+        };
+
+        _blockingBannerActionButton = new SimpleButton
+        {
+            Location = new Point(300, 8),
+            Size = new Size(100, 30),
+            Text = "Action",
+            Visible = false
+        };
+        _blockingBannerActionButton.Click += BlockingBannerActionButton_Click;
+
+        _blockingBannerPanel.Controls.Add(_blockingBannerLabel);
+        _blockingBannerPanel.Controls.Add(_blockingBannerActionButton);
+
+        this.Controls.Add(_blockingBannerPanel);
+        // Ensure banner appears above menu but below panels
+        _blockingBannerPanel.BringToFront();
     }
 
     private void SetupLayout()
@@ -595,12 +704,121 @@ public partial class MainForm : Form
             {
                 Directory.CreateDirectory(directory);
             }
+            
+            // Save DevExpress dock layout
             dockManager!.SaveLayoutToXml(layoutFile);
+            
+            // Save chat streams data
+            SaveChatStreams();
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to save layout: {ex.Message}");
         }
+    }
+
+    public void SaveChatStreams(ChatStream[]? streamsToSave = null)
+    {
+        try
+        {
+            var streams = streamsToSave ?? (_accordionManager?.ChatStreams ?? Array.Empty<ChatStream>());
+            
+            var chatStreamsData = streams.Select(stream => new ChatStreamData
+            {
+                SessionId = stream.SessionId,
+                AgentId = stream.AgentId,
+                AgentName = stream.AgentName,
+                Status = stream.Status,
+                CurrentTask = stream.CurrentTask,
+                ProgressPercentage = stream.ProgressPercentage,
+                IsExpanded = stream.IsExpanded
+            }).ToList();
+            
+            string chatStreamsFile = GetChatStreamsFilePath();
+            string json = System.Text.Json.JsonSerializer.Serialize(chatStreamsData);
+            File.WriteAllText(chatStreamsFile, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save chat streams: {ex.Message}");
+        }
+    }
+
+    public ChatStream[] LoadChatStreams()
+    {
+        try
+        {
+            string chatStreamsFile = GetChatStreamsFilePath();
+            if (!File.Exists(chatStreamsFile)) return LoadDefaultChatStreams();
+            
+            string json = File.ReadAllText(chatStreamsFile);
+            var chatStreamsData = System.Text.Json.JsonSerializer.Deserialize<List<ChatStreamData>>(json);
+            
+            if (chatStreamsData != null && _accordionManager != null)
+            {
+                // Clear existing streams
+                var streamsToRemove = _accordionManager.ChatStreams.ToList();
+                foreach (var stream in streamsToRemove)
+                {
+                    _accordionManager.RemoveChatStream(stream);
+                }
+                
+                // Load saved streams
+                foreach (var data in chatStreamsData)
+                {
+                    var chatStream = new ChatStream(data.SessionId, data.AgentName)
+                    {
+                        AgentId = data.AgentId,
+                        Status = data.Status,
+                        CurrentTask = data.CurrentTask,
+                        ProgressPercentage = data.ProgressPercentage,
+                        IsExpanded = data.IsExpanded
+                    };
+                    
+                    _accordionManager.AddChatStream(chatStream);
+                }
+                
+                return _accordionManager.ChatStreams.ToArray();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load chat streams: {ex.Message}");
+            // Fall back to default chat streams
+            return LoadDefaultChatStreams();
+        }
+        
+        return Array.Empty<ChatStream>();
+    }
+
+    public ChatStream[] LoadDefaultChatStreams()
+    {
+        if (_accordionManager == null) return Array.Empty<ChatStream>();
+        
+        // Clear existing streams
+        var streamsToRemove = _accordionManager.ChatStreams.ToList();
+        foreach (var stream in streamsToRemove)
+        {
+            _accordionManager.RemoveChatStream(stream);
+        }
+        
+        // Add default stream
+        var defaultStream = new ChatStream(Guid.NewGuid(), "Agent 1");
+        _accordionManager.AddChatStream(defaultStream);
+        
+        return _accordionManager.ChatStreams.ToArray();
+    }
+
+    private string GetChatStreamsFilePath()
+    {
+        if (_testChatStreamsFilePath != null)
+        {
+            return _testChatStreamsFilePath;
+        }
+        
+        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string appFolder = Path.Combine(appData, "JuniorDev");
+        return Path.Combine(appFolder, "chat-streams.json");
     }
 
     private string GetLayoutFilePath()
@@ -638,14 +856,60 @@ public partial class MainForm : Form
         {
             AddArtifactToChat(artifactEvent.Correlation.SessionId, artifactEvent.Artifact);
         }
+
+        // Check for blocking conditions
+        CheckForBlockingConditions(randomEvent);
         
         // Also render to global events panel for backward compatibility
         eventRenderer?.RenderEvent(randomEvent, DateTimeOffset.Now);
     }
 
-    private IEvent[] GenerateMockEventSequence()
+    private void CheckForBlockingConditions(IEvent @event)
     {
-        var sessionId = Guid.NewGuid();
+        switch (@event)
+        {
+            case Throttled throttled:
+                AddBlockingCondition(new BlockingCondition
+                {
+                    SessionId = throttled.Correlation.SessionId,
+                    Type = BlockingType.Throttled,
+                    Message = $"⚠️ Session throttled: {throttled.Scope}. Retry after {throttled.RetryAfter:HH:mm:ss}",
+                    ActionText = "Wait"
+                });
+                break;
+
+            case ConflictDetected conflict:
+                AddBlockingCondition(new BlockingCondition
+                {
+                    SessionId = conflict.Correlation.SessionId,
+                    Type = BlockingType.ConflictDetected,
+                    Message = $"⚠️ Merge conflict detected: {conflict.Details}",
+                    ActionText = "Resolve"
+                });
+                break;
+
+            case SessionStatusChanged statusChanged when statusChanged.Status == JuniorDev.Contracts.SessionStatus.NeedsApproval:
+                AddBlockingCondition(new BlockingCondition
+                {
+                    SessionId = statusChanged.Correlation.SessionId,
+                    Type = BlockingType.NeedsApproval,
+                    Message = $"🔒 Session requires approval: {statusChanged.Reason}",
+                    ActionText = "Approve"
+                });
+                break;
+
+            case SessionStatusChanged statusChanged when statusChanged.Status != JuniorDev.Contracts.SessionStatus.NeedsApproval:
+                // Remove approval blocking when status changes away from NeedsApproval
+                RemoveBlockingCondition(statusChanged.Correlation.SessionId, BlockingType.NeedsApproval);
+                break;
+        }
+    }
+
+    public IEvent[] GenerateMockEventSequence()
+    {
+        // Use existing chat stream SessionIds for events
+        var availableSessionIds = _accordionManager?.ChatStreams.Select(s => s.SessionId).ToArray() ?? new[] { Guid.NewGuid() };
+        var sessionId = availableSessionIds[new Random().Next(availableSessionIds.Length)];
         var commandId = Guid.NewGuid();
         var correlation = new Correlation(sessionId, commandId);
 
@@ -661,6 +925,11 @@ public partial class MainForm : Form
             new ConflictDetected(Guid.NewGuid(), correlation, new RepoRef("test-repo", "/path/to/repo"), "Merge conflict in main.cs"),
             new CommandCompleted(Guid.NewGuid(), correlation, commandId, CommandOutcome.Failure, "Build failed", "COMPILATION_ERROR")
         };
+    }
+
+    public void RouteEventToChatStreams(IEvent @event, DateTimeOffset timestamp)
+    {
+        _accordionManager?.RouteEventToStreams(@event, timestamp);
     }
 
     private void ShowSettingsDialog()
@@ -712,7 +981,6 @@ public partial class MainForm : Form
         if (conversationPanel != null) conversationPanel.Appearance.BackColor = backColor;
         if (eventsPanel != null) eventsPanel.Appearance.BackColor = backColor;
         if (artifactsPanel != null) artifactsPanel.Appearance.BackColor = backColor;
-        if (conversationChatControl != null) conversationChatControl.BackColor = backColor;
         if (eventsMemoEdit != null) eventsMemoEdit.BackColor = backColor;
 
         // Apply font size to form and propagate to controls
@@ -796,22 +1064,22 @@ public partial class MainForm : Form
         // Mock session data - in real app this would come from session manager
         var allSessions = new[]
         {
-            new SessionItem { Name = "Session 1", Status = SessionStatus.Running },
-            new SessionItem { Name = "Session 2", Status = SessionStatus.Paused },
-            new SessionItem { Name = "Session 3", Status = SessionStatus.Error },
-            new SessionItem { Name = "Session 4", Status = SessionStatus.Running },
-            new SessionItem { Name = "Session 5", Status = SessionStatus.NeedsApproval },
-            new SessionItem { Name = "Session 6", Status = SessionStatus.Completed }
+            new SessionItem { Name = "Session 1", Status = JuniorDev.Contracts.SessionStatus.Running },
+            new SessionItem { Name = "Session 2", Status = JuniorDev.Contracts.SessionStatus.Paused },
+            new SessionItem { Name = "Session 3", Status = JuniorDev.Contracts.SessionStatus.Error },
+            new SessionItem { Name = "Session 4", Status = JuniorDev.Contracts.SessionStatus.Running },
+            new SessionItem { Name = "Session 5", Status = JuniorDev.Contracts.SessionStatus.NeedsApproval },
+            new SessionItem { Name = "Session 6", Status = JuniorDev.Contracts.SessionStatus.Completed }
         };
 
         foreach (var session in allSessions)
         {
             bool shouldShow = status == "All" ||
-                (status == "Running" && session.Status == SessionStatus.Running) ||
-                (status == "Paused" && session.Status == SessionStatus.Paused) ||
-                (status == "Error" && session.Status == SessionStatus.Error) ||
-                (status == "NeedsApproval" && session.Status == SessionStatus.NeedsApproval) ||
-                (status == "Completed" && session.Status == SessionStatus.Completed);
+                (status == "Running" && session.Status == JuniorDev.Contracts.SessionStatus.Running) ||
+                (status == "Paused" && session.Status == JuniorDev.Contracts.SessionStatus.Paused) ||
+                (status == "Error" && session.Status == JuniorDev.Contracts.SessionStatus.Error) ||
+                (status == "NeedsApproval" && session.Status == JuniorDev.Contracts.SessionStatus.NeedsApproval) ||
+                (status == "Completed" && session.Status == JuniorDev.Contracts.SessionStatus.Completed);
 
             if (shouldShow)
             {
@@ -841,6 +1109,12 @@ public partial class MainForm : Form
     {
         // For testing only
         _testSettingsFilePath = path;
+    }
+
+    public void SetChatStreamsFilePath(string path)
+    {
+        // For testing only
+        _testChatStreamsFilePath = path;
     }
 
     private string GetSettingsFilePath()
@@ -882,12 +1156,16 @@ public partial class MainForm : Form
             {
                 LoadDefaultLayout();
             }
+
+            // Load chat streams after dock layout
+            LoadChatStreams();
         }
         catch (Exception ex)
         {
             // If layout is corrupted, fall back to default
             Console.WriteLine($"Failed to load layout: {ex.Message}");
             LoadDefaultLayout();
+            LoadDefaultChatStreams();
         }
     }
 
@@ -902,6 +1180,13 @@ public partial class MainForm : Form
                 File.Delete(layoutFile);
             }
             
+            // Delete the chat streams file to reset to defaults
+            string chatStreamsFile = GetChatStreamsFilePath();
+            if (File.Exists(chatStreamsFile))
+            {
+                File.Delete(chatStreamsFile);
+            }
+            
             // Explicitly reset panels to default layout
             sessionsPanel!.Dock = DockingStyle.Left;
             sessionsPanel!.Width = 250;
@@ -910,6 +1195,9 @@ public partial class MainForm : Form
             conversationPanel!.Dock = DockingStyle.Fill;
             eventsPanel!.Dock = DockingStyle.Bottom;
             eventsPanel!.Height = 200;
+            
+            // Reset chat streams to default
+            LoadDefaultChatStreams();
             
             // Save the reset layout immediately
             SaveLayout();
@@ -1110,6 +1398,118 @@ public partial class MainForm : Form
         if (_chatFilterCombo.SelectedItem == null)
         {
             _chatFilterCombo.SelectedIndex = 0;
+        }
+    }
+
+    public void AddBlockingCondition(BlockingCondition condition)
+    {
+        _blockingConditions.Add(condition);
+        UpdateBlockingBanner();
+    }
+
+    public void RemoveBlockingCondition(Guid sessionId, BlockingType type)
+    {
+        _blockingConditions.RemoveAll(c => c.SessionId == sessionId && c.Type == type);
+        UpdateBlockingBanner();
+    }
+
+    private void UpdateBlockingBanner()
+    {
+        if (_blockingConditions.Count == 0)
+        {
+            _blockingBannerPanel!.Visible = false;
+            return;
+        }
+
+        // Show the most recent blocking condition
+        var currentCondition = _blockingConditions.OrderByDescending(c => c.Timestamp).First();
+
+        _blockingBannerLabel!.Text = currentCondition.Message;
+        _blockingBannerActionButton!.Text = currentCondition.ActionText;
+        _blockingBannerActionButton!.Visible = !string.IsNullOrEmpty(currentCondition.ActionText);
+        _blockingBannerActionButton!.Tag = currentCondition; // Store for action handling
+
+        _blockingBannerPanel!.Visible = true;
+    }
+
+    private void ArtifactsTree_DoubleClick(object? sender, EventArgs e)
+    {
+        if (artifactsTree?.Selection?.Count > 0)
+        {
+            var selectedNode = artifactsTree.Selection[0];
+            if (selectedNode?.Tag is Artifact artifact)
+            {
+                // Open/select the artifact
+                OpenArtifact(artifact);
+            }
+        }
+    }
+
+    private void OpenArtifact(Artifact artifact)
+    {
+        try
+        {
+            // For now, show artifact content in a message box or dialog
+            // In a real implementation, this might open in an editor, browser, etc.
+            var content = artifact.InlineText ?? "[Binary artifact - cannot display inline]";
+            
+            using var dialog = new Form
+            {
+                Text = artifact.Name,
+                Size = new Size(600, 400),
+                StartPosition = FormStartPosition.CenterParent
+            };
+            
+            var textBox = new System.Windows.Forms.TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                Dock = DockStyle.Fill,
+                Text = content,
+                Font = new Font("Consolas", 9)
+            };
+            
+            dialog.Controls.Add(textBox);
+            dialog.ShowDialog();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Failed to open artifact: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void BlockingBannerActionButton_Click(object? sender, EventArgs e)
+    {
+        if (_blockingBannerActionButton?.Tag is BlockingCondition condition)
+        {
+            HandleBlockingAction(condition);
+        }
+    }
+
+    private void HandleBlockingAction(BlockingCondition condition)
+    {
+        switch (condition.Type)
+        {
+            case BlockingType.NeedsApproval:
+                // In a real app, this would show an approval dialog
+                // For now, just remove the blocking condition
+                RemoveBlockingCondition(condition.SessionId, condition.Type);
+                Console.WriteLine($"Approved session {condition.SessionId}");
+                break;
+
+            case BlockingType.ConflictDetected:
+                // In a real app, this would show conflict resolution UI
+                // For now, just remove the blocking condition
+                RemoveBlockingCondition(condition.SessionId, condition.Type);
+                Console.WriteLine($"Resolved conflict for session {condition.SessionId}");
+                break;
+
+            case BlockingType.Throttled:
+                // Throttling is time-based, just wait
+                // Could show retry options
+                Console.WriteLine($"Acknowledged throttling for session {condition.SessionId}");
+                break;
         }
     }
 }
