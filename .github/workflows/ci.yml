@@ -30,5 +30,18 @@ jobs:
     - name: Run unit tests
       run: dotnet test --no-build --filter "TestCategory!=Integration"
 
+    - name: Run live smoke tests
+      run: dotnet test --no-build --filter "Category=Integration"
+      env:
+        RUN_LIVE: 1
+        RUN_LIVE_PUSH: 0
+        JIRA_URL: ${{ secrets.JIRA_URL }}
+        JIRA_USER: ${{ secrets.JIRA_USER }}
+        JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
+        JIRA_PROJECT: ${{ secrets.JIRA_PROJECT }}
+        GIT_USER: ${{ secrets.GIT_USER }}
+        GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+      if: ${{ github.event_name == 'schedule' || contains(github.event.head_commit.message, '[run-live]') }}
+
     - name: Check contracts
       run: pwsh scripts/check-contracts.ps1

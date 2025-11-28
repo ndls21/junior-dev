@@ -39,18 +39,37 @@ public class GauntletSmokeTest
     [Trait("Category", "Integration")]
     public async Task LiveModeSmokeTest_QueriesBacklog_ProcessesWorkItem_ExecutesVcsOperations()
     {
-        // Skip if live mode is not enabled via environment variables
+        // Check for required environment variables
+        var jiraUrl = Environment.GetEnvironmentVariable("JIRA_URL");
+        var jiraUser = Environment.GetEnvironmentVariable("JIRA_USER");
+        var jiraToken = Environment.GetEnvironmentVariable("JIRA_TOKEN");
+        var jiraProject = Environment.GetEnvironmentVariable("JIRA_PROJECT");
+
+        var hasJiraCreds = !string.IsNullOrEmpty(jiraUrl) &&
+                          !string.IsNullOrEmpty(jiraUser) &&
+                          !string.IsNullOrEmpty(jiraToken) &&
+                          !string.IsNullOrEmpty(jiraProject);
+
+        // For Git, we can use the repo URL from the test, but check if we have git credentials
+        var hasGitCreds = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_USER")) ||
+                         !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_TOKEN"));
+
+        // Skip if live mode is not enabled or credentials are missing
         var runLive = Environment.GetEnvironmentVariable("RUN_LIVE") == "1";
-        if (!runLive)
+        if (!runLive || !hasJiraCreds)
         {
             _output.WriteLine("=== LIVE MODE SMOKE TEST SKIPPED ===");
-            _output.WriteLine("Set RUN_LIVE=1 and provide credentials to enable live testing");
+            _output.WriteLine($"RUN_LIVE=1: {runLive}");
+            _output.WriteLine($"Jira credentials present: {hasJiraCreds}");
+            _output.WriteLine($"Git credentials present: {hasGitCreds}");
+            _output.WriteLine("Set RUN_LIVE=1 and provide JIRA_URL/JIRA_USER/JIRA_TOKEN/JIRA_PROJECT to enable live testing");
             return;
         }
 
         _output.WriteLine("=== GAUNTLET E2E SMOKE TEST (LIVE MODE) STARTED ===");
         _output.WriteLine("Purpose: Test full pipeline with real Jira/Git adapters");
         _output.WriteLine("WARNING: This test interacts with real external services!");
+        _output.WriteLine($"Jira: {jiraUrl} (project: {jiraProject})");
 
         await RunSmokeTest(useLiveAdapters: true);
     }
