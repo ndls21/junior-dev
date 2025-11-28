@@ -22,6 +22,8 @@
     <ProjectReference Include="..\agents\Agents.csproj" />
     <ProjectReference Include="..\agents-sk\Agents.Sk.csproj" />
     <ProjectReference Include="..\build-dotnet\Build.Dotnet.csproj" />
+    <ProjectReference Include="..\workitems-jira\WorkItems.Jira.csproj" />
+    <ProjectReference Include="..\vcs-git\Vcs.Git.csproj" />
   </ItemGroup>
 
 </Project>
