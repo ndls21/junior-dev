@@ -231,6 +231,8 @@ public partial class MainForm : Form
     // Chat components
     private AccordionLayoutManager? _accordionManager;
     private Panel? _chatContainerPanel;
+    private System.Windows.Forms.ComboBox? _chatFilterCombo;
+    private Dictionary<Guid, List<Artifact>> _chatArtifacts = new();
 
     private bool isTestMode = false;
 
@@ -381,6 +383,13 @@ public partial class MainForm : Form
         }
         Console.WriteLine($"Events Panel: Visible={eventsPanel!.Visible}, Height={eventsPanel!.Height}");
         Console.WriteLine($"Artifacts Panel: Visible={artifactsPanel!.Visible}, Width={artifactsPanel!.Width}");
+        Console.WriteLine($"Chat Filter: {_chatFilterCombo?.SelectedItem?.ToString() ?? "None"}");
+        Console.WriteLine($"Total Artifacts: {_chatArtifacts.Sum(kvp => kvp.Value.Count)}");
+        foreach (var kvp in _chatArtifacts)
+        {
+            var chatName = _accordionManager?.ChatStreams.FirstOrDefault(s => s.SessionId == kvp.Key)?.AgentName ?? "Unknown";
+            Console.WriteLine($"  - {chatName}: {kvp.Value.Count} artifacts");
+        }
         Console.WriteLine($"Sessions in list: {sessionsListBox!.Items.Count}");
         Console.WriteLine("Mock data loaded successfully");
         Console.WriteLine("Auto-exit in 2 seconds...");
@@ -478,6 +487,9 @@ public partial class MainForm : Form
         // Initialize accordion layout manager
         _accordionManager = new AccordionLayoutManager(_chatContainerPanel);
 
+        // Wire up events
+        _accordionManager.StreamsChanged += (s, e) => UpdateChatFilterOptions();
+
         // Create initial chat stream
         var initialChatStream = new ChatStream(Guid.NewGuid(), "Agent 1");
         _accordionManager.AddChatStream(initialChatStream);
@@ -511,20 +523,51 @@ public partial class MainForm : Form
         artifactsPanel.FloatSize = new Size(300, 600);
         artifactsPanel.FloatLocation = new Point(900, 10);
 
+        // Create container panel for filter + tree
+        var containerPanel = new Panel();
+        containerPanel.Dock = DockStyle.Fill;
+
+        // Add filter dropdown at the top
+        var filterPanel = new FlowLayoutPanel();
+        filterPanel.Dock = DockStyle.Top;
+        filterPanel.Height = 35;
+        filterPanel.FlowDirection = FlowDirection.LeftToRight;
+
+        var filterLabel = new System.Windows.Forms.Label();
+        filterLabel.Text = "Filter by Chat:";
+        filterLabel.AutoSize = true;
+        filterLabel.TextAlign = ContentAlignment.MiddleLeft;
+        filterLabel.Padding = new Padding(5, 8, 0, 0);
+
+        var chatFilterCombo = new System.Windows.Forms.ComboBox();
+        chatFilterCombo.Width = 180;
+        chatFilterCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        chatFilterCombo.Items.Add("All Chats");
+        chatFilterCombo.SelectedIndex = 0; // Default to "All Chats"
+        chatFilterCombo.SelectedIndexChanged += (s, e) => FilterArtifactsByChat(chatFilterCombo.SelectedItem?.ToString() ?? "All Chats");
+
+        filterPanel.Controls.Add(filterLabel);
+        filterPanel.Controls.Add(chatFilterCombo);
+
+        // Create artifacts tree
         artifactsTree = new TreeList();
         artifactsTree.Dock = DockStyle.Fill;
 
-        // Mock some artifact data
+        // Setup columns
         artifactsTree.Columns.Add();
         artifactsTree.Columns[0].Caption = "Artifacts";
         artifactsTree.Columns[0].VisibleIndex = 0;
 
-        var rootNode = artifactsTree.AppendNode(new object[] { "Build Results" }, null);
-        artifactsTree.AppendNode(new object[] { "Test Results" }, rootNode);
-        artifactsTree.AppendNode(new object[] { "Diff Output" }, rootNode);
-        artifactsTree.AppendNode(new object[] { "Log Files" }, rootNode);
+        // Store filter combo for later updates
+        _chatFilterCombo = chatFilterCombo;
 
-        artifactsPanel.Controls.Add(artifactsTree);
+        containerPanel.Controls.Add(artifactsTree);
+        containerPanel.Controls.Add(filterPanel);
+
+        artifactsPanel.Controls.Add(containerPanel);
+
+        // Initialize with mock data
+        RefreshArtifactsTree();
     }
 
     private void SetupLayout()
@@ -589,6 +632,12 @@ public partial class MainForm : Form
         
         // Route event to appropriate chat streams
         _accordionManager?.RouteEventToStreams(randomEvent, DateTimeOffset.Now);
+        
+        // Handle artifacts
+        if (randomEvent is ArtifactAvailable artifactEvent)
+        {
+            AddArtifactToChat(artifactEvent.Correlation.SessionId, artifactEvent.Artifact);
+        }
         
         // Also render to global events panel for backward compatibility
         eventRenderer?.RenderEvent(randomEvent, DateTimeOffset.Now);
@@ -931,6 +980,25 @@ public partial class MainForm : Form
             stream.CurrentTask = task;
             stream.ProgressPercentage = progress;
             _accordionManager.AddChatStream(stream);
+
+            // Add some mock artifacts for this stream
+            AddMockArtifactsForStream(stream.SessionId, name);
+        }
+    }
+
+    private void AddMockArtifactsForStream(Guid sessionId, string agentName)
+    {
+        var mockArtifacts = new[]
+        {
+            new Artifact("test-results", "Unit Test Results", $"Test results for {agentName} - 15/15 tests passed"),
+            new Artifact("build-log", "Build Log", $"Build log for {agentName} - compilation successful"),
+            new Artifact("code-coverage", "Code Coverage Report", $"Coverage report for {agentName} - 85% coverage achieved"),
+            new Artifact("diff-output", "Code Changes", $"Git diff showing changes made by {agentName}")
+        };
+
+        foreach (var artifact in mockArtifacts)
+        {
+            AddArtifactToChat(sessionId, artifact);
         }
     }
 
@@ -944,6 +1012,104 @@ public partial class MainForm : Form
         {
             _accordionManager.RemoveChatStream(expandedStream);
             Console.WriteLine($"Removed chat stream: {expandedStream.AgentName}");
+        }
+    }
+
+    private void FilterArtifactsByChat(string selectedChat)
+    {
+        RefreshArtifactsTree(selectedChat);
+    }
+
+    private void RefreshArtifactsTree(string filterByChat = "All Chats")
+    {
+        if (artifactsTree == null) return;
+
+        artifactsTree.Nodes.Clear();
+
+        if (filterByChat == "All Chats")
+        {
+            // Show artifacts from all chats
+            foreach (var chatStream in _accordionManager?.ChatStreams ?? Enumerable.Empty<ChatStream>())
+            {
+                AddChatArtifactsToTree(chatStream);
+            }
+        }
+        else
+        {
+            // Show artifacts from specific chat
+            var chatStream = _accordionManager?.ChatStreams.FirstOrDefault(s => s.AgentName == filterByChat);
+            if (chatStream != null)
+            {
+                AddChatArtifactsToTree(chatStream);
+            }
+        }
+
+        // Expand all nodes for better visibility
+        artifactsTree.ExpandAll();
+    }
+
+    private void AddChatArtifactsToTree(ChatStream chatStream)
+    {
+        if (!_chatArtifacts.ContainsKey(chatStream.SessionId) || !_chatArtifacts[chatStream.SessionId].Any())
+        {
+            // Add a placeholder node if no artifacts
+            var chatNode = artifactsTree.AppendNode(new object[] { $"{chatStream.AgentName} - No artifacts yet" }, null);
+            return;
+        }
+
+        // Add chat node
+        var rootNode = artifactsTree.AppendNode(new object[] { chatStream.AgentName }, null);
+
+        // Group artifacts by type
+        var artifactsByType = _chatArtifacts[chatStream.SessionId].GroupBy(a => a.Kind);
+
+        foreach (var typeGroup in artifactsByType)
+        {
+            var typeNode = artifactsTree.AppendNode(new object[] { typeGroup.Key }, rootNode);
+
+            foreach (var artifact in typeGroup)
+            {
+                var artifactNode = artifactsTree.AppendNode(new object[] { artifact.Name }, typeNode);
+                // Store artifact data for double-click handling
+                artifactNode.Tag = artifact;
+            }
+        }
+    }
+
+    public void AddArtifactToChat(Guid sessionId, Artifact artifact)
+    {
+        if (!_chatArtifacts.ContainsKey(sessionId))
+        {
+            _chatArtifacts[sessionId] = new List<Artifact>();
+        }
+
+        _chatArtifacts[sessionId].Add(artifact);
+
+        // Refresh the artifacts tree if currently showing this chat or all chats
+        var currentFilter = _chatFilterCombo?.SelectedItem?.ToString() ?? "All Chats";
+        if (currentFilter == "All Chats" || 
+            _accordionManager?.ChatStreams.Any(s => s.SessionId == sessionId && s.AgentName == currentFilter) == true)
+        {
+            RefreshArtifactsTree(currentFilter);
+        }
+    }
+
+    private void UpdateChatFilterOptions()
+    {
+        if (_chatFilterCombo == null || _accordionManager == null) return;
+
+        _chatFilterCombo.Items.Clear();
+        _chatFilterCombo.Items.Add("All Chats");
+
+        foreach (var stream in _accordionManager.ChatStreams)
+        {
+            _chatFilterCombo.Items.Add(stream.AgentName);
+        }
+
+        // Keep current selection if it still exists, otherwise default to "All Chats"
+        if (_chatFilterCombo.SelectedItem == null)
+        {
+            _chatFilterCombo.SelectedIndex = 0;
         }
     }
 }

@@ -296,6 +296,7 @@ public class AccordionLayoutManager
     public IReadOnlyList<ChatStream> ChatStreams => _chatStreams.AsReadOnly();
     public event EventHandler<ChatStream>? StreamExpanded;
     public event EventHandler<ChatStream>? StreamCollapsed;
+    public event EventHandler? StreamsChanged;
 
     public AccordionLayoutManager(Panel container)
     {
@@ -317,6 +318,7 @@ public class AccordionLayoutManager
             CollapseStream(chatStream);
         }
         RefreshLayout();
+        StreamsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void RemoveChatStream(ChatStream chatStream)
@@ -328,6 +330,7 @@ public class AccordionLayoutManager
         _chatStreams.Remove(chatStream);
         chatStream.Panel?.Dispose();
         RefreshLayout();
+        StreamsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void ExpandStream(ChatStream chatStream)
