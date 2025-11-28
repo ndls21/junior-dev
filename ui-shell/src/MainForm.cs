@@ -224,9 +224,13 @@ public partial class MainForm : Form
 
     // Controls within panels
     private System.Windows.Forms.ListBox? sessionsListBox;
-    private AIChatControl? conversationChatControl;
+    private AIChatControl? conversationChatControl; // Keep for backward compatibility
     private MemoEdit? eventsMemoEdit;
     private TreeList? artifactsTree;
+
+    // Chat components
+    private AccordionLayoutManager? _accordionManager;
+    private Panel? _chatContainerPanel;
 
     private bool isTestMode = false;
 
@@ -328,9 +332,22 @@ public partial class MainForm : Form
         var settingsItem = new ToolStripMenuItem("Settings...");
         settingsItem.Click += (s, e) => ShowSettingsDialog();
 
-        viewMenu.DropDownItems.Add(resetLayoutItem);
-        viewMenu.DropDownItems.Add(settingsItem);
-        mainMenu.Items.Add(viewMenu);
+        // Chat menu
+        var chatMenu = new ToolStripMenuItem("Chat");
+        
+        var addChatItem = new ToolStripMenuItem("Add Chat Stream");
+        addChatItem.Click += (s, e) => AddNewChatStream();
+        addChatItem.ShortcutKeys = Keys.Control | Keys.N;
+        addChatItem.ShowShortcutKeys = true;
+
+        var removeChatItem = new ToolStripMenuItem("Remove Active Chat");
+        removeChatItem.Click += (s, e) => RemoveActiveChatStream();
+        removeChatItem.ShortcutKeys = Keys.Control | Keys.W;
+        removeChatItem.ShowShortcutKeys = true;
+
+        chatMenu.DropDownItems.Add(addChatItem);
+        chatMenu.DropDownItems.Add(removeChatItem);
+        mainMenu.Items.Add(chatMenu);
     }
 
     private void SetupTestMode()
@@ -352,6 +369,14 @@ public partial class MainForm : Form
         Console.WriteLine($"Window Size: {this.Size.Width}x{this.Size.Height}");
         Console.WriteLine($"Sessions Panel: Visible={sessionsPanel!.Visible}, Width={sessionsPanel!.Width}");
         Console.WriteLine($"Conversation Panel: Visible={conversationPanel!.Visible}");
+        Console.WriteLine($"Chat Streams: {_accordionManager?.ChatStreams.Count ?? 0}");
+        if (_accordionManager != null)
+        {
+            foreach (var stream in _accordionManager.ChatStreams)
+            {
+                Console.WriteLine($"  - {stream.AgentName}: {stream.Status}, Expanded={stream.IsExpanded}");
+            }
+        }
         Console.WriteLine($"Events Panel: Visible={eventsPanel!.Visible}, Height={eventsPanel!.Height}");
         Console.WriteLine($"Artifacts Panel: Visible={artifactsPanel!.Visible}, Width={artifactsPanel!.Width}");
         Console.WriteLine($"Sessions in list: {sessionsListBox!.Items.Count}");
@@ -441,11 +466,21 @@ public partial class MainForm : Form
         conversationPanel = dockManager.AddPanel(DockingStyle.Fill);
         conversationPanel.Text = "AI Chat";
 
-        conversationChatControl = new AIChatControl();
-        conversationChatControl.Dock = DockStyle.Fill;
-        conversationChatControl.UseStreaming = DevExpress.Utils.DefaultBoolean.True;
+        // Create container panel for accordion layout
+        _chatContainerPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true
+        };
 
-        conversationPanel.Controls.Add(conversationChatControl);
+        // Initialize accordion layout manager
+        _accordionManager = new AccordionLayoutManager(_chatContainerPanel);
+
+        // Create initial chat stream
+        var initialChatStream = new ChatStream(Guid.NewGuid(), "Agent 1");
+        _accordionManager.AddChatStream(initialChatStream);
+
+        conversationPanel.Controls.Add(_chatContainerPanel);
     }
 
     private void CreateEventsPanel()
@@ -540,13 +575,15 @@ public partial class MainForm : Form
 
     private void AddMockEvent()
     {
-        if (eventRenderer is null) return;
-
         // Generate mock events with proper correlation
         var mockEvents = GenerateMockEventSequence();
         var randomEvent = mockEvents[new Random().Next(mockEvents.Length)];
         
-        eventRenderer.RenderEvent(randomEvent, DateTimeOffset.Now);
+        // Route event to appropriate chat streams
+        _accordionManager?.RouteEventToStreams(randomEvent, DateTimeOffset.Now);
+        
+        // Also render to global events panel for backward compatibility
+        eventRenderer?.RenderEvent(randomEvent, DateTimeOffset.Now);
     }
 
     private IEvent[] GenerateMockEventSequence()
@@ -841,46 +878,31 @@ public partial class MainForm : Form
         }
     }
 
-    private void ShowAutoClosingMessageBox(string message, string title, int seconds)
+    private void AddNewChatStream()
     {
-        var form = new Form
+        if (_accordionManager == null) return;
+
+        // Generate a unique agent name
+        var agentNumber = _accordionManager.ChatStreams.Count + 1;
+        var agentName = $"Agent {agentNumber}";
+        
+        // Create new chat stream
+        var chatStream = new ChatStream(Guid.NewGuid(), agentName);
+        _accordionManager.AddChatStream(chatStream);
+        
+        Console.WriteLine($"Added new chat stream: {agentName} (Session: {chatStream.SessionId})");
+    }
+
+    private void RemoveActiveChatStream()
+    {
+        if (_accordionManager == null || _accordionManager.ChatStreams.Count <= 1) return;
+
+        // Find the currently expanded stream
+        var expandedStream = _accordionManager.ChatStreams.FirstOrDefault(s => s.IsExpanded);
+        if (expandedStream != null)
         {
-            Text = title,
-            Size = new Size(300, 150),
-            StartPosition = FormStartPosition.CenterParent,
-            FormBorderStyle = FormBorderStyle.FixedDialog,
-            MaximizeBox = false,
-            MinimizeBox = false,
-            ShowInTaskbar = false,
-            TopMost = true,
-            Owner = this // Set owner for proper parenting
-        };
-
-        var label = new System.Windows.Forms.Label
-        {
-            Text = message,
-            AutoSize = true,
-            Location = new Point(20, 20)
-        };
-
-        form.Controls.Add(label);
-
-        var timer = new System.Windows.Forms.Timer
-        {
-            Interval = seconds * 1000
-        };
-        timer.Tick += (s, e) =>
-        {
-            timer.Stop();
-            if (!form.IsDisposed)
-            {
-                form.Invoke(new Action(() => form.Close()));
-            }
-        };
-
-        form.FormClosed += (s, e) => timer.Stop();
-
-        timer.Start();
-        form.Show();
+            _accordionManager.RemoveChatStream(expandedStream);
+            Console.WriteLine($"Removed chat stream: {expandedStream.AgentName}");
+        }
     }
 }
