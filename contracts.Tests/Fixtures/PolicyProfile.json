@@ -1,14 +1,14 @@
 {
   "name": "Default",
-  "commandWhitelist": [
-    "CreateBranch"
-  ],
   "protectedBranches": [
     "main"
   ],
-  "maxFilesPerCommit": 10,
   "requireTestsBeforePush": true,
   "requireApprovalForPush": false,
+  "commandWhitelist": [
+    "CreateBranch"
+  ],
+  "maxFilesPerCommit": 10,
   "allowedWorkItemTransitions": [
     "To Do->In Progress"
   ],

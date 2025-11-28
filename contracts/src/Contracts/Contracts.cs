@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 
 namespace JuniorDev.Contracts;
 
@@ -136,18 +138,31 @@ public sealed record TaskPlan(IReadOnlyList<TaskNode> Nodes);
 
 public sealed record TaskNode(string Id, string Title, IReadOnlyList<string> DependsOn, WorkItemRef? WorkItem, string? AgentHint, string? SuggestedBranch, IReadOnlyList<string> Tags);
 
-public sealed record RateLimits(int? CallsPerMinute, int? Burst, IReadOnlyDictionary<string, int>? PerCommandCaps);
+/// <summary>
+/// Rate limits configuration
+/// </summary>
+public sealed class RateLimits
+{
+    public int? CallsPerMinute { get; set; }
+    public int? Burst { get; set; }
+    public Dictionary<string, int>? PerCommandCaps { get; set; }
+}
 
-public sealed record PolicyProfile(
-    string Name,
-    IReadOnlyList<string>? CommandWhitelist,
-    IReadOnlyList<string>? CommandBlacklist,
-    IReadOnlyList<string> ProtectedBranches,
-    int? MaxFilesPerCommit,
-    bool RequireTestsBeforePush,
-    bool RequireApprovalForPush,
-    IReadOnlyList<string>? AllowedWorkItemTransitions,
-    RateLimits? Limits);
+/// <summary>
+/// Policy profile configuration
+/// </summary>
+public sealed class PolicyProfile
+{
+    public string Name { get; init; } = "";
+    public HashSet<string> ProtectedBranches { get; init; } = null!;
+    public bool RequireTestsBeforePush { get; init; } = false;
+    public bool RequireApprovalForPush { get; init; } = false;
+    public List<string>? CommandWhitelist { get; init; } = null;
+    public List<string>? CommandBlacklist { get; init; } = null;
+    public int? MaxFilesPerCommit { get; init; } = null;
+    public List<string>? AllowedWorkItemTransitions { get; init; } = null;
+    public RateLimits? Limits { get; init; } = null;
+}
 
 public sealed record SessionConfig(
     Guid SessionId,
@@ -158,3 +173,184 @@ public sealed record SessionConfig(
     WorkspaceRef Workspace,
     WorkItemRef? WorkItem,
     string AgentProfile);
+
+// Configuration Classes
+
+/// <summary>
+/// Main application configuration container
+/// </summary>
+public sealed record AppConfig(
+    AuthConfig? Auth = null,
+    AdaptersConfig? Adapters = null,
+    SemanticKernelConfig? SemanticKernel = null,
+    UiConfig? Ui = null,
+    WorkspaceConfig? Workspace = null,
+    PolicyConfig? Policy = null);
+
+/// <summary>
+/// Authentication configuration for external services
+/// </summary>
+public sealed record AuthConfig(
+    JiraAuthConfig? Jira = null,
+    GitHubAuthConfig? GitHub = null,
+    GitAuthConfig? Git = null,
+    OpenAIAuthConfig? OpenAI = null,
+    AzureOpenAIAuthConfig? AzureOpenAI = null);
+
+/// <summary>
+/// Jira authentication settings
+/// </summary>
+public sealed record JiraAuthConfig(
+    string BaseUrl,
+    string Username,
+    string ApiToken);
+
+/// <summary>
+/// GitHub authentication settings
+/// </summary>
+public sealed record GitHubAuthConfig(
+    string Token,
+    string? DefaultOrg = null,
+    string? DefaultRepo = null);
+
+/// <summary>
+/// Git authentication settings
+/// </summary>
+public sealed record GitAuthConfig(
+    string? SshKeyPath = null,
+    string? PersonalAccessToken = null,
+    string? DefaultRemote = null,
+    string? UserName = null,
+    string? UserEmail = null);
+
+/// <summary>
+/// OpenAI authentication settings
+/// </summary>
+public sealed record OpenAIAuthConfig(
+    string ApiKey,
+    string? OrganizationId = null);
+
+/// <summary>
+/// Azure OpenAI authentication settings
+/// </summary>
+public sealed record AzureOpenAIAuthConfig(
+    string Endpoint,
+    string ApiKey,
+    string DeploymentName);
+
+/// <summary>
+/// Adapter selection and configuration
+/// </summary>
+public sealed record AdaptersConfig(
+    string WorkItemsAdapter, // "jira" or "github"
+    string VcsAdapter, // "git" (only git supported currently)
+    string TerminalAdapter); // "powershell" or "bash" (only powershell on Windows)
+
+/// <summary>
+/// Semantic Kernel / AI configuration
+/// </summary>
+public sealed record SemanticKernelConfig(
+    string Provider, // "openai" or "azure-openai"
+    string Model,
+    int? MaxTokens = null,
+    double? Temperature = null,
+    string? ProxyUrl = null,
+    TimeSpan? Timeout = null,
+    Dictionary<string, AgentProfile>? AgentProfiles = null);
+
+/// <summary>
+/// Agent profile configuration
+/// </summary>
+public sealed record AgentProfile(
+    string Name,
+    string Description,
+    List<string> Capabilities,
+    Dictionary<string, string>? Settings = null);
+
+/// <summary>
+/// UI configuration
+/// </summary>
+public sealed record UiConfig(
+    UiSettings Settings,
+    string? LayoutPathOverride = null,
+    string? SettingsPathOverride = null);
+
+/// <summary>
+/// UI settings
+/// </summary>
+public sealed record UiSettings(
+    string Theme = "Light",
+    int FontSize = 12,
+    bool ShowStatusChips = true,
+    bool AutoScrollEvents = true,
+    bool ShowTimestamps = true,
+    int MaxEventHistory = 1000);
+
+/// <summary>
+/// Workspace configuration
+/// </summary>
+public sealed record WorkspaceConfig(
+    string BasePath,
+    string? BaselineMirrorPath = null,
+    bool AutoCreateDirectories = true,
+    Dictionary<string, RepoConfig>? KnownRepos = null);
+
+/// <summary>
+/// Repository configuration
+/// </summary>
+public sealed record RepoConfig(
+    string Path,
+    string DefaultBranch,
+    string? RemoteUrl = null);
+
+/// <summary>
+/// Policy configuration
+/// </summary>
+public sealed record PolicyConfig(
+    Dictionary<string, PolicyProfile> Profiles,
+    string DefaultProfile,
+    RateLimits GlobalLimits);
+
+// Configuration Builder Utility
+
+/// <summary>
+/// Utility class for building configuration with layered sources
+/// </summary>
+public static class ConfigBuilder
+{
+    /// <summary>
+    /// Builds configuration with standard layered sources:
+    /// 1. appsettings.json (checked in) - unless skipDefaults is true
+    /// 2. appsettings.{Environment}.json (checked in)
+    /// 3. Environment variables
+    /// 4. User secrets (development only)
+    /// </summary>
+    public static IConfiguration Build(string? environment = null, string? basePath = null, bool skipDefaults = false)
+    {
+        var builder = new ConfigurationBuilder()
+            .SetBasePath(basePath ?? AppContext.BaseDirectory);
+
+        if (!skipDefaults)
+        {
+            builder.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+        }
+
+        if (!string.IsNullOrEmpty(environment))
+        {
+            builder.AddJsonFile($"appsettings.{environment}.json", optional: true, reloadOnChange: true);
+        }
+
+        builder.AddEnvironmentVariables("JUNIORDEV__")
+               .AddUserSecrets(typeof(ConfigBuilder).Assembly, optional: true);
+
+        return builder.Build();
+    }
+
+    /// <summary>
+    /// Gets the AppConfig from configuration
+    /// </summary>
+    public static AppConfig GetAppConfig(IConfiguration configuration)
+    {
+        return configuration.GetSection("AppConfig").Get<AppConfig>() ?? new AppConfig();
+    }
+}

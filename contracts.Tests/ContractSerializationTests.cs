@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using JuniorDev.Contracts;
 using Xunit;
+using Microsoft.Extensions.Configuration;
+using System.IO;
 
 namespace JuniorDev.Contracts.Tests;
 
@@ -143,7 +145,7 @@ public class ContractSerializationTests
     public void SpawnSessionCommand_SerializesCorrectly()
     {
         var correlation = new Correlation(TestSessionId);
-        var config = new SessionConfig(TestSessionId, TestSessionId, "node1", new PolicyProfile("Default", null, null, new[] { "main" }, null, false, false, null, null), new RepoRef("repo", "path"), new WorkspaceRef("workspace"), new WorkItemRef("JIRA-123"), "planner");
+        var config = new SessionConfig(TestSessionId, TestSessionId, "node1", new PolicyProfile { Name = "Default", ProtectedBranches = new HashSet<string> { "main" } }, new RepoRef("repo", "path"), new WorkspaceRef("workspace"), new WorkItemRef("JIRA-123"), "planner");
         var command = new SpawnSession(TestCommandId, correlation, config);
         var json = JsonSerializer.Serialize(command, Options);
         var expected = File.ReadAllText("Fixtures/SpawnSession.json");
@@ -268,8 +270,18 @@ public class ContractSerializationTests
     [Fact]
     public void PolicyProfile_SerializesCorrectly()
     {
-        var limits = new RateLimits(100, 10, new Dictionary<string, int> { ["CreateBranch"] = 5 });
-        var profile = new PolicyProfile("Default", new[] { "CreateBranch" }, null, new[] { "main" }, 10, true, false, new[] { "To Do->In Progress" }, limits);
+        var limits = new RateLimits { CallsPerMinute = 100, Burst = 10, PerCommandCaps = new Dictionary<string, int> { ["CreateBranch"] = 5 } };
+        var profile = new PolicyProfile
+        {
+            Name = "Default",
+            ProtectedBranches = new HashSet<string> { "main" },
+            RequireTestsBeforePush = true,
+            RequireApprovalForPush = false,
+            CommandWhitelist = new List<string> { "CreateBranch" },
+            MaxFilesPerCommit = 10,
+            AllowedWorkItemTransitions = new List<string> { "To Do->In Progress" },
+            Limits = limits
+        };
         var json = JsonSerializer.Serialize(profile, Options);
         var expected = File.ReadAllText("Fixtures/PolicyProfile.json");
         Assert.Equal(expected.Trim(), json.Trim());
@@ -278,7 +290,11 @@ public class ContractSerializationTests
     [Fact]
     public void SessionConfig_SerializesCorrectly()
     {
-        var policy = new PolicyProfile("Default", null, null, new[] { "main" }, null, false, false, null, null);
+        var policy = new PolicyProfile
+        {
+            Name = "Default",
+            ProtectedBranches = new HashSet<string> { "main" }
+        };
         var config = new SessionConfig(TestSessionId, null, "node1", policy, new RepoRef("repo", "path"), new WorkspaceRef("workspace"), new WorkItemRef("JIRA-123"), "planner");
         var json = JsonSerializer.Serialize(config, Options);
         var expected = File.ReadAllText("Fixtures/SessionConfig.json");
@@ -425,6 +441,329 @@ public void WorkItemQueriedEvent_RoundTrip()
     for (int i = 0; i < original.Details.Tags.Count; i++)
     {
         Assert.Equal(original.Details.Tags[i], deserialized.Details.Tags[i]);
+    }
+}
+
+// Configuration Tests
+
+public class ConfigurationTests
+{
+    [Fact]
+    public void AppConfig_BindsFromJsonConfiguration()
+    {
+        // Arrange
+        var json = @"
+        {
+          ""AppConfig"": {
+            ""Adapters"": {
+              ""WorkItemsAdapter"": ""jira"",
+              ""VcsAdapter"": ""git"",
+              ""TerminalAdapter"": ""powershell""
+            },
+            ""SemanticKernel"": {
+              ""Provider"": ""openai"",
+              ""Model"": ""gpt-4"",
+              ""MaxTokens"": 4096,
+              ""Temperature"": 0.7,
+              ""Timeout"": ""00:05:00""
+            },
+            ""Ui"": {
+              ""Settings"": {
+                ""Theme"": ""Dark"",
+                ""FontSize"": 10,
+                ""ShowStatusChips"": true,
+                ""AutoScrollEvents"": false,
+                ""ShowTimestamps"": true,
+                ""MaxEventHistory"": 500
+              }
+            },
+            ""Workspace"": {
+              ""BasePath"": ""./workspaces"",
+              ""AutoCreateDirectories"": true
+            },
+            ""Policy"": {
+              ""Profiles"": {
+                ""default"": {
+                  ""Name"": ""Default Policy"",
+                  ""ProtectedBranches"": [""master"", ""main""],
+                  ""MaxFilesPerCommit"": 50,
+                  ""RequireTestsBeforePush"": true,
+                  ""RequireApprovalForPush"": false,
+                  ""Limits"": {
+                    ""CallsPerMinute"": 60,
+                    ""Burst"": 10
+                  }
+                }
+              },
+              ""DefaultProfile"": ""default"",
+              ""GlobalLimits"": {
+                ""CallsPerMinute"": 120,
+                ""Burst"": 20
+              }
+            }
+          }
+        }";
+
+        var configuration = new ConfigurationBuilder()
+            .AddJsonStream(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)))
+            .Build();
+
+        Console.WriteLine("Diagnostic: configuration.AsEnumerable():");
+        foreach (var kv in configuration.AsEnumerable())
+        {
+            Console.WriteLine($"  {kv.Key} = {kv.Value}");
+        }
+
+        // Act
+        var appConfig = ConfigBuilder.GetAppConfig(configuration);
+
+        // Assert
+        Assert.NotNull(appConfig);
+        Assert.Equal("jira", appConfig.Adapters.WorkItemsAdapter);
+        Assert.Equal("git", appConfig.Adapters.VcsAdapter);
+        Assert.Equal("powershell", appConfig.Adapters.TerminalAdapter);
+        Assert.Equal("openai", appConfig.SemanticKernel.Provider);
+        Assert.Equal("gpt-4", appConfig.SemanticKernel.Model);
+        Assert.Equal(4096, appConfig.SemanticKernel.MaxTokens);
+        Assert.Equal(0.7, appConfig.SemanticKernel.Temperature);
+        Assert.Equal("Dark", appConfig.Ui.Settings.Theme);
+        Assert.Equal(10, appConfig.Ui.Settings.FontSize);
+        Assert.True(appConfig.Ui.Settings.ShowStatusChips);
+        Assert.False(appConfig.Ui.Settings.AutoScrollEvents);
+        Assert.Equal("./workspaces", appConfig.Workspace.BasePath);
+        Assert.True(appConfig.Workspace.AutoCreateDirectories);
+        Assert.Equal("default", appConfig.Policy.DefaultProfile);
+        Assert.Single(appConfig.Policy.Profiles);
+        Assert.Contains("default", appConfig.Policy.Profiles.Keys);
+        Assert.Equal(120, appConfig.Policy.GlobalLimits.CallsPerMinute);
+    }
+
+    [Fact]
+    public void AuthConfig_BindsJiraCredentials()
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string>("AppConfig:Auth:Jira:BaseUrl", "https://company.atlassian.net"),
+                new KeyValuePair<string, string>("AppConfig:Auth:Jira:Username", "user@company.com"),
+                new KeyValuePair<string, string>("AppConfig:Auth:Jira:ApiToken", "token123")
+            })
+            .Build();
+
+        // Act
+        var appConfig = ConfigBuilder.GetAppConfig(configuration);
+
+        // Assert
+        Assert.NotNull(appConfig.Auth.Jira);
+        Assert.Equal("https://company.atlassian.net", appConfig.Auth.Jira.BaseUrl);
+        Assert.Equal("user@company.com", appConfig.Auth.Jira.Username);
+        Assert.Equal("token123", appConfig.Auth.Jira.ApiToken);
+    }
+
+    [Fact]
+    public void AuthConfig_BindsGitHubCredentials()
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string>("AppConfig:Auth:GitHub:Token", "gh_token123"),
+                new KeyValuePair<string, string>("AppConfig:Auth:GitHub:DefaultOrg", "myorg"),
+                new KeyValuePair<string, string>("AppConfig:Auth:GitHub:DefaultRepo", "myrepo")
+            })
+            .Build();
+
+        // Act
+        var appConfig = ConfigBuilder.GetAppConfig(configuration);
+
+        // Assert
+        Assert.NotNull(appConfig.Auth.GitHub);
+        Assert.Equal("gh_token123", appConfig.Auth.GitHub.Token);
+        Assert.Equal("myorg", appConfig.Auth.GitHub.DefaultOrg);
+        Assert.Equal("myrepo", appConfig.Auth.GitHub.DefaultRepo);
+    }
+
+    [Fact]
+    public void AuthConfig_BindsOpenAICredentials()
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string>("AppConfig:Auth:OpenAI:ApiKey", "openai_key123"),
+                new KeyValuePair<string, string>("AppConfig:Auth:OpenAI:OrganizationId", "org123")
+            })
+            .Build();
+
+        // Act
+        var appConfig = ConfigBuilder.GetAppConfig(configuration);
+
+        // Assert
+        Assert.NotNull(appConfig.Auth.OpenAI);
+        Assert.Equal("openai_key123", appConfig.Auth.OpenAI.ApiKey);
+        Assert.Equal("org123", appConfig.Auth.OpenAI.OrganizationId);
+    }
+
+    [Fact]
+    public void AuthConfig_BindsAzureOpenAICredentials()
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string>("AppConfig:Auth:AzureOpenAI:Endpoint", "https://resource.openai.azure.com"),
+                new KeyValuePair<string, string>("AppConfig:Auth:AzureOpenAI:ApiKey", "azure_key123"),
+                new KeyValuePair<string, string>("AppConfig:Auth:AzureOpenAI:DeploymentName", "gpt-4-deployment")
+            })
+            .Build();
+
+        // Act
+        var appConfig = ConfigBuilder.GetAppConfig(configuration);
+
+        // Assert
+        Assert.NotNull(appConfig.Auth.AzureOpenAI);
+        Assert.Equal("https://resource.openai.azure.com", appConfig.Auth.AzureOpenAI.Endpoint);
+        Assert.Equal("azure_key123", appConfig.Auth.AzureOpenAI.ApiKey);
+        Assert.Equal("gpt-4-deployment", appConfig.Auth.AzureOpenAI.DeploymentName);
+    }
+
+    [Fact]
+    public void AuthConfig_BindsGitCredentials()
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string>("AppConfig:Auth:Git:SshKeyPath", "/home/user/.ssh/id_rsa"),
+                new KeyValuePair<string, string>("AppConfig:Auth:Git:PersonalAccessToken", "git_token123"),
+                new KeyValuePair<string, string>("AppConfig:Auth:Git:UserName", "John Doe"),
+                new KeyValuePair<string, string>("AppConfig:Auth:Git:UserEmail", "john@example.com"),
+                new KeyValuePair<string, string>("AppConfig:Auth:Git:DefaultRemote", "upstream")
+            })
+            .Build();
+
+        // Act
+        var appConfig = ConfigBuilder.GetAppConfig(configuration);
+
+        // Assert
+        Assert.NotNull(appConfig.Auth.Git);
+        Assert.Equal("/home/user/.ssh/id_rsa", appConfig.Auth.Git.SshKeyPath);
+        Assert.Equal("git_token123", appConfig.Auth.Git.PersonalAccessToken);
+        Assert.Equal("John Doe", appConfig.Auth.Git.UserName);
+        Assert.Equal("john@example.com", appConfig.Auth.Git.UserEmail);
+        Assert.Equal("upstream", appConfig.Auth.Git.DefaultRemote);
+    }
+
+    [Fact]
+    public void PolicyProfile_BindsWithRateLimits()
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string>("AppConfig:Policy:Profiles:test:Name", "Test Policy"),
+                new KeyValuePair<string, string>("AppConfig:Policy:Profiles:test:ProtectedBranches:0", "master"),
+                new KeyValuePair<string, string>("AppConfig:Policy:Profiles:test:ProtectedBranches:1", "main"),
+                new KeyValuePair<string, string>("AppConfig:Policy:Profiles:test:MaxFilesPerCommit", "25"),
+                new KeyValuePair<string, string>("AppConfig:Policy:Profiles:test:RequireTestsBeforePush", "True"),
+                new KeyValuePair<string, string>("AppConfig:Policy:Profiles:test:RequireApprovalForPush", "True"),
+                new KeyValuePair<string, string>("AppConfig:Policy:Profiles:test:Limits:CallsPerMinute", "30"),
+                new KeyValuePair<string, string>("AppConfig:Policy:Profiles:test:Limits:Burst", "5"),
+                new KeyValuePair<string, string>("AppConfig:Policy:Profiles:test:Limits:PerCommandCaps:RunTests", "2"),
+                new KeyValuePair<string, string>("AppConfig:Policy:Profiles:test:Limits:PerCommandCaps:Push", "1"),
+                new KeyValuePair<string, string>("AppConfig:Policy:DefaultProfile", "test"),
+                new KeyValuePair<string, string>("AppConfig:Policy:GlobalLimits:CallsPerMinute", "100"),
+                new KeyValuePair<string, string>("AppConfig:Policy:GlobalLimits:Burst", "10")
+            })
+            .Build();
+
+        Console.WriteLine("Diagnostic: configuration.AsEnumerable():");
+        foreach (var kv in configuration.AsEnumerable())
+        {
+            Console.WriteLine($"  {kv.Key} = {kv.Value}");
+        }
+
+        Console.WriteLine("Configuration providers:");
+        foreach (var provider in configuration.Providers)
+        {
+            Console.WriteLine($"Provider: {provider.GetType().Name}");
+        }
+
+        Console.WriteLine("AppConfig section:");
+        var appConfigSection = configuration.GetSection("AppConfig");
+        Console.WriteLine($"AppConfig exists: {appConfigSection.Exists()}");
+
+        var policySection = appConfigSection.GetSection("Policy");
+        Console.WriteLine($"Policy exists: {policySection.Exists()}");
+
+        var profilesSection = policySection.GetSection("Profiles");
+        Console.WriteLine($"Profiles exists: {profilesSection.Exists()}");
+
+        var testProfileSection = profilesSection.GetSection("test");
+        Console.WriteLine($"test profile exists: {testProfileSection.Exists()}");
+
+        var limitsSection = testProfileSection.GetSection("Limits");
+        Console.WriteLine($"Limits exists: {limitsSection.Exists()}");
+
+        var perCommandCapsSection = limitsSection.GetSection("PerCommandCaps");
+        Console.WriteLine($"PerCommandCaps exists: {perCommandCapsSection.Exists()}");
+
+        Console.WriteLine("PerCommandCaps children:");
+        foreach (var child in perCommandCapsSection.GetChildren())
+        {
+            Console.WriteLine($"{child.Key} = {child.Value}");
+        }
+
+        // Act
+        var appConfig = ConfigBuilder.GetAppConfig(configuration);
+
+        // Assert
+        Assert.NotNull(appConfig.Policy.Profiles);
+        Assert.Contains("test", appConfig.Policy.Profiles.Keys);
+        var profile = appConfig.Policy.Profiles["test"];
+        Assert.Equal("Test Policy", profile.Name);
+        Assert.Equal(2, profile.ProtectedBranches.Count);
+        Assert.Contains("master", profile.ProtectedBranches);
+        Assert.Contains("main", profile.ProtectedBranches);
+        Assert.Equal(25, profile.MaxFilesPerCommit);
+        Assert.True(profile.RequireTestsBeforePush);
+        Assert.True(profile.RequireApprovalForPush);
+        Assert.NotNull(profile.Limits);
+        Assert.Equal(30, profile.Limits.CallsPerMinute);
+        Assert.Equal(5, profile.Limits.Burst);
+        Assert.Equal(2, profile.Limits.PerCommandCaps["RunTests"]);
+        Assert.Equal(1, profile.Limits.PerCommandCaps["Push"]);
+        Assert.Equal("test", appConfig.Policy.DefaultProfile);
+        Assert.NotNull(appConfig.Policy.GlobalLimits);
+        Assert.Equal(100, appConfig.Policy.GlobalLimits.CallsPerMinute);
+        Assert.Equal(10, appConfig.Policy.GlobalLimits.Burst);
+    }
+
+    [Fact]
+    public void ConfigBuilder_BuildsConfigurationWithEnvironmentVariables()
+    {
+        // Arrange
+        Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__Adapters__WorkItemsAdapter", "github");
+        Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__SemanticKernel__Model", "gpt-3.5-turbo");
+
+        try
+        {
+            // Act
+            var basePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+            var config = ConfigBuilder.Build(basePath: basePath);
+            var appConfig = ConfigBuilder.GetAppConfig(config);
+
+            // Assert
+            Assert.Equal("github", appConfig.Adapters?.WorkItemsAdapter);
+            Assert.Equal("gpt-3.5-turbo", appConfig.SemanticKernel?.Model);
+        }
+        finally
+        {
+            // Cleanup
+            Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__Adapters__WorkItemsAdapter", null);
+            Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__SemanticKernel__Model", null);
+        }
     }
 }
 }
