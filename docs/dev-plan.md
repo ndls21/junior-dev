@@ -102,10 +102,10 @@ See `docs/module-plan.md` for per-module staged milestones and tests; use this s
   - Integration: full stack with fakes by default; optional live Jira/git.
   - Tests: E2E harness on event/command sequence, artifacts captured, push flag respected; throttling/backoff in live mode.
 
-## Status Checkpoint (2025-11-26)
-- Completed: Beacon (contracts stable with goldens/guard); Conductor (orchestrator with policy/rate/lifecycle, fakes); Dock baseline (git adapter with conflict handling, Jira adapter with retries/backoff and CommandRejected mapping, DI helper to choose fake vs real).
-- Pending Dock follow-ups: env-gated integration tests for Jira/git; richer git conflict/artifact coverage; align DI wiring into orchestrator startup.
-- Next active stage: Envoy (agents).
+## Status Checkpoint (2025-11-29)
+- Completed: Beacon (contracts stable with goldens/guard); Conductor (orchestrator with policy/rate/lifecycle, fakes); Dock (git + Jira adapters with retries/backoff/conflict surfacing; env-gated integration optional); Envoy (SK agents planner/executor/reviewer with policy/throttle awareness and query commands); Facade (multi-chat UI with AIChatControl per stream, per-chat events, artifacts filtering, layout/settings persisted).
+- Pending: Config unification (#28), build command/adapter (#32), smoke harness (Gauntlet #29–#31), optional live Jira/git smoke wiring (#30).
+- Next active stage: Gauntlet (Stage G) – E2E smoke with fakes by default, live optional.
 
 ## Test Deployment per Stage
 - Stage A: CI build/check scripts only.

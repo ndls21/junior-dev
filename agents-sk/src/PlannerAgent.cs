@@ -146,7 +146,7 @@ public class PlannerAgent : AgentBase
         return new TaskPlan(new[] { node });
     }
 
-    internal string GenerateBranchSuggestion(string workItemId, IReadOnlyList<string> protectedBranches)
+    internal string GenerateBranchSuggestion(string workItemId, IEnumerable<string> protectedBranches)
     {
         // Generate a branch name based on work item ID, ensuring it's not protected
         var baseName = $"feature/{workItemId.ToLowerInvariant().Replace(" ", "-").Replace("_", "-")}";

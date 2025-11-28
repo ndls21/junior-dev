@@ -18,16 +18,11 @@ namespace JuniorDev.Agents.Sk.Tests
             var agent = new PlannerAgent(kernel);
 
             var workItem = new WorkItemRef("PROJ-123");
-            var policy = new PolicyProfile(
-                "test",
-                CommandWhitelist: null,
-                CommandBlacklist: null,
-                ProtectedBranches: new[] { "main", "develop" },
-                MaxFilesPerCommit: null,
-                RequireTestsBeforePush: false,
-                RequireApprovalForPush: false,
-                AllowedWorkItemTransitions: null,
-                Limits: null);
+            var policy = new PolicyProfile
+            {
+                Name = "test",
+                ProtectedBranches = new HashSet<string> { "main", "develop" }
+            };
 
             var plan = await agent.GeneratePlanAsync(workItem, policy);
 

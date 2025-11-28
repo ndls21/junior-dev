@@ -1,0 +1,62 @@
+{
+  "AppConfig": {
+    "Auth": {
+      "Jira": {
+        "BaseUrl": "https://yourcompany.atlassian.net", // Replace with your Jira instance URL
+        "Username": "your.email@company.com", // Replace with your Jira username/email
+        "ApiToken": "your-jira-api-token" // Replace with your Jira API token - DO NOT COMMIT TO REPO
+      },
+      "GitHub": {
+        "Token": "ghp_your-github-personal-access-token", // Replace with your GitHub PAT - DO NOT COMMIT TO REPO
+        "DefaultOrg": "your-org", // Replace with your default organization (optional)
+        "DefaultRepo": "your-repo" // Replace with your default repository (optional)
+      },
+      "Git": {
+        "SshKeyPath": "~/.ssh/id_rsa", // Path to SSH key (recommended for production)
+        "PersonalAccessToken": "your-git-pat", // Git PAT (alternative to SSH) - DO NOT COMMIT TO REPO
+        "UserName": "Your Name", // Your Git username (optional, for commits)
+        "UserEmail": "your.email@company.com", // Your Git email (optional, for commits)
+        "DefaultRemote": "origin" // Default remote name (optional)
+      },
+      "OpenAI": {
+        "ApiKey": "sk-your-openai-api-key", // Replace with your OpenAI API key - DO NOT COMMIT TO REPO
+        "OrganizationId": "org-your-org-id" // Your OpenAI organization ID (optional)
+      },
+      "AzureOpenAI": {
+        "Endpoint": "https://your-resource.openai.azure.com/", // Replace with your Azure endpoint - DO NOT COMMIT TO REPO
+        "ApiKey": "your-azure-api-key", // Replace with your Azure API key - DO NOT COMMIT TO REPO
+        "DeploymentName": "your-deployment-name" // Replace with your deployment name - DO NOT COMMIT TO REPO
+      }
+    },
+    "Adapters": {
+      "WorkItemsAdapter": "github",
+      "VcsAdapter": "git",
+      "TerminalAdapter": "powershell"
+    },
+    "SemanticKernel": {
+      "Provider": "openai",
+      "Model": "gpt-3.5-turbo",
+      "MaxTokens": 2048,
+      "Temperature": 0.3,
+      "Timeout": "00:02:00"
+    },
+    "Ui": {
+      "Settings": {
+        "Theme": "Dark",
+        "FontSize": 10,
+        "ShowStatusChips": true,
+        "AutoScrollEvents": true,
+        "ShowTimestamps": false,
+        "MaxEventHistory": 500
+      }
+    },
+    "Workspace": {
+      "BasePath": "./dev-workspaces",
+      "BaselineMirrorPath": "./baseline-repos",
+      "AutoCreateDirectories": true
+    },
+    "Policy": {
+      "DefaultProfile": "default"
+    }
+  }
+}

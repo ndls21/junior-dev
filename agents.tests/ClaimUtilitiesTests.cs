@@ -23,7 +23,7 @@ public class ClaimUtilitiesTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile("test", null, null, Array.Empty<string>(), null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
             new RepoRef("test", "/repos/test"),
             new WorkspaceRef("/workspaces/test"),
             null,

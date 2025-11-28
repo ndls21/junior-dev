@@ -173,7 +173,7 @@ public class ClaimUtilities
     /// </summary>
     public async Task<string> CreateWorkItemBranchAsync(WorkItemRef workItem, RepoRef repo)
     {
-        var branchName = GenerateBranchName(workItem, _context.Config.Policy.ProtectedBranches ?? Array.Empty<string>());
+        var branchName = GenerateBranchName(workItem, _context.Config.Policy.ProtectedBranches ?? new HashSet<string>());
 
         var command = new CreateBranch(
             Guid.NewGuid(),

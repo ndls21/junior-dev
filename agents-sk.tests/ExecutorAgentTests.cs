@@ -27,7 +27,7 @@ public class ExecutorAgentTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile("test", null, null, Array.Empty<string>(), null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string> { "main" } }, null, false, false, null, null),
             new RepoRef("test-repo", "/repos/test-repo"),
             new WorkspaceRef("/workspaces/test-ws"),
             null,
