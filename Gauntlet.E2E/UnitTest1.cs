@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using JuniorDev.Agents;
 using JuniorDev.Agents.Sk;
@@ -246,5 +247,164 @@ public class GauntletSmokeTest
         Assert.True(artifactEvents > 0);
 
         _output.WriteLine($"=== GAUNTLET E2E SMOKE TEST ({(useLiveAdapters ? "LIVE" : "FAKE")}) PASSED ===");
+
+        // Generate reports and collect artifacts
+        await GenerateSmokeTestReport(sessionId, events, useLiveAdapters, sessionConfig);
+    }
+
+    private async Task GenerateSmokeTestReport(Guid sessionId, List<IEvent> events, bool useLiveAdapters, SessionConfig sessionConfig)
+    {
+        // Create output directory
+        var outputDir = Path.Combine(Path.GetTempPath(), $"junior-dev-smoke-{sessionId}");
+        Directory.CreateDirectory(outputDir);
+        _output.WriteLine($"Artifacts output directory: {outputDir}");
+
+        // Collect artifacts from events
+        var artifacts = events.Where(e => e.Kind == nameof(ArtifactAvailable))
+                             .Select(e => (ArtifactAvailable)e)
+                             .ToList();
+
+        // Generate detailed JSON report
+        var report = new
+        {
+            TestRun = new
+            {
+                SessionId = sessionId,
+                Mode = useLiveAdapters ? "live" : "fake",
+                Timestamp = DateTime.UtcNow,
+                Duration = "N/A", // Could be enhanced with timing
+                PolicyProfile = sessionConfig.Policy.Name
+            },
+            Commands = new
+            {
+                Total = events.Count(e => e.Kind == nameof(CommandAccepted)),
+                Completed = events.Count(e => e.Kind == nameof(CommandCompleted)),
+                Successful = events.Count(e => e.Kind == nameof(CommandCompleted) &&
+                                             ((CommandCompleted)e).Outcome == CommandOutcome.Success),
+                Failed = events.Count(e => e.Kind == nameof(CommandCompleted) &&
+                                         ((CommandCompleted)e).Outcome != CommandOutcome.Success)
+            },
+            Events = new
+            {
+                Total = events.Count,
+                ByType = events.GroupBy(e => e.Kind)
+                              .ToDictionary(g => g.Key, g => g.Count())
+            },
+            Artifacts = new
+            {
+                Total = artifacts.Count,
+                Types = artifacts.GroupBy(a => a.Artifact.Kind)
+                                .ToDictionary(g => g.Key, g => g.Count()),
+                Details = artifacts.Select(a => new
+                {
+                    Id = a.Id,
+                    Type = a.Artifact.Kind,
+                    Name = a.Artifact.Name,
+                    CorrelationId = a.Correlation?.CommandId
+                }).ToList()
+            },
+            Breadcrumbs = events.Select(e => new
+            {
+                Timestamp = DateTime.UtcNow, // Could use actual event timestamp if available
+                EventType = e.Kind,
+                CorrelationId = e.Correlation?.CommandId,
+                Details = e switch
+                {
+                    CommandAccepted ca => $"Command {ca.CommandId} accepted",
+                    CommandCompleted cc => $"Command {cc.CommandId} completed with outcome {cc.Outcome}",
+                    CommandRejected cr => $"Command {cr.CommandId} rejected: {cr.Reason}",
+                    ArtifactAvailable aa => $"Artifact {aa.Id} ({aa.Artifact.Kind}) available: {aa.Artifact.Name}",
+                    _ => e.Kind
+                }
+            }).ToList()
+        };
+
+        // Save JSON report
+        var jsonReportPath = Path.Combine(outputDir, "smoke-test-report.json");
+        await File.WriteAllTextAsync(jsonReportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions
+        {
+            WriteIndented = true
+        }));
+
+        // Generate markdown summary
+        var markdownSummary = $@"# Junior Dev Smoke Test Report
+
+## Test Run Summary
+- **Session ID**: {sessionId}
+- **Mode**: {(useLiveAdapters ? "Live" : "Fake")}
+- **Timestamp**: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss UTC}
+- **Policy Profile**: {sessionConfig.Policy.Name}
+
+## Command Results
+- **Total Commands**: {report.Commands.Total}
+- **Completed**: {report.Commands.Completed}
+- **Successful**: {report.Commands.Successful}
+- **Failed**: {report.Commands.Failed}
+
+## Events Summary
+- **Total Events**: {report.Events.Total}
+{string.Join("\n", report.Events.ByType.Select(kvp => $"- **{kvp.Key}**: {kvp.Value}"))}
+
+## Artifacts Generated
+- **Total Artifacts**: {report.Artifacts.Total}
+{string.Join("\n", report.Artifacts.Types.Select(kvp => $"- **{kvp.Key}**: {kvp.Value}"))}
+
+## Detailed Artifacts
+{string.Join("\n", report.Artifacts.Details.Select(a => $"- {a.Type}: {a.Name} (ID: {a.Id})"))}
+
+## Execution Breadcrumbs
+{string.Join("\n", report.Breadcrumbs.Select((b, i) => $"{i + 1:00}. {b.Details}"))}
+
+---
+*Report generated by Gauntlet E2E Smoke Test*
+";
+
+        // Save markdown summary
+        var markdownPath = Path.Combine(outputDir, "README.md");
+        await File.WriteAllTextAsync(markdownPath, markdownSummary);
+
+        // Save raw event log
+        var eventLogPath = Path.Combine(outputDir, "event-log.json");
+        await File.WriteAllTextAsync(eventLogPath, JsonSerializer.Serialize(events.Select(e => new
+        {
+            e.Kind,
+            CorrelationId = e.Correlation?.CommandId,
+            Timestamp = DateTime.UtcNow,
+            Details = e.ToString()
+        }), new JsonSerializerOptions { WriteIndented = true }));
+
+        // Collect and save artifact contents (if available)
+        foreach (var artifact in artifacts)
+        {
+            try
+            {
+                // Note: In a real implementation, you'd need to access the actual artifact content
+                // For now, we'll just log the artifact metadata
+                var artifactPath = Path.Combine(outputDir, $"artifact-{artifact.Id}.json");
+                await File.WriteAllTextAsync(artifactPath, JsonSerializer.Serialize(new
+                {
+                    artifact.Id,
+                    artifact.Artifact.Kind,
+                    artifact.Artifact.Name,
+                    artifact.Correlation
+                }, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch (Exception ex)
+            {
+                _output.WriteLine($"Warning: Failed to save artifact {artifact.Id}: {ex.Message}");
+            }
+        }
+
+        _output.WriteLine("=== REPORTS GENERATED ===");
+        _output.WriteLine($"JSON Report: {jsonReportPath}");
+        _output.WriteLine($"Markdown Summary: {markdownPath}");
+        _output.WriteLine($"Event Log: {eventLogPath}");
+        _output.WriteLine($"Artifacts saved: {artifacts.Count}");
+
+        // In CI, these would be uploaded as build artifacts
+        if (Environment.GetEnvironmentVariable("CI") == "true")
+        {
+            _output.WriteLine("CI detected - artifacts would be uploaded here");
+        }
     }
 }

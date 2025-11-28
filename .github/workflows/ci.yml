@@ -49,5 +49,12 @@ jobs:
         JUNIORDEV__APPCONFIG__AUTH__GIT__PERSONALACCESSTOKEN: ${{ secrets.GIT_TOKEN }}
       if: ${{ github.event_name == 'schedule' || contains(github.event.head_commit.message, '[run-live]') }}
 
+    - name: Upload smoke test artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: smoke-test-artifacts
+        path: /tmp/junior-dev-smoke-*
+      if: ${{ github.event_name == 'schedule' || contains(github.event.head_commit.message, '[run-live]') }}
+
     - name: Check contracts
       run: pwsh scripts/check-contracts.ps1
