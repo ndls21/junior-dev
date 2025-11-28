@@ -31,13 +31,17 @@ The UI shell (`ui-shell/`) provides a DevExpress-based Windows Forms application
 
 - **Normal mode**: `dotnet run` (from `ui-shell/` directory) - runs the full application
 - **Test mode**: `dotnet run -- --test` - displays UI for 2 seconds then auto-exits for automated testing
-- **Layout**: UI uses dockable panels (sessions left, conversation center, artifacts right)
+- **Layout**: UI uses dockable panels (sessions left, AI chat center-top, event stream center-bottom, artifacts right)
 - **Persistence**: Layout is saved to `%APPDATA%\JuniorDev\layout.xml`
 
 ### UI Architecture
 
 - DevExpress WinForms 24.2.9 for dockable panels and controls
-- Three-panel layout: Sessions (left), Conversation (center), Artifacts (right)
+- **Four-panel layout**:
+  - **Sessions Panel (Left)**: Active development sessions with status indicators and filters
+  - **AI Chat Panel (Center-Top)**: Interactive conversations with AI assistants for task instructions
+  - **Event Stream Panel (Center-Bottom)**: Real-time system events and command results
+  - **Artifacts Panel (Right)**: Build results, test outputs, diffs, and logs
 - Session filtering with status chips (All/Running/Paused/Error)
 - Layout persistence with reset functionality (View → Reset Layout or Ctrl+R)
 

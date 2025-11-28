@@ -52,10 +52,16 @@
 - Future-proofing: sessions may reference a plan node and parent session; orchestrator can spawn child sessions later.
 - Task plans (DAG) are stored and can be expanded by a planner agent later without changing core contracts.
 
-## UI Layout (columnar/dockable)
-- Left dock: sessions list with status chips (Running/Paused/NeedsApproval/Error) and filters.
-- Center document: active session conversation + event log inline.
-- Right dock: artifacts (diffs/patches/test results/logs). Panels dockable/tear-off for multi-screen layouts; layout persisted with reset option.
+### Chat Streams vs Sessions
+- ChatStream: { ChatStreamId, SessionId, AgentHints, Status, CreatedAt }. Default mapping is 1:1 with a backend session; future multi-agent or spawned sessions can appear as additional streams.
+- Event routing: UI subscribes per SessionId and delivers events to the owning chat stream only (uses Correlation.SessionId and IssuerAgentId for routing). Global artifacts remain filterable by SessionId/ChatStreamId.
+- Commands originate from the active chat stream; responses/events stay in that stream’s feed.
+## UI Layout (chat streams; dockable)
+- **Chat Streams List/Tabs** (left or top): Shows active chat streams (usually 1:1 with backend sessions) with status chips. Filters for Running/Paused/NeedsApproval/Error/Completed.
+- **Per-Chat Pane** (center, tabs/columns): Each chat stream hosts the DevExpress AI Chat control as the primary interaction surface plus its **own event feed** (command accepted/completed/rejected/throttled/conflict/artifact). Events are scoped to the stream’s session/correlation.
+- **Global Artifacts Panel** (bottom/right dock): Repository for artifacts across streams; filterable by stream/session. Artifact links from chat/event feed open here.
+- **Optional Right Dock**: Extra monitoring/metrics or a secondary chat pane for multi-monitor setups.
+- Panels are dockable/tear-off; layout and chat stream arrangement are persisted with reset.
 
 ## Module Diagram (control/data flow)
 ```
@@ -119,6 +125,105 @@ Orchestrator interfaces
 global.json, Directory.Packages.props, .editorconfig, .gitignore
 ```
 
+## Agent Terminal Access & Skills
+
+### **Current Architecture: Typed Commands via SK Functions**
+Agents interact with the system through Semantic Kernel functions that emit typed commands:
+- **VCS Operations**: `create_branch`, `commit`, `push` → CreateBranch, Commit, Push commands
+- **Work Items**: `claim_item`, `comment`, `transition` → Claim, Comment, TransitionTicket commands  
+- **General**: `upload_artifact`, `request_approval` → UploadArtifact, RequestApproval commands
+
+### **Terminal Access Question**
+Should agents have direct PowerShell terminal access, or should all operations go through the typed command system?
+
+**Recommendation: Extend Typed Commands, Not Direct Terminal Access**
+
+### **Why Not Direct Terminal Access?**
+- **Security Risks**: Agents could execute dangerous commands (`rm -rf /`, `format c:`)
+- **Lost Auditability**: Commands bypass event logging and correlation tracking
+- **Policy Bypass**: Rate limits and command restrictions become ineffective
+- **Testing Challenges**: Hard to mock/stub arbitrary terminal operations
+
+### **Better Approach: Skills as Typed Commands**
+Create new commands and corresponding SK functions for common terminal operations:
+
+#### **Package Management Commands**
+```csharp
+// New commands for package operations
+public sealed record InstallPackage(Guid Id, Correlation Correlation, string PackageManager, string PackageName, string? Version = null)
+    : CommandBase(Id, Correlation, nameof(InstallPackage));
+
+public sealed record RunScript(Guid Id, Correlation Correlation, string ScriptPath, string[] Args, TimeSpan? Timeout = null)
+    : CommandBase(Id, Correlation, nameof(RunScript));
+
+// SK Functions
+[KernelFunction("install_package")]
+public async Task<string> InstallPackageAsync(string packageManager, string packageName, string? version = null)
+
+[KernelFunction("run_script")]  
+public async Task<string> RunScriptAsync(string scriptPath, string[] args, int? timeoutSeconds = null)
+```
+
+#### **File System Commands**
+```csharp
+public sealed record CreateDirectory(Guid Id, Correlation Correlation, string Path)
+    : CommandBase(Id, Correlation, nameof(CreateDirectory));
+
+public sealed record CopyFiles(Guid Id, Correlation Correlation, string SourcePattern, string Destination)
+    : CommandBase(Id, Correlation, nameof(CopyFiles));
+
+// SK Functions
+[KernelFunction("create_directory")]
+public async Task<string> CreateDirectoryAsync(string path)
+
+[KernelFunction("copy_files")]
+public async Task<string> CopyFilesAsync(string sourcePattern, string destination)
+```
+
+### **Command Approval & Safety**
+- **Safe Command Whitelist**: Only allow approved commands through adapters
+- **Parameter Validation**: Strict validation of paths, commands, arguments
+- **Sandboxing**: Run in controlled environments with limited permissions
+- **Audit Trail**: All operations logged as events with correlation IDs
+
+### **Adapter Pattern for Terminal Operations**
+```csharp
+public class TerminalAdapter : IAdapter
+{
+    public async Task HandleCommand(ICommand command, SessionState session)
+    {
+        switch (command)
+        {
+            case InstallPackage install:
+                if (!IsApprovedPackageManager(install.PackageManager)) {
+                    await EmitRejected(session, command, "Unapproved package manager");
+                    return;
+                }
+                var result = await RunApprovedCommand(install);
+                await EmitArtifact(session, command, result);
+                break;
+                
+            case RunScript script:
+                if (!IsSafeScriptPath(script.ScriptPath)) {
+                    await EmitRejected(session, command, "Unsafe script path");
+                    return;
+                }
+                // Execute with timeout and capture output
+                break;
+        }
+    }
+}
+```
+
+### **Implementation Plan**
+1. **Define New Commands**: Add terminal-related commands to contracts
+2. **Create Terminal Adapter**: Implement safe command execution
+3. **Add SK Functions**: Bind commands to agent-callable functions  
+4. **Policy Integration**: Add command restrictions to PolicyProfile
+5. **Testing**: Comprehensive testing of command validation and execution
+
+This approach maintains the typed, auditable command system while giving agents the flexibility they need for complex operations.
+
 ## Testing Posture
 - Over-test bias: unit tests for contracts/serialization; adapter tests with fakes; orchestrator scenario tests (policy, rate limits, isolation); agent golden tests; smoke/integration gated by env vars for live services; UI component tests.
 - CI guard: contracts changes require version bump, docs update (with date/reason), and refreshed tests.
@@ -131,3 +236,7 @@ global.json, Directory.Packages.props, .editorconfig, .gitignore
 - Governance note (2025-11-26): contract/architecture deviations without synchronized doc/timestamp updates are considered violations; CI should block such changes.
 - Update (2025-11-26): Dev J workitems-jira adapter implemented with fake in-memory and real REST client implementations, comprehensive unit tests added. Interface moved to adapters/common for shared access.
 - Update (2025-11-28): Added QueryBacklog/QueryWorkItem commands and BacklogQueried/WorkItemQueried events to support work item queries for SK functions (list_backlog/get_item). Implemented fake query handling in orchestrator for testing; real adapter queries to be added later. Updated architecture to use unified IAdapter model instead of separate service interfaces. SK function bindings for list_backlog/get_item now fully implemented and tested.
+- Update (2025-11-28): Clarified UI panel purposes and interactions. Separated AI Chat Panel (interactive AI conversations) from Event Stream Panel (system events). Updated documentation to reflect four-panel layout with clear responsibilities for each panel. Added comprehensive UI_PANELS_GUIDE.md for user interaction guidance.
+- Update (2025-11-28): Designed multi-agent chat architecture supporting concurrent AI conversations. Proposed tabbed interface for AI Chat area with combined Monitoring & Artifacts panel. Analyzed panel utilities and screen real estate requirements for laptop usage. Created MULTI_AGENT_CHAT_DESIGN.md with implementation options.
+- Update (2025-11-28): Revised multi-agent UI design to integrate per-agent event monitoring within each chat panel. Recognized that each AI agent generates its own event stream requiring dedicated monitoring per agent rather than global combined panel. Updated UI layout to use accordion approach with chat + events per agent, plus global artifacts panel. Alternative layouts explored: docked panels, split-panel, column-based, master-detail. Final decision: accordion layout as recommended default for optimal focus+overview balance.
+- Update (2025-11-28): Analyzed agent terminal access requirements. Determined that direct PowerShell access poses security and auditability risks. Recommended extending typed command system with new commands for package management, file operations, and script execution. Proposed TerminalAdapter pattern with SK function bindings for safe, auditable terminal operations. Created GitHub issues #19-23 for implementation phases. Created issue #24 for multi-agent chat UI implementation with accordion layout as recommended default.

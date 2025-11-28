@@ -5,6 +5,9 @@ using System.IO;
 using DevExpress.XtraBars.Docking;
 using DevExpress.XtraEditors;
 using DevExpress.XtraTreeList;
+using DevExpress.AIIntegration.WinForms.Chat;
+using Microsoft.Extensions.AI;
+using DevExpress.AIIntegration;
 using System.Xml;
 using System.Linq;
 using JuniorDev.Contracts;
@@ -49,40 +52,27 @@ public class SessionItem
 // Event rendering classes
 public class EventRenderer
 {
-    private readonly RichTextBox _richTextBox;
-    private readonly Dictionary<string, Color> _eventColors = new()
-    {
-        { "CommandAccepted", Color.Green },
-        { "CommandCompleted", Color.Blue },
-        { "CommandRejected", Color.Red },
-        { "Throttled", Color.Orange },
-        { "ConflictDetected", Color.DarkRed },
-        { "ArtifactAvailable", Color.Purple },
-        { "SessionStatusChanged", Color.Teal },
-        { "Info", Color.Black },
-        { "Warning", Color.DarkOrange },
-        { "Error", Color.Red }
-    };
+    private readonly MemoEdit _memoEdit;
 
-    public EventRenderer(RichTextBox richTextBox)
+    public EventRenderer(MemoEdit memoEdit)
     {
-        _richTextBox = richTextBox;
+        _memoEdit = memoEdit;
     }
 
     public void RenderEvent(IEvent @event, DateTimeOffset timestamp)
     {
-        var formattedEvent = FormatEvent(@event, timestamp);
-        AppendFormattedText(formattedEvent);
+        var message = FormatEventAsMessage(@event, timestamp);
+        _memoEdit.Text += message + Environment.NewLine;
         
-        // Auto-scroll if enabled
-        if (_richTextBox.Parent?.Parent is MainForm mainForm && mainForm.GetAutoScrollEventsSetting())
+        // Auto-scroll to bottom if enabled
+        if (_memoEdit.Parent?.Parent is MainForm mainForm && mainForm.GetAutoScrollEventsSetting())
         {
-            _richTextBox.SelectionStart = _richTextBox.Text.Length;
-            _richTextBox.ScrollToCaret();
+            _memoEdit.SelectionStart = _memoEdit.Text.Length;
+            _memoEdit.ScrollToCaret();
         }
     }
 
-    private (string text, Color color) FormatEvent(IEvent @event, DateTimeOffset timestamp)
+    private string FormatEventAsMessage(IEvent @event, DateTimeOffset timestamp)
     {
         var timeStr = timestamp.ToString("HH:mm:ss.fff");
         var sessionId = @event.Correlation.SessionId.ToString("N")[..8]; // First 8 chars
@@ -93,48 +83,38 @@ public class EventRenderer
         switch (@event)
         {
             case CommandAccepted accepted:
-                return ($"{baseText}✅ Command {accepted.CommandId.ToString("N")[..8]} ACCEPTED\r\n", _eventColors["CommandAccepted"]);
+                return $"{baseText}✅ Command {accepted.CommandId.ToString("N")[..8]} ACCEPTED";
             
             case CommandCompleted completed:
             {
                 var outcome = completed.Outcome == CommandOutcome.Success ? "SUCCESS" : "FAILED";
                 var message = string.IsNullOrEmpty(completed.Message) ? "" : $" - {completed.Message}";
-                return ($"{baseText}🏁 Command {completed.CommandId.ToString("N")[..8]} {outcome}{message}\r\n", 
-                       completed.Outcome == CommandOutcome.Success ? _eventColors["CommandCompleted"] : _eventColors["CommandRejected"]);
+                return $"{baseText}🏁 Command {completed.CommandId.ToString("N")[..8]} {outcome}{message}";
             }
             
             case CommandRejected rejected:
-                return ($"{baseText}❌ Command {rejected.CommandId.ToString("N")[..8]} REJECTED: {rejected.Reason}\r\n", _eventColors["CommandRejected"]);
+                return $"{baseText}❌ Command {rejected.CommandId.ToString("N")[..8]} REJECTED: {rejected.Reason}";
             
             case Throttled throttled:
-                return ($"{baseText}⏱️ THROTTLED ({throttled.Scope}) - Retry after {throttled.RetryAfter}\r\n", _eventColors["Throttled"]);
+                return $"{baseText}⏱️ THROTTLED ({throttled.Scope}) - Retry after {throttled.RetryAfter}";
             
             case ConflictDetected conflict:
-                return ($"{baseText}⚠️ CONFLICT: {conflict.Details}\r\n", _eventColors["ConflictDetected"]);
+                return $"{baseText}⚠️ CONFLICT: {conflict.Details}";
             
             case ArtifactAvailable artifact:
             {
                 var summary = artifact.Artifact.InlineText?.Length > 100 
                     ? artifact.Artifact.InlineText[..100] + "..." 
                     : artifact.Artifact.InlineText ?? "[Binary artifact]";
-                return ($"{baseText}📎 ARTIFACT: {artifact.Artifact.Name} ({artifact.Artifact.Kind}) - {summary}\r\n", _eventColors["ArtifactAvailable"]);
+                return $"{baseText}📎 ARTIFACT: {artifact.Artifact.Name} ({artifact.Artifact.Kind}) - {summary}";
             }
             
             case SessionStatusChanged status:
-                return ($"{baseText}🔄 Session {status.Status}{(string.IsNullOrEmpty(status.Reason) ? "" : $" - {status.Reason}")}\r\n", _eventColors["SessionStatusChanged"]);
+                return $"{baseText}🔄 Session {status.Status}{(string.IsNullOrEmpty(status.Reason) ? "" : $" - {status.Reason}")}";
             
             default:
-                return ($"{baseText}📝 {@event.Kind}: {System.Text.Json.JsonSerializer.Serialize(@event)}\r\n", _eventColors["Info"]);
+                return $"{baseText}📝 {@event.Kind}: {System.Text.Json.JsonSerializer.Serialize(@event)}";
         }
-    }
-
-    private void AppendFormattedText((string text, Color color) formattedEvent)
-    {
-        _richTextBox.SelectionStart = _richTextBox.Text.Length;
-        _richTextBox.SelectionLength = 0;
-        _richTextBox.SelectionColor = formattedEvent.color;
-        _richTextBox.AppendText(formattedEvent.text);
-        _richTextBox.SelectionColor = _richTextBox.ForeColor; // Reset color
     }
 }
 
@@ -239,11 +219,13 @@ public partial class MainForm : Form
     // Panels
     private DockPanel? sessionsPanel;
     private DockPanel? conversationPanel;
+    private DockPanel? eventsPanel;
     private DockPanel? artifactsPanel;
 
     // Controls within panels
     private System.Windows.Forms.ListBox? sessionsListBox;
-    private RichTextBox? conversationRichTextBox;
+    private AIChatControl? conversationChatControl;
+    private MemoEdit? eventsMemoEdit;
     private TreeList? artifactsTree;
 
     private bool isTestMode = false;
@@ -273,10 +255,13 @@ public partial class MainForm : Form
 
         Console.WriteLine($"Junior Dev starting... Test mode: {isTestMode}");
 
+        // Register AI client for chat functionality
+        RegisterAIClient();
+
         InitializeComponent();
         SetupMenu();
         SetupUI();
-        eventRenderer = new EventRenderer(conversationRichTextBox!);
+        eventRenderer = new EventRenderer(eventsMemoEdit!);
         LoadLayout();
         LoadAndApplySettings();
 
@@ -288,6 +273,31 @@ public partial class MainForm : Form
         {
             SetupMockEventFeed();
             Console.WriteLine("UI initialized successfully. Close window to exit.");
+        }
+    }
+
+    private void RegisterAIClient()
+    {
+        try
+        {
+            // Register OpenAI client for AI chat functionality
+            // In production, you would get the API key from environment variables or secure storage
+            var openAIKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "your-openai-api-key-here";
+            
+            if (!string.IsNullOrEmpty(openAIKey) && openAIKey != "your-openai-api-key-here")
+            {
+                var openAIClient = new OpenAI.OpenAIClient(openAIKey).GetChatClient("gpt-4o-mini").AsIChatClient();
+                AIExtensionsContainerDesktop.Default.RegisterChatClient(openAIClient);
+                Console.WriteLine("AI client registered successfully.");
+            }
+            else
+            {
+                Console.WriteLine("Warning: OpenAI API key not configured. AI chat features will be limited.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to register AI client: {ex.Message}");
         }
     }
 
@@ -342,6 +352,7 @@ public partial class MainForm : Form
         Console.WriteLine($"Window Size: {this.Size.Width}x{this.Size.Height}");
         Console.WriteLine($"Sessions Panel: Visible={sessionsPanel!.Visible}, Width={sessionsPanel!.Width}");
         Console.WriteLine($"Conversation Panel: Visible={conversationPanel!.Visible}");
+        Console.WriteLine($"Events Panel: Visible={eventsPanel!.Visible}, Height={eventsPanel!.Height}");
         Console.WriteLine($"Artifacts Panel: Visible={artifactsPanel!.Visible}, Width={artifactsPanel!.Width}");
         Console.WriteLine($"Sessions in list: {sessionsListBox!.Items.Count}");
         Console.WriteLine("Mock data loaded successfully");
@@ -358,6 +369,7 @@ public partial class MainForm : Form
         // Create panels
         CreateSessionsPanel();
         CreateConversationPanel();
+        CreateEventsPanel();
         CreateArtifactsPanel();
 
         // Setup layout
@@ -427,15 +439,26 @@ public partial class MainForm : Form
     private void CreateConversationPanel()
     {
         conversationPanel = dockManager.AddPanel(DockingStyle.Fill);
-        conversationPanel.Text = "Conversation & Events";
+        conversationPanel.Text = "AI Chat";
 
-        conversationRichTextBox = new RichTextBox();
-        conversationRichTextBox.Dock = DockStyle.Fill;
-        conversationRichTextBox.ReadOnly = true;
-        conversationRichTextBox.BackColor = Color.White;
-        conversationRichTextBox.Font = new Font("Consolas", 9f); // Monospace for better formatting
+        conversationChatControl = new AIChatControl();
+        conversationChatControl.Dock = DockStyle.Fill;
+        conversationChatControl.UseStreaming = DevExpress.Utils.DefaultBoolean.True;
 
-        conversationPanel.Controls.Add(conversationRichTextBox);
+        conversationPanel.Controls.Add(conversationChatControl);
+    }
+
+    private void CreateEventsPanel()
+    {
+        eventsPanel = dockManager.AddPanel(DockingStyle.Bottom);
+        eventsPanel.Text = "Event Stream";
+
+        eventsMemoEdit = new MemoEdit();
+        eventsMemoEdit.Dock = DockStyle.Fill;
+        eventsMemoEdit.Properties.ReadOnly = true;
+        eventsMemoEdit.Properties.ScrollBars = ScrollBars.Vertical;
+
+        eventsPanel.Controls.Add(eventsMemoEdit);
     }
 
     private void CreateArtifactsPanel()
@@ -466,6 +489,7 @@ public partial class MainForm : Form
         // Panels are already docked via DockingStyle in AddPanel
         // Configure panel sizes
         sessionsPanel!.Width = 250;
+        eventsPanel!.Height = 200;
         artifactsPanel!.Width = 300;
     }
 
@@ -592,8 +616,10 @@ public partial class MainForm : Form
         // Apply to child controls
         if (sessionsPanel != null) sessionsPanel.Appearance.BackColor = backColor;
         if (conversationPanel != null) conversationPanel.Appearance.BackColor = backColor;
+        if (eventsPanel != null) eventsPanel.Appearance.BackColor = backColor;
         if (artifactsPanel != null) artifactsPanel.Appearance.BackColor = backColor;
-        if (conversationRichTextBox != null) conversationRichTextBox.BackColor = backColor;
+        if (conversationChatControl != null) conversationChatControl.BackColor = backColor;
+        if (eventsMemoEdit != null) eventsMemoEdit.BackColor = backColor;
 
         // Apply font size to form and propagate to controls
         var newFont = new Font(this.Font.FontFamily, settings.FontSize);
@@ -788,6 +814,8 @@ public partial class MainForm : Form
             artifactsPanel!.Dock = DockingStyle.Right;
             artifactsPanel!.Width = 300;
             conversationPanel!.Dock = DockingStyle.Fill;
+            eventsPanel!.Dock = DockingStyle.Bottom;
+            eventsPanel!.Height = 200;
             
             // Save the reset layout immediately
             SaveLayout();

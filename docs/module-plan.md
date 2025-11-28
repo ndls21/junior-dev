@@ -62,14 +62,14 @@ Use these as hand-offs to juniors: each stage lists goal, deliverables, and test
 
 ## ui-shell
 - Stage 0: Goal: layout skeleton.
-  - Deliverables: DevExpress dockable layout (sessions list left, conversation/log center, artifacts right); layout persistence/reset.
+  - Deliverables: DevExpress dockable layout (sessions list left, AI chat center-top, event stream center-bottom, artifacts right); layout persistence/reset.
   - Tests: component/layout snapshot; persistence round-trip.
-- Stage 1: Goal: render event stream and blockers.
-  - Deliverables: event rendering for commands/results/artifacts; status chips; blocking banners (approval/conflict/throttled).
-  - Tests: render fixtures show correct badges/banners; approve/block interactions dispatch actions.
+- Stage 1: Goal: render event stream and AI chat.
+  - Deliverables: event rendering for commands/results/artifacts in event stream panel; AI chat control for interactive conversations; status chips; blocking banners (approval/conflict/throttled).
+  - Tests: render fixtures show correct badges/banners; AI chat initializes; approve/block interactions dispatch actions.
 - Stage 2: Goal: multi-session ops.
-  - Deliverables: pause/resume/abort/switch; artifact viewers (diff/test logs); shortcuts.
-  - Tests: session switch maintains state; artifact viewer renders diff/log; controls invoke handlers.
+  - Deliverables: pause/resume/abort/switch; artifact viewers (diff/test logs); shortcuts; AI client registration and conversation handling.
+  - Tests: session switch maintains state; artifact viewer renders diff/log; controls invoke handlers; AI chat responds to configured providers.
 
 ## smoke/integration
 - Stage 0: Goal: harness.
