@@ -7,7 +7,7 @@ namespace JuniorDev.Contracts;
 
 public static class ContractVersion
 {
-    public const string Current = "v1.2";
+    public const string Current = "v1.3";
 }
 
 public sealed record WorkItemRef(string Id, string? ProviderHint = null);
@@ -39,6 +39,9 @@ public sealed record ApplyPatch(Guid Id, Correlation Correlation, RepoRef Repo, 
 
 public sealed record RunTests(Guid Id, Correlation Correlation, RepoRef Repo, string? Filter = null, TimeSpan? Timeout = null)
     : CommandBase(Id, Correlation, nameof(RunTests));
+
+public sealed record BuildProject(Guid Id, Correlation Correlation, RepoRef Repo, string ProjectPath, string? Configuration = null, string? TargetFramework = null, IReadOnlyList<string>? Targets = null, TimeSpan? Timeout = null)
+    : CommandBase(Id, Correlation, nameof(BuildProject));
 
 public sealed record Commit(Guid Id, Correlation Correlation, RepoRef Repo, string Message, IReadOnlyList<string> IncludePaths, bool Amend = false)
     : CommandBase(Id, Correlation, nameof(Commit));
@@ -239,6 +242,52 @@ public sealed record AzureOpenAIAuthConfig(
     string DeploymentName);
 
 /// <summary>
+/// Configuration for the build adapter.
+/// </summary>
+public sealed record BuildConfig(
+    string WorkspaceRoot,
+    TimeSpan DefaultTimeout = default)
+{
+    public BuildConfig() : this(".", TimeSpan.FromMinutes(5)) { }
+}
+
+/// <summary>
+/// Simple chat client interface for contracts (adapted to Microsoft.Extensions.AI.IChatClient in implementations)
+/// </summary>
+public interface IChatClient
+{
+    string Provider { get; }
+    string Model { get; }
+}
+
+/// <summary>
+/// Chat client factory for creating AI clients per agent
+/// </summary>
+public interface IChatClientFactory
+{
+    /// <summary>
+    /// Gets a chat client for the specified agent profile, with fallback to defaults
+    /// </summary>
+    IChatClient GetClientFor(string agentProfile);
+    
+    /// <summary>
+    /// Gets the underlying Microsoft.Extensions.AI.IChatClient for DevExpress integration
+    /// </summary>
+    object GetUnderlyingClientFor(string agentProfile);
+}
+
+/// <summary>
+/// Agent service provider configuration
+/// </summary>
+public sealed record AgentServiceProviderConfig(
+    string Provider, // "openai" or "azure-openai"
+    string Model,
+    string? ApiKey = null, // If null, uses global provider key
+    int? MaxTokens = null,
+    double? Temperature = null,
+    string? DeploymentName = null); // For Azure OpenAI
+
+/// <summary>
 /// Adapter selection and configuration
 /// </summary>
 public sealed record AdaptersConfig(
@@ -250,12 +299,13 @@ public sealed record AdaptersConfig(
 /// Semantic Kernel / AI configuration
 /// </summary>
 public sealed record SemanticKernelConfig(
-    string Provider, // "openai" or "azure-openai"
-    string Model,
+    string DefaultProvider, // "openai" or "azure-openai"
+    string DefaultModel,
     int? MaxTokens = null,
     double? Temperature = null,
     string? ProxyUrl = null,
     TimeSpan? Timeout = null,
+    Dictionary<string, AgentServiceProviderConfig>? AgentServiceProviders = null,
     Dictionary<string, AgentProfile>? AgentProfiles = null);
 
 /// <summary>

@@ -138,6 +138,36 @@ public class OrchestratorFunctionBindings
             $"[DRY RUN] Would run tests{(string.IsNullOrEmpty(filter) ? "" : $" with filter '{filter}'")} in repository '{repoName}'{(timeout.HasValue ? $" (timeout: {timeout.Value.TotalSeconds}s)" : "")}");
     }
 
+    [KernelFunction("build_project")]
+    [Description("Builds a .NET project or solution.")]
+    public async Task<string> BuildProjectAsync(
+        [Description("The repository name")] string repoName,
+        [Description("The project/solution path")] string projectPath,
+        [Description("Build configuration (optional)")] string? configuration = null,
+        [Description("Target framework (optional)")] string? targetFramework = null,
+        [Description("Build targets (optional, comma-separated)")] string? targets = null,
+        [Description("Timeout in seconds (optional)")] int? timeoutSeconds = null)
+    {
+        var repo = new RepoRef(repoName, $"/repos/{repoName}");
+        var targetList = string.IsNullOrEmpty(targets) ? null : targets.Split(',').Select(t => t.Trim()).ToArray();
+        var timeout = timeoutSeconds.HasValue ? (TimeSpan?)TimeSpan.FromSeconds(timeoutSeconds.Value) : null;
+
+        var command = new BuildProject(
+            Guid.NewGuid(),
+            _context.CreateCorrelation(),
+            repo,
+            projectPath,
+            configuration,
+            targetFramework,
+            targetList,
+            timeout);
+
+        return await ExecuteOrDryRunAsync(
+            command,
+            "Build command issued",
+            $"[DRY RUN] Would build '{projectPath}'{(string.IsNullOrEmpty(configuration) ? "" : $" with configuration '{configuration}'")}{(string.IsNullOrEmpty(targetFramework) ? "" : $" for framework '{targetFramework}'")}{(string.IsNullOrEmpty(targets) ? "" : $" with targets '{targets}'")} in repository '{repoName}'{(timeout.HasValue ? $" (timeout: {timeout.Value.TotalSeconds}s)" : "")}");
+    }
+
     [KernelFunction("commit")]
     [Description("Commits changes to the repository.")]
     public async Task<string> CommitAsync(

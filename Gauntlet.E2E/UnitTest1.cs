@@ -10,6 +10,7 @@ using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
 using JuniorDev.VcsGit;
 using JuniorDev.WorkItems.Jira;
+using JuniorDev.WorkItems.GitHub;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -67,6 +68,11 @@ public class GauntletSmokeTest
                           (!string.IsNullOrEmpty(appConfig.Auth.Git.PersonalAccessToken) ||
                            !string.IsNullOrEmpty(appConfig.Auth.Git.SshKeyPath));
 
+        var hasGitHubConfig = appConfig.Auth?.GitHub != null &&
+                             !string.IsNullOrEmpty(appConfig.Auth.GitHub.Token) &&
+                             (!string.IsNullOrEmpty(appConfig.Auth.GitHub.DefaultOrg) ||
+                              !string.IsNullOrEmpty(appConfig.Auth.GitHub.DefaultRepo));
+
         if (!hasJiraConfig)
         {
             _output.WriteLine("=== LIVE MODE SMOKE TEST SKIPPED ===");
@@ -80,6 +86,14 @@ public class GauntletSmokeTest
             _output.WriteLine("=== LIVE MODE SMOKE TEST SKIPPED ===");
             _output.WriteLine("Missing required Git configuration in appsettings.json, environment variables, or user-secrets");
             _output.WriteLine("Required: Auth.Git.PersonalAccessToken or Auth.Git.SshKeyPath");
+            return;
+        }
+
+        if (!hasGitHubConfig)
+        {
+            _output.WriteLine("=== LIVE MODE SMOKE TEST SKIPPED ===");
+            _output.WriteLine("Missing required GitHub configuration in appsettings.json, environment variables, or user-secrets");
+            _output.WriteLine("Required: Auth.GitHub.Token and (Auth.GitHub.DefaultOrg or Auth.GitHub.DefaultRepo)");
             return;
         }
 
@@ -115,6 +129,16 @@ public class GauntletSmokeTest
                 Environment.SetEnvironmentVariable("JIRA_PROJECT", "TEST"); // Default for testing
             }
 
+            if (appConfig.Auth?.GitHub != null)
+            {
+                Environment.SetEnvironmentVariable("GITHUB_TOKEN", appConfig.Auth.GitHub.Token);
+                // Set repo from config or use environment variable
+                var repo = !string.IsNullOrEmpty(appConfig.Auth.GitHub.DefaultRepo) 
+                    ? $"{appConfig.Auth.GitHub.DefaultOrg ?? "owner"}/{appConfig.Auth.GitHub.DefaultRepo}"
+                    : Environment.GetEnvironmentVariable("GITHUB_REPO") ?? "owner/repo";
+                Environment.SetEnvironmentVariable("GITHUB_REPO", repo);
+            }
+
             // Override with real adapters for live mode
             services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter());
             services.AddSingleton<IAdapter>(new JuniorDev.VcsGit.VcsGitAdapter(new JuniorDev.VcsGit.VcsConfig
@@ -123,7 +147,8 @@ public class GauntletSmokeTest
                 AllowPush = Environment.GetEnvironmentVariable("RUN_LIVE_PUSH") == "1",
                 IsIntegrationTest = true
             }, isFake: false));
-            _output.WriteLine("Using real Jira and Git adapters");
+            services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.GitHub.GitHubAdapter());
+            _output.WriteLine("Using real Jira, Git, and GitHub adapters");
         }
         else
         {

@@ -11,6 +11,8 @@ using DevExpress.AIIntegration;
 using System.Xml;
 using System.Linq;
 using JuniorDev.Contracts;
+using JuniorDev.Orchestrator;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CS8602 // Dereference of possibly null reference - suppressed for fields initialized in constructor
 
@@ -259,7 +261,13 @@ public partial class MainForm : Form
     // Blocking state tracking
     private List<BlockingCondition> _blockingConditions = new();
 
-    private bool isTestMode = false;
+    private ISessionManager? _sessionManager;
+    private AppConfig? _appConfig;
+    private bool _useLiveMode;
+    private IServiceProvider? _serviceProvider;
+
+    // Test mode flag
+    private bool isTestMode;
 
     // Public property for testing
     public bool IsTestMode
@@ -279,15 +287,21 @@ public partial class MainForm : Form
     private string? _testSettingsFilePath;
     private string? _testChatStreamsFilePath;
 
-    public MainForm(bool isTestMode = false)
+    public MainForm(ISessionManager? sessionManager = null, AppConfig? appConfig = null, bool isTestMode = false, IServiceProvider? serviceProvider = null)
     {
+        // Store injected services
+        _sessionManager = sessionManager;
+        _appConfig = appConfig;
+        _serviceProvider = serviceProvider;
+        _useLiveMode = sessionManager != null && appConfig != null;
+
         // Check for test mode argument or parameter
         this.isTestMode = isTestMode || Environment.GetCommandLineArgs().Contains("--test") || Environment.GetCommandLineArgs().Contains("-t");
 
-        Console.WriteLine($"Junior Dev starting... Test mode: {this.isTestMode}");
+        Console.WriteLine($"Junior Dev starting... Test mode: {this.isTestMode}, Live mode: {_useLiveMode}");
 
         // Register AI client for chat functionality
-        RegisterAIClient();
+        // Note: AI client is now configured globally in Program.cs via DevExpress service provider
 
         InitializeComponent();
         SetupMenu();
@@ -307,10 +321,15 @@ public partial class MainForm : Form
             AddMockBlockingEvents();
             SetupTestMode();
         }
+        else if (_useLiveMode)
+        {
+            SetupLiveSessionManagement();
+            Console.WriteLine("UI initialized with live orchestrator sessions. Close window to exit.");
+        }
         else
         {
             SetupMockEventFeed();
-            Console.WriteLine("UI initialized successfully. Close window to exit.");
+            Console.WriteLine("UI initialized with mock data. Close window to exit.");
         }
     }
 
@@ -318,24 +337,13 @@ public partial class MainForm : Form
     {
         try
         {
-            // Register OpenAI client for AI chat functionality
-            // In production, you would get the API key from environment variables or secure storage
-            var openAIKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "your-openai-api-key-here";
-            
-            if (!string.IsNullOrEmpty(openAIKey) && openAIKey != "your-openai-api-key-here")
-            {
-                var openAIClient = new OpenAI.OpenAIClient(openAIKey).GetChatClient("gpt-4o-mini").AsIChatClient();
-                AIExtensionsContainerDesktop.Default.RegisterChatClient(openAIClient);
-                Console.WriteLine("AI client registered successfully.");
-            }
-            else
-            {
-                Console.WriteLine("Warning: OpenAI API key not configured. AI chat features will be limited.");
-            }
+            // AI client is now configured globally in Program.cs
+            // This method is kept for backward compatibility but no longer used
+            Console.WriteLine("AI client registration handled globally.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to register AI client: {ex.Message}");
+            Console.WriteLine($"Failed to set up AI client: {ex.Message}");
         }
     }
 
@@ -562,7 +570,7 @@ public partial class MainForm : Form
 
         // Create initial chat stream
         var initialChatStream = new ChatStream(Guid.NewGuid(), "Agent 1");
-        _accordionManager.AddChatStream(initialChatStream);
+        _accordionManager.AddChatStream(initialChatStream, _sessionManager, _serviceProvider);
         
         // Add a few more streams for testing rich previews
         if (isTestMode)
@@ -775,7 +783,7 @@ public partial class MainForm : Form
                         IsExpanded = data.IsExpanded
                     };
                     
-                    _accordionManager.AddChatStream(chatStream);
+                    _accordionManager.AddChatStream(chatStream, _sessionManager, _serviceProvider);
                 }
                 
                 return _accordionManager.ChatStreams.ToArray();
@@ -804,7 +812,7 @@ public partial class MainForm : Form
         
         // Add default stream
         var defaultStream = new ChatStream(Guid.NewGuid(), "Agent 1");
-        _accordionManager.AddChatStream(defaultStream);
+        _accordionManager.AddChatStream(defaultStream, _sessionManager, _serviceProvider);
         
         return _accordionManager.ChatStreams.ToArray();
     }
@@ -840,6 +848,96 @@ public partial class MainForm : Form
         eventTimer.Interval = 3000; // Add event every 3 seconds
         eventTimer.Tick += (s, e) => AddMockEvent();
         eventTimer.Start();
+    }
+
+    private void SetupLiveSessionManagement()
+    {
+        if (_sessionManager == null || _appConfig == null)
+        {
+            Console.WriteLine("Warning: Live session management requested but services not available. Falling back to mock mode.");
+            SetupMockEventFeed();
+            return;
+        }
+
+        Console.WriteLine("Setting up live session management...");
+
+        // For now, create a default session and subscribe to its events
+        // In a full implementation, we'd discover existing sessions or create them as needed
+        var defaultSessionId = Guid.NewGuid();
+        var workspacePath = _appConfig.Workspace?.BasePath ?? Path.Combine(Path.GetTempPath(), "JuniorDev", defaultSessionId.ToString());
+
+        var defaultSessionConfig = new SessionConfig(
+            defaultSessionId,
+            null, // ParentSessionId
+            null, // PlanNodeId
+            new PolicyProfile { Name = "Default", ProtectedBranches = new HashSet<string> { "main", "master" } }, // Basic policy
+            new RepoRef("default", workspacePath), // Default repo
+            new WorkspaceRef(workspacePath), // Workspace
+            null, // WorkItem
+            "default-agent"); // AgentProfile
+
+        // Create the session
+        Task.Run(async () =>
+        {
+            try
+            {
+                await _sessionManager.CreateSession(defaultSessionConfig);
+                Console.WriteLine($"Created default session: {defaultSessionId}");
+
+                // Subscribe to events for this session
+                await SubscribeToSessionEvents(defaultSessionId);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to create default session: {ex.Message}");
+                // Fall back to mock mode
+                BeginInvoke(() => SetupMockEventFeed());
+            }
+        });
+
+        // Create initial chat stream
+        if (_accordionManager != null)
+        {
+            var chatStream = new ChatStream(defaultSessionId, "Agent 1");
+            _accordionManager.AddChatStream(chatStream, _sessionManager, _serviceProvider);
+            Console.WriteLine("Created initial chat stream for live session.");
+        }
+
+        Console.WriteLine("Live session management setup initiated.");
+    }
+
+    private async Task SubscribeToSessionEvents(Guid sessionId)
+    {
+        try
+        {
+            await foreach (var @event in _sessionManager.Subscribe(sessionId))
+            {
+                // Handle event on UI thread
+                BeginInvoke(() => HandleLiveEvent(@event, DateTimeOffset.Now));
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error subscribing to session {sessionId}: {ex.Message}");
+        }
+    }
+
+    private void HandleLiveEvent(IEvent @event, DateTimeOffset timestamp)
+    {
+        // Route event to appropriate chat streams
+        _accordionManager?.RouteEventToStreams(@event, timestamp);
+
+        // Handle artifacts
+        if (@event is ArtifactAvailable artifactEvent)
+        {
+            AddArtifactToChat(artifactEvent.Correlation.SessionId, artifactEvent.Artifact);
+        }
+
+        // Check for blocking conditions
+        CheckForBlockingConditions(@event);
+
+        // Render to global events panel
+        eventRenderer?.RenderEvent(@event, timestamp);
     }
 
     private void AddMockEvent()
@@ -1243,7 +1341,7 @@ public partial class MainForm : Form
         chatStream.CurrentTask = mockTasks[random.Next(mockTasks.Length)];
         chatStream.ProgressPercentage = random.Next(0, 101);
         
-        _accordionManager.AddChatStream(chatStream);
+        _accordionManager.AddChatStream(chatStream, _sessionManager, _serviceProvider);
         
         Console.WriteLine($"Added new chat stream: {agentName} ({chatStream.Status}) - {chatStream.CurrentTask}");
     }
@@ -1267,7 +1365,7 @@ public partial class MainForm : Form
             stream.Status = status;
             stream.CurrentTask = task;
             stream.ProgressPercentage = progress;
-            _accordionManager.AddChatStream(stream);
+            _accordionManager.AddChatStream(stream, _sessionManager, _serviceProvider);
 
             // Add some mock artifacts for this stream
             AddMockArtifactsForStream(stream.SessionId, name);

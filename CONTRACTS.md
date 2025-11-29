@@ -1,4 +1,4 @@
-# Contracts (v1.1)
+# Contracts (v1.3)
 
 Versioning rule: bump contract version when changing shapes; update docs with date/reason. Contracts changes must ship with serialization tests and CI checks.
 
@@ -23,6 +23,7 @@ Contracts are serialized using System.Text.Json with the following options:
 - `CreateBranch { RepoRef Repo, string BranchName, string? FromRef }`
 - `ApplyPatch { RepoRef Repo, string PatchContent }`
 - `RunTests { RepoRef Repo, string? Filter, TimeSpan? Timeout }`
+- `BuildProject { RepoRef Repo, string ProjectPath, string? Configuration, string? TargetFramework, IReadOnlyList<string>? Targets, TimeSpan? Timeout }`
 - `Commit { RepoRef Repo, string Message, string[] IncludePaths, bool Amend=false }`
 - `Push { RepoRef Repo, string BranchName }`
 - `GetDiff { RepoRef Repo, string Ref = "HEAD" }`
@@ -72,6 +73,7 @@ Contracts are serialized using System.Text.Json with the following options:
 - Any contract/schema change must update this file (with date/rationale) and ARCHITECTURE.md; add/adjust serialization tests; CI should enforce the rule.
 
 ## Change Log
+- **2025-11-29**: Added BuildProject command with secure parameters (project path validation, target whitelisting, timeout enforcement) and BuildConfig record for adapter settings. Bumped version to v1.3. Implemented DotnetBuildAdapter with security validation and artifact generation for safe agent-accessible build functionality.
 - **2025-11-28**: Added IssuerAgentId to Correlation record for proper command response routing. Bumped version to v1.2. Response events (CommandCompleted, CommandRejected, etc.) now only route to the originating agent instead of broadcasting to all agents in the session.
 - **2025-11-28**: Added QueryBacklog/QueryWorkItem commands and BacklogQueried/WorkItemQueried events to support work item queries via unified IAdapter model. Bumped version to v1.1. Removed legacy IVcsAdapter interface placeholder.
 - **2025-11-28**: Implemented SK function bindings for list_backlog/get_item in OrchestratorFunctionBindings, completing end-to-end work item query functionality.

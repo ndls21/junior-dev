@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
+using JuniorDev.Contracts;
 
 namespace JuniorDev.Agents;
 
@@ -18,6 +19,7 @@ public static class AgentServiceCollectionExtensions
         services.AddSingleton<AgentEventLoopService>();
         services.AddHostedService(provider => provider.GetRequiredService<AgentEventLoopService>());
         services.AddTransient<AgentConfig>();
+        services.AddSingleton<IChatClientFactory, ChatClientFactory>();
 
         // Add health checks
         services.AddHealthChecks()

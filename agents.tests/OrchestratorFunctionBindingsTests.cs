@@ -24,7 +24,7 @@ public class OrchestratorFunctionBindingsTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test-repo", "/repos/test-repo"),
             new WorkspaceRef("/workspaces/test-ws"),
             null,
@@ -109,6 +109,28 @@ public class OrchestratorFunctionBindingsTests
         Assert.Contains("WorkItemQueried event", result);
         _sessionManagerMock.Verify(sm => sm.PublishCommand(It.Is<QueryWorkItem>(cmd =>
             cmd.Item.Id == "TEST-123")), Times.Once);
+    }
+
+    [Fact]
+    public async Task BuildProjectAsync_PublishesCommand()
+    {
+        // Arrange
+        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _bindings.BuildProjectAsync("test-repo", "src/MyProject.csproj", "Release", "net8.0", "Build,Publish", 600);
+
+        // Assert
+        Assert.Contains("Build command issued", result);
+        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.Is<BuildProject>(cmd =>
+            cmd.ProjectPath == "src/MyProject.csproj" &&
+            cmd.Configuration == "Release" &&
+            cmd.TargetFramework == "net8.0" &&
+            cmd.Targets != null &&
+            cmd.Targets.Contains("Build") &&
+            cmd.Targets.Contains("Publish") &&
+            cmd.Timeout == TimeSpan.FromSeconds(600))), Times.Once);
     }
 
     [Fact]
@@ -245,6 +267,33 @@ public class OrchestratorFunctionBindingsTests
         // Assert
         Assert.Contains("[DRY RUN]", result);
         Assert.Contains("TEST-123", result);
+        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<ICommand>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BuildProjectAsync_DryRun_ReturnsDryRunMessage()
+    {
+        // Arrange
+        var agentConfig = AgentConfig.CreateDeterministic();
+        agentConfig.DryRun = true;
+        var context = new AgentSessionContext(
+            Guid.NewGuid(),
+            _context.Config,
+            _sessionManagerMock.Object,
+            agentConfig,
+            _loggerMock.Object,
+            "test-agent");
+        var bindings = new OrchestratorFunctionBindings(context);
+
+        // Act
+        var result = await bindings.BuildProjectAsync("test-repo", "src/MyProject.csproj", "Release", "net8.0", "Build,Publish", 600);
+
+        // Assert
+        Assert.Contains("[DRY RUN]", result);
+        Assert.Contains("src/MyProject.csproj", result);
+        Assert.Contains("Release", result);
+        Assert.Contains("net8.0", result);
+        Assert.Contains("Build,Publish", result);
         _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<ICommand>()), Times.Never);
     }
 }

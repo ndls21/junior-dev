@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.IO;
 using JuniorDev.Contracts;
 using Xunit;
 
@@ -16,7 +17,8 @@ public class OrchestratorTests
         var adapters = new IAdapter[]
         {
             new FakeWorkItemsAdapter(),
-            new FakeVcsAdapter()
+            new FakeVcsAdapter(),
+            new FakeBuildAdapter()
         };
         var policyEnforcer = new StubPolicyEnforcer();
         var rateLimiter = new StubRateLimiter();
@@ -305,7 +307,7 @@ public class OrchestratorTests
             sessionId,
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string> { "main" }, Limits = new RateLimits { CallsPerMinute = 1, null, null } }, // 1 call per minute
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string> { "main" }, Limits = new RateLimits { CallsPerMinute = 1 } }, // 1 call per minute
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,
@@ -626,11 +628,12 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying BacklogQueried event is emitted with expected items.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(1).ToListAsync(); // Skip status, take query result
+        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync(); // Skip status, take accepted + query result
         Console.WriteLine($"Received {events.Count} event(s) after initial status.");
 
-        Assert.Single(events);
-        var queried = Assert.IsType<BacklogQueried>(events[0]);
+        Assert.Equal(2, events.Count);
+        Assert.IsType<CommandAccepted>(events[0]);
+        var queried = Assert.IsType<BacklogQueried>(events[1]);
         Assert.Equal(3, queried.Items.Count); // Our fake data has 3 items
         Assert.Contains(queried.Items, i => i.Id == "PROJ-123");
         Assert.Contains(queried.Items, i => i.Title.Contains("authentication"));
@@ -672,14 +675,187 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying WorkItemQueried event is emitted with expected details.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(1).ToListAsync(); // Skip status, take query result
+        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync(); // Skip status, take accepted + query result
         Console.WriteLine($"Received {events.Count} event(s) after initial status.");
 
-        Assert.Single(events);
-        var queried = Assert.IsType<WorkItemQueried>(events[0]);
+        Assert.Equal(2, events.Count);
+        Assert.IsType<CommandAccepted>(events[0]);
+        var queried = Assert.IsType<WorkItemQueried>(events[1]);
         Assert.Equal("PROJ-124", queried.Details.Id);
         Assert.Equal("Add database migration", queried.Details.Title);
         Assert.Contains("database", queried.Details.Tags);
         Console.WriteLine("Test passed: WorkItemQueried event emitted with correct fake data.");
+    }
+
+    [Fact]
+    public async Task BuildProjectCommand_AcceptedAndRoutedToBuildAdapter()
+    {
+        Console.WriteLine("Test: BuildProjectCommand_AcceptedAndRoutedToBuildAdapter");
+        Console.WriteLine("Purpose: Verify that BuildProject commands are accepted and routed to the build adapter.");
+
+        // Arrange
+        Console.WriteLine("Arrange: Creating a session with build adapter.");
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string> { "main" } },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+        Console.WriteLine("Session created.");
+
+        var command = new BuildProject(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            new RepoRef("test", "/tmp/test"),
+            "src/MyProject.csproj",
+            "Release",
+            "net8.0",
+            new[] { "Build" },
+            TimeSpan.FromMinutes(5));
+        Console.WriteLine("Created BuildProject command.");
+
+        // Act
+        Console.WriteLine("Act: Publishing the build command.");
+        await _sessionManager.PublishCommand(command);
+        Console.WriteLine("Build command published.");
+
+        // Assert
+        Console.WriteLine("Assert: Verifying the command completes successfully through the build adapter.");
+        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(3).ToListAsync(); // Skip status, take accepted + artifact + completed
+        Console.WriteLine($"Received {events.Count} events after initial status.");
+
+        Assert.Equal(3, events.Count);
+        Assert.IsType<CommandAccepted>(events[0]);
+        Assert.IsType<ArtifactAvailable>(events[1]);
+        Assert.IsType<CommandCompleted>(events[2]);
+
+        var artifact = (ArtifactAvailable)events[1];
+        Assert.Equal("BuildLog", artifact.Artifact.Kind);
+        Assert.Contains("build-", artifact.Artifact.Name);
+
+        var completed = (CommandCompleted)events[2];
+        Assert.Equal(CommandOutcome.Success, completed.Outcome);
+        Console.WriteLine("Test passed: BuildProject command routed to build adapter and completed successfully.");
+    }
+
+    [Fact]
+    public async Task BuildProjectCommand_WithInvalidPath_Rejected()
+    {
+        Console.WriteLine("Test: BuildProjectCommand_WithInvalidPath_Rejected");
+        Console.WriteLine("Purpose: Verify that BuildProject commands with invalid paths are rejected by policy.");
+
+        // Arrange
+        Console.WriteLine("Arrange: Creating a session for build command validation.");
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string> { "main" } },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+        Console.WriteLine("Session created.");
+
+        var command = new BuildProject(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            new RepoRef("test", "/tmp/test"),
+            "../../../etc/passwd", // Invalid path
+            "Release");
+        Console.WriteLine("Created BuildProject command with invalid path.");
+
+        // Act
+        Console.WriteLine("Act: Publishing the invalid build command.");
+        await _sessionManager.PublishCommand(command);
+        Console.WriteLine("Invalid build command published.");
+
+        // Assert
+        Console.WriteLine("Assert: Verifying the command is rejected due to invalid path.");
+        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(1).ToListAsync(); // Skip status, take rejection
+        Console.WriteLine($"Received {events.Count} event(s) after initial status.");
+
+        Assert.Single(events);
+        var rejected = Assert.IsType<CommandRejected>(events[0]);
+        Assert.Equal(command.Id, rejected.CommandId);
+        Assert.Contains("Invalid project path", rejected.Reason);
+        Console.WriteLine("Test passed: BuildProject command with invalid path was properly rejected.");
+    }
+}
+
+/// <summary>
+/// Fake build adapter for testing.
+/// </summary>
+public class FakeBuildAdapter : IAdapter
+{
+    public bool CanHandle(ICommand command) => command is BuildProject;
+
+    public async Task HandleCommand(ICommand command, SessionState session)
+    {
+        if (command is not BuildProject buildCommand)
+        {
+            throw new ArgumentException($"Command must be {nameof(BuildProject)}", nameof(command));
+        }
+
+        // Validate the project path for security (same as real adapter)
+        if (!IsValidProjectPath(buildCommand.ProjectPath))
+        {
+            await session.AddEvent(new CommandRejected(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Id,
+                "Invalid project path",
+                "Path validation"));
+            return;
+        }
+
+        // Accept the command
+        await session.AddEvent(new CommandAccepted(
+            Guid.NewGuid(),
+            command.Correlation,
+            command.Id));
+
+        // Create fake artifact
+        var artifact = new Artifact(
+            "BuildLog",
+            $"build-{Path.GetFileNameWithoutExtension(buildCommand.ProjectPath)}.log",
+            InlineText: "Fake build output - success");
+
+        await session.AddEvent(new ArtifactAvailable(
+            Guid.NewGuid(),
+            command.Correlation,
+            artifact));
+
+        // Complete successfully
+        await session.AddEvent(new CommandCompleted(
+            Guid.NewGuid(),
+            command.Correlation,
+            command.Id,
+            CommandOutcome.Success,
+            "Build completed successfully"));
+    }
+
+    private bool IsValidProjectPath(string projectPath)
+    {
+        // Basic security validation - ensure path doesn't contain dangerous elements
+        if (string.IsNullOrWhiteSpace(projectPath))
+            return false;
+
+        // Check for directory traversal attempts
+        if (projectPath.Contains("..") || projectPath.Contains("\\..") || projectPath.Contains("../"))
+            return false;
+
+        // Only allow .csproj, .fsproj, .vbproj, .sln files
+        var extension = Path.GetExtension(projectPath).ToLowerInvariant();
+        return extension is ".csproj" or ".fsproj" or ".vbproj" or ".sln";
     }
 }

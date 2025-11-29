@@ -33,13 +33,13 @@ public class FakeWorkItemAdapterTests
     }
 
     [Fact]
-    public async Task HandleComment_AddsCommentAndEmitsEvents()
+    public async Task HandleSetAssignee_Succeeds()
     {
         var config = new SessionConfig(
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,
@@ -76,7 +76,7 @@ public class FakeWorkItemAdapterTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,
@@ -99,7 +99,7 @@ public class FakeWorkItemAdapterTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,
@@ -122,13 +122,13 @@ public class FakeWorkItemAdapterTests
     }
 
     [Fact]
-    public async Task HandleSetAssignee_Succeeds()
+    public async Task HandleComment_Succeeds()
     {
         var config = new SessionConfig(
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,
@@ -151,7 +151,7 @@ public class FakeWorkItemAdapterTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,
@@ -189,7 +189,7 @@ public class FakeWorkItemAdapterTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,

@@ -11,17 +11,17 @@ public class FakeVcsAdapter : FakeAdapter
 
     public override async Task HandleCommand(ICommand command, SessionState session)
     {
-        // Emit CommandAccepted
-        var acceptedEvent = new CommandAccepted(
-            Guid.NewGuid(),
-            command.Correlation,
-            command.Id);
-
-        await session.AddEvent(acceptedEvent);
-
         // Handle specific commands
         if (command is RunTests runTests)
         {
+            // Emit CommandAccepted
+            var acceptedEvent = new CommandAccepted(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Id);
+
+            await session.AddEvent(acceptedEvent);
+            
             await HandleRunTests(runTests, session);
         }
         else

@@ -10,6 +10,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\contracts\Contracts.csproj" />
+    <ProjectReference Include="..\orchestrator\Orchestrator.csproj" />
+    <ProjectReference Include="..\agents\Agents.csproj" />
+    <ProjectReference Include="..\agents-sk\Agents.Sk.csproj" />
+    <ProjectReference Include="..\build-dotnet\Build.Dotnet.csproj" />
+    <ProjectReference Include="..\workitems-jira\WorkItems.Jira.csproj" />
+    <ProjectReference Include="..\vcs-git\Vcs.Git.csproj" />
+    <ProjectReference Include="..\workitems-github\WorkItems.GitHub.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -17,6 +24,11 @@
     <PackageReference Include="DevExpress.AIIntegration.WinForms.Chat" />
     <PackageReference Include="DevExpress.Win.Design" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
   </ItemGroup>
 
 </Project>

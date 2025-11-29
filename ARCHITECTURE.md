@@ -16,14 +16,14 @@
 - `ui-shell`: DevExpress chat/docking UI with columnar layout; sessions list, conversation/log, artifacts/tests.
 
 ## Action Protocol (summary)
-- Commands are intents (e.g., `CreateBranch`, `ApplyPatch`, `RunTests`, `Commit`, `Push`, `TransitionTicket`, `Comment`, `UploadArtifact`, `RequestApproval`, `QueryBacklog`, `QueryWorkItem`).
+- Commands are intents (e.g., `CreateBranch`, `ApplyPatch`, `RunTests`, `BuildProject`, `Commit`, `Push`, `TransitionTicket`, `Comment`, `UploadArtifact`, `RequestApproval`, `QueryBacklog`, `QueryWorkItem`).
 - Results report success/failure with reasons; artifacts carry payloads (diffs, patches, logs, test output).
 - All items carry correlation IDs and optional parent links to reconstruct flows; stored in an append-only session log.
 
 ## Command Flow (orchestrator path)
-1) Agent or UI emits a Command with correlation/session metadata.
+1) Agent or UI emits a Command with correlation/session metadata (e.g., `CreateBranch`, `ApplyPatch`, `RunTests`, `BuildProject`, `Commit`, `Push`, `TransitionTicket`, `Comment`, `QueryBacklog`, `QueryWorkItem`).
 2) Orchestrator checks policy profile and rate limits; reject early with reasons if blocked.
-3) Routed to the bound adapter (work items, VCS, agents, etc.) with workspace context.
+3) Routed to the bound adapter (work items, VCS, build, agents, etc.) with workspace context.
 4) Adapter returns results/artifacts; orchestrator emits events to the session log/UI.
 5) Errors/conflicts/throttling become explicit events; retry/backoff is policy-driven.
 
@@ -70,10 +70,14 @@
     │            policy/rate            │
     │                 │                 │
     │                 ↓                 ↓
-    │          [WorkItems Adapter]   [VCS Adapter]
+    │     [WorkItems Adapter]   [VCS Adapter]
+    │                 │                 │
+    │            (Jira, …)          (Git CLI, …)
     │                 │                 │
     │                 ↓                 ↓
-    │            (Jira, …)          (Git CLI, …)
+    │          [Build Adapter]     [Other Adapters]
+    │                 │                 │
+    │            (dotnet CLI, …)   (future adapters)
 ```
 - Orchestrator is the hub: enforces policy/rate limits, manages sessions/workspaces, logs events/artifacts.
 - UI consumes session event streams; sends commands (approve, pause/resume, etc.).
@@ -82,10 +86,10 @@
 
 ## Interaction per session
 ```
-Agent/UI -> Orchestrator: Command (CreateBranch, ApplyPatch, ...)
+Agent/UI -> Orchestrator: Command (CreateBranch, ApplyPatch, RunTests, BuildProject, ...)
 Orchestrator -> Policy/Rate: Check
 Policy/Rate -> Orchestrator: Allow/Reject/Throttle
-Orchestrator -> Adapter: Invoke (VCS/WorkItem)
+Orchestrator -> Adapter: Invoke (VCS/WorkItem/Build)
 Adapter -> Orchestrator: Result/Artifact/Conflict
 Orchestrator -> EventLog: Append
 Orchestrator -> UI/Agent: Event stream (CommandAccepted, ..., ArtifactAvailable)
@@ -95,7 +99,7 @@ Orchestrator -> UI/Agent: Event stream (CommandAccepted, ..., ArtifactAvailable)
 ```
 Contracts
   ICommand / CommandBase (Id, Correlation, Kind)
-    CreateBranch, ApplyPatch, RunTests, Commit, Push,
+    CreateBranch, ApplyPatch, RunTests, BuildProject, Commit, Push,
     TransitionTicket, Comment, SetAssignee, UploadArtifact, RequestApproval, SpawnSession (future)
   IEvent / EventBase (Id, Correlation, Kind)
     CommandAccepted, CommandRejected, CommandCompleted,
@@ -240,3 +244,4 @@ This approach maintains the typed, auditable command system while giving agents 
 - Update (2025-11-28): Designed multi-agent chat architecture supporting concurrent AI conversations. Proposed tabbed interface for AI Chat area with combined Monitoring & Artifacts panel. Analyzed panel utilities and screen real estate requirements for laptop usage. Created MULTI_AGENT_CHAT_DESIGN.md with implementation options.
 - Update (2025-11-28): Revised multi-agent UI design to integrate per-agent event monitoring within each chat panel. Recognized that each AI agent generates its own event stream requiring dedicated monitoring per agent rather than global combined panel. Updated UI layout to use accordion approach with chat + events per agent, plus global artifacts panel. Alternative layouts explored: docked panels, split-panel, column-based, master-detail. Final decision: accordion layout as recommended default for optimal focus+overview balance.
 - Update (2025-11-28): Analyzed agent terminal access requirements. Determined that direct PowerShell access poses security and auditability risks. Recommended extending typed command system with new commands for package management, file operations, and script execution. Proposed TerminalAdapter pattern with SK function bindings for safe, auditable terminal operations. Created GitHub issues #19-23 for implementation phases. Created issue #24 for multi-agent chat UI implementation with accordion layout as recommended default.
+- Update (2025-11-29): Added BuildProject command and DotnetBuildAdapter to enable safe agent-accessible build functionality. Updated architecture to include build adapter in module diagram and command flow. Bumped contract version to v1.3 with proper security validation (path checking, target whitelisting, timeout enforcement) and artifact generation.

@@ -29,7 +29,7 @@ public class FunctionDiscoveryTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string> { "main" } }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string> { "main" } },
             new RepoRef("test-repo", "/repos/test-repo"),
             new WorkspaceRef("/workspaces/test-ws"),
             null,

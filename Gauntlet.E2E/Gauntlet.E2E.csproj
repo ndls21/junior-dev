@@ -24,6 +24,7 @@
     <ProjectReference Include="..\build-dotnet\Build.Dotnet.csproj" />
     <ProjectReference Include="..\workitems-jira\WorkItems.Jira.csproj" />
     <ProjectReference Include="..\vcs-git\Vcs.Git.csproj" />
+    <ProjectReference Include="..\workitems-github\WorkItems.GitHub.csproj" />
   </ItemGroup>
 
 </Project>

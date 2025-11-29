@@ -173,6 +173,17 @@ public class ContractSerializationTests
     }
 
     [Fact]
+    public void BuildProjectCommand_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var targets = new[] { "Build", "Publish" };
+        var command = new BuildProject(TestCommandId, correlation, new RepoRef("repo", "path"), "src/MyProject.csproj", "Release", "net8.0", targets, TimeSpan.FromMinutes(10));
+        var json = JsonSerializer.Serialize(command, Options);
+        var expected = File.ReadAllText("Fixtures/BuildProject.json");
+        Assert.Equal(expected.Trim(), json.Trim());
+    }
+
+    [Fact]
     public void CommitCommand_SerializesCorrectly()
     {
         var correlation = new Correlation(TestSessionId);
@@ -332,6 +343,30 @@ public class ContractSerializationTests
     }
 
     [Fact]
+    public void BuildProjectCommand_RoundTrip()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var targets = new[] { "Build", "Publish" };
+        var original = new BuildProject(TestCommandId, correlation, new RepoRef("repo", "path"), "src/MyProject.csproj", "Release", "net8.0", targets, TimeSpan.FromMinutes(10));
+        var json = JsonSerializer.Serialize(original, Options);
+        var deserialized = JsonSerializer.Deserialize<BuildProject>(json, Options);
+        Assert.Equal(original.Id, deserialized.Id);
+        Assert.Equal(original.Correlation, deserialized.Correlation);
+        Assert.Equal(original.Kind, deserialized.Kind);
+        Assert.Equal(original.Repo, deserialized.Repo);
+        Assert.Equal(original.ProjectPath, deserialized.ProjectPath);
+        Assert.Equal(original.Configuration, deserialized.Configuration);
+        Assert.Equal(original.TargetFramework, deserialized.TargetFramework);
+        Assert.Equal(original.Timeout, deserialized.Timeout);
+        // Check targets individually since JSON deserializes arrays as lists
+        Assert.Equal(original.Targets.Count, deserialized.Targets.Count);
+        for (int i = 0; i < original.Targets.Count; i++)
+        {
+            Assert.Equal(original.Targets[i], deserialized.Targets[i]);
+        }
+    }
+
+    [Fact]
     public void QueryBacklogCommand_SerializesCorrectly()
     {
         var correlation = new Correlation(TestSessionId);
@@ -461,8 +496,8 @@ public class ConfigurationTests
               ""TerminalAdapter"": ""powershell""
             },
             ""SemanticKernel"": {
-              ""Provider"": ""openai"",
-              ""Model"": ""gpt-4"",
+              ""DefaultProvider"": ""openai"",
+              ""DefaultModel"": ""gpt-4"",
               ""MaxTokens"": 4096,
               ""Temperature"": 0.7,
               ""Timeout"": ""00:05:00""
@@ -522,8 +557,8 @@ public class ConfigurationTests
         Assert.Equal("jira", appConfig.Adapters.WorkItemsAdapter);
         Assert.Equal("git", appConfig.Adapters.VcsAdapter);
         Assert.Equal("powershell", appConfig.Adapters.TerminalAdapter);
-        Assert.Equal("openai", appConfig.SemanticKernel.Provider);
-        Assert.Equal("gpt-4", appConfig.SemanticKernel.Model);
+        Assert.Equal("openai", appConfig.SemanticKernel.DefaultProvider);
+        Assert.Equal("gpt-4", appConfig.SemanticKernel.DefaultModel);
         Assert.Equal(4096, appConfig.SemanticKernel.MaxTokens);
         Assert.Equal(0.7, appConfig.SemanticKernel.Temperature);
         Assert.Equal("Dark", appConfig.Ui.Settings.Theme);
@@ -745,24 +780,33 @@ public class ConfigurationTests
     {
         // Arrange
         Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__Adapters__WorkItemsAdapter", "github");
-        Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__SemanticKernel__Model", "gpt-3.5-turbo");
+        Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__Adapters__VcsAdapter", "git");
+        Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__Adapters__TerminalAdapter", "powershell");
+        Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__SemanticKernel__DefaultProvider", "openai");
+        Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__SemanticKernel__DefaultModel", "gpt-3.5-turbo");
 
         try
         {
             // Act
             var basePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-            var config = ConfigBuilder.Build(basePath: basePath);
+            var config = ConfigBuilder.Build(basePath: basePath, skipDefaults: true); // Skip defaults to test env vars only
             var appConfig = ConfigBuilder.GetAppConfig(config);
 
             // Assert
             Assert.Equal("github", appConfig.Adapters?.WorkItemsAdapter);
-            Assert.Equal("gpt-3.5-turbo", appConfig.SemanticKernel?.Model);
+            Assert.Equal("git", appConfig.Adapters?.VcsAdapter);
+            Assert.Equal("powershell", appConfig.Adapters?.TerminalAdapter);
+            Assert.Equal("openai", appConfig.SemanticKernel?.DefaultProvider);
+            Assert.Equal("gpt-3.5-turbo", appConfig.SemanticKernel?.DefaultModel);
         }
         finally
         {
             // Cleanup
             Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__Adapters__WorkItemsAdapter", null);
-            Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__SemanticKernel__Model", null);
+            Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__Adapters__VcsAdapter", null);
+            Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__Adapters__TerminalAdapter", null);
+            Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__SemanticKernel__DefaultProvider", null);
+            Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__SemanticKernel__DefaultModel", null);
         }
     }
 }

@@ -139,7 +139,10 @@ public class SessionManager : ISessionManager
         }
 
         // Find adapter that can handle this command
-        var adapter = _adapters.FirstOrDefault(a => a.CanHandle(command));
+        // Prefer real adapters over fake ones
+        var adapter = _adapters.Where(a => a.CanHandle(command))
+                              .OrderByDescending(a => !(a is FakeAdapter))
+                              .FirstOrDefault();
         if (adapter == null)
         {
             var rejectedEvent = new CommandRejected(
