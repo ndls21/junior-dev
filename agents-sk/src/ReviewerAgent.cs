@@ -92,7 +92,7 @@ public class ReviewerAgent : AgentBase
         // SK/LLM scaffolding: Register LLM-driven analysis functions
         try
         {
-            _kernel.Plugins.AddFromObject(new ReviewAnalysisPlugin(), "review_analysis");
+            _kernel.Plugins.AddFromObject(new ReviewAnalysisPlugin(_kernel), "review_analysis");
             Logger.LogInformation("Registered review analysis plugin with kernel");
         }
         catch (ArgumentException ex) when (ex.Message.Contains("An item with the same key has already been added"))
@@ -631,15 +631,33 @@ public class ReviewerAgent : AgentBase
     /// </summary>
     private class ReviewAnalysisPlugin
     {
+        private readonly Kernel _kernel;
+
+        public ReviewAnalysisPlugin(Kernel kernel)
+        {
+            _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));
+        }
+
         [KernelFunction("analyze_diff")]
         [Description("Analyzes a code diff for issues, recommendations, and readiness for QA.")]
         public async Task<string> AnalyzeDiffAsync(
             [Description("The diff content to analyze")] string content)
         {
-            // SK/LLM scaffolding: This would call an LLM to analyze the diff
-            // For now, return a placeholder response
-            // TODO: Implement actual LLM call with prompt engineering
-            return await Task.FromResult("Diff analysis: No issues found, ready for QA.");
+            // Use LLM to analyze the diff
+            var prompt = $@"Analyze this code diff and provide a review:
+
+{content}
+
+Please provide:
+1. Summary of changes
+2. Any issues or concerns
+3. Recommendations for improvement
+4. Overall assessment (Ready for QA or Needs Review)
+
+Format your response as a clear, concise review.";
+
+            var response = await _kernel.InvokePromptAsync(prompt);
+            return response.ToString();
         }
 
         [KernelFunction("analyze_log")]
@@ -647,10 +665,21 @@ public class ReviewerAgent : AgentBase
         public async Task<string> AnalyzeLogAsync(
             [Description("The log content to analyze")] string content)
         {
-            // SK/LLM scaffolding: This would call an LLM to analyze the log
-            // For now, return a placeholder response
-            // TODO: Implement actual LLM call with prompt engineering
-            return await Task.FromResult("Log analysis: No errors detected, build successful.");
+            // Use LLM to analyze the log
+            var prompt = $@"Analyze this execution log and provide a summary:
+
+{content}
+
+Please identify:
+1. Any errors or exceptions
+2. Warnings or potential issues
+3. Overall build/test status
+4. Recommendations if needed
+
+Provide a clear assessment of the log contents.";
+
+            var response = await _kernel.InvokePromptAsync(prompt);
+            return response.ToString();
         }
 
         [KernelFunction("analyze_test_results")]
@@ -658,10 +687,21 @@ public class ReviewerAgent : AgentBase
         public async Task<string> AnalyzeTestResultsAsync(
             [Description("The test results content to analyze")] string content)
         {
-            // SK/LLM scaffolding: This would call an LLM to analyze the test results
-            // For now, return a placeholder response
-            // TODO: Implement actual LLM call with prompt engineering
-            return await Task.FromResult("Test analysis: All tests passed.");
+            // Use LLM to analyze the test results
+            var prompt = $@"Analyze these test results:
+
+{content}
+
+Please provide:
+1. Test execution summary
+2. Any failures and their causes
+3. Success rates and coverage assessment
+4. Recommendations for fixes or improvements
+
+Give a clear evaluation of the test outcomes.";
+
+            var response = await _kernel.InvokePromptAsync(prompt);
+            return response.ToString();
         }
     }
 

@@ -30,6 +30,13 @@ jobs:
     - name: Run unit tests
       run: dotnet test --no-build --filter "TestCategory!=Integration"
 
+    - name: Run AI integration tests
+      run: dotnet test --no-build --filter "Category=AI"
+      env:
+        RUN_AI_TESTS: 1
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      if: ${{ github.event_name == 'schedule' || contains(github.event.head_commit.message, '[run-ai]') }}
+
     - name: Run live smoke tests
       run: dotnet test --no-build --filter "Category=Integration"
       env:

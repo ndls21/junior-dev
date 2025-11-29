@@ -85,6 +85,59 @@ JUNIORDEV__APPCONFIG__AUTH__AZUREOPENAI__APIKEY=your_azure_api_key
 JUNIORDEV__APPCONFIG__AUTH__AZUREOPENAI__DEPLOYMENTNAME=your-deployment-name
 ```
 
+## AI Tests Configuration
+
+AI integration tests require valid AI service credentials and explicit opt-in. These tests are marked with `[Trait("Category", "AI")]` and are skipped by default.
+
+### Running AI Tests
+
+To enable AI integration tests:
+
+```bash
+# Set the opt-in flag
+export RUN_AI_TESTS=1
+
+# Provide OpenAI credentials
+export OPENAI_API_KEY=your_openai_api_key
+# Or via config
+export JUNIORDEV__APPCONFIG__AUTH__OPENAI__APIKEY=your_openai_api_key
+
+# Run AI tests specifically
+dotnet test --filter "Category=AI"
+
+# Or run all tests (AI tests will be skipped if not configured)
+dotnet test
+```
+
+### CI/CD AI Tests
+
+For CI pipelines, set secrets and enable AI tests conditionally:
+
+```yaml
+# .github/workflows/ci.yml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run unit tests
+        run: dotnet test --filter "Category!=AI"
+      
+      - name: Run AI integration tests
+        if: github.event_name == 'push' && contains(github.ref, 'main')
+        env:
+          RUN_AI_TESTS: 1
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: dotnet test --filter "Category=AI"
+```
+
+### AI Test Opt-in Policy
+
+- AI tests are **disabled by default** to avoid accidental API usage
+- Must set `RUN_AI_TESTS=1` environment variable to enable
+- Must provide valid AI service credentials
+- Tests marked with `[Trait("Category", "AI")]` and use test collection `"AI Integration Tests"`
+- Dummy clients prevent crashes when AI is not configured for UI/agent testing
+
 ## Adapter Selection
 
 Configure which adapters to use in `appsettings.json`:
