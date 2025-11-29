@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\contracts\Contracts.csproj" />
+    <ProjectReference Include="..\orchestrator\Orchestrator.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -17,6 +18,11 @@
     <PackageReference Include="DevExpress.AIIntegration.WinForms.Chat" />
     <PackageReference Include="DevExpress.Win.Design" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
   </ItemGroup>
 
 </Project>

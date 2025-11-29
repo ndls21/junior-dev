@@ -7,6 +7,9 @@ using DevExpress.XtraEditors;
 using DevExpress.XtraTreeList;
 using DevExpress.AIIntegration.WinForms.Chat;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
+using JuniorDev.Contracts;
+using JuniorDev.Orchestrator;
 using DevExpress.AIIntegration;
 using System.Xml;
 using System.Linq;
@@ -268,6 +271,11 @@ public partial class MainForm : Form
         set => isTestMode = value;
     }
 
+    // Orchestrator dependencies
+    private readonly ISessionManager _sessionManager;
+    private readonly IConfiguration _configuration;
+    private readonly Dictionary<Guid, Task> _eventSubscriptionTasks = new();
+
     private EventRenderer? eventRenderer;
     private System.Windows.Forms.Timer? testTimer;
     private MenuStrip? mainMenu;
@@ -279,8 +287,11 @@ public partial class MainForm : Form
     private string? _testSettingsFilePath;
     private string? _testChatStreamsFilePath;
 
-    public MainForm(bool isTestMode = false)
+    public MainForm(ISessionManager sessionManager, IConfiguration configuration, bool isTestMode = false)
     {
+        _sessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
+        _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+
         // Check for test mode argument or parameter
         this.isTestMode = isTestMode || Environment.GetCommandLineArgs().Contains("--test") || Environment.GetCommandLineArgs().Contains("-t");
 
@@ -309,7 +320,8 @@ public partial class MainForm : Form
         }
         else
         {
-            SetupMockEventFeed();
+            // Set up real event subscriptions instead of mock feed
+            SetupEventSubscriptions();
             Console.WriteLine("UI initialized successfully. Close window to exit.");
         }
     }
@@ -528,13 +540,21 @@ public partial class MainForm : Form
         sessionsListBox.ItemHeight = 30;
         sessionsListBox.DrawItem += SessionsListBox_DrawItem;
 
-        // Mock session data with status objects
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 1", Status = JuniorDev.Contracts.SessionStatus.Running });
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 2", Status = JuniorDev.Contracts.SessionStatus.Paused });
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 3", Status = JuniorDev.Contracts.SessionStatus.Error });
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 4", Status = JuniorDev.Contracts.SessionStatus.Running });
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 5", Status = JuniorDev.Contracts.SessionStatus.NeedsApproval });
-        sessionsListBox.Items.Add(new SessionItem { Name = "Session 6", Status = JuniorDev.Contracts.SessionStatus.Completed });
+        // Initialize with real sessions if not in test mode
+        if (!isTestMode)
+        {
+            RefreshSessionsList();
+        }
+        else
+        {
+            // Mock session data with status objects
+            sessionsListBox.Items.Add(new SessionItem { Name = "Session 1", Status = JuniorDev.Contracts.SessionStatus.Running });
+            sessionsListBox.Items.Add(new SessionItem { Name = "Session 2", Status = JuniorDev.Contracts.SessionStatus.Paused });
+            sessionsListBox.Items.Add(new SessionItem { Name = "Session 3", Status = JuniorDev.Contracts.SessionStatus.Error });
+            sessionsListBox.Items.Add(new SessionItem { Name = "Session 4", Status = JuniorDev.Contracts.SessionStatus.Running });
+            sessionsListBox.Items.Add(new SessionItem { Name = "Session 5", Status = JuniorDev.Contracts.SessionStatus.NeedsApproval });
+            sessionsListBox.Items.Add(new SessionItem { Name = "Session 6", Status = JuniorDev.Contracts.SessionStatus.Completed });
+        }
 
         panel.Controls.Add(sessionsListBox);
         panel.Controls.Add(filterPanel);
@@ -560,9 +580,17 @@ public partial class MainForm : Form
         // Wire up events
         _accordionManager.StreamsChanged += (s, e) => UpdateChatFilterOptions();
 
-        // Create initial chat stream
-        var initialChatStream = new ChatStream(Guid.NewGuid(), "Agent 1");
-        _accordionManager.AddChatStream(initialChatStream);
+        // Create initial chat stream with real session
+        if (!isTestMode)
+        {
+            CreateInitialSession();
+        }
+        else
+        {
+            // Create initial chat stream
+            var initialChatStream = new ChatStream(Guid.NewGuid(), "Agent 1");
+            _accordionManager.AddChatStream(initialChatStream);
+        }
         
         // Add a few more streams for testing rich previews
         if (isTestMode)
@@ -571,6 +599,55 @@ public partial class MainForm : Form
         }
 
         conversationPanel.Controls.Add(_chatContainerPanel);
+    }
+
+    private async void CreateInitialSession()
+    {
+        try
+        {
+            // Create a default session configuration
+            var sessionConfig = new SessionConfig(
+                SessionId: Guid.NewGuid(),
+                ParentSessionId: null,
+                PlanNodeId: null,
+                Policy: new PolicyProfile
+                {
+                    Name = "default",
+                    ProtectedBranches = new HashSet<string> { "main", "master" },
+                    RequireTestsBeforePush = false,
+                    RequireApprovalForPush = false,
+                    CommandWhitelist = null,
+                    CommandBlacklist = null,
+                    MaxFilesPerCommit = null,
+                    AllowedWorkItemTransitions = null,
+                    Limits = new RateLimits
+                    {
+                        CallsPerMinute = 60,
+                        Burst = 10
+                    }
+                },
+                Repo: new RepoRef("default-repo", Environment.CurrentDirectory),
+                Workspace: new WorkspaceRef(Environment.CurrentDirectory),
+                WorkItem: null,
+                AgentProfile: "default"
+            );
+
+            // Create the session
+            await _sessionManager.CreateSession(sessionConfig);
+
+            // Create chat stream for this session
+            var chatStream = new ChatStream(sessionConfig.SessionId, "Agent 1");
+            _accordionManager?.AddChatStream(chatStream);
+
+            Console.WriteLine($"Created initial session: {sessionConfig.SessionId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to create initial session: {ex.Message}");
+            // Fall back to mock mode
+            var initialChatStream = new ChatStream(Guid.NewGuid(), "Agent 1");
+            _accordionManager?.AddChatStream(initialChatStream);
+        }
     }
 
     private void CreateEventsPanel()
@@ -834,12 +911,85 @@ public partial class MainForm : Form
         base.OnFormClosing(e);
     }
 
-    private void SetupMockEventFeed()
+    private void SetupEventSubscriptions()
     {
-        eventTimer = new System.Windows.Forms.Timer();
-        eventTimer.Interval = 3000; // Add event every 3 seconds
-        eventTimer.Tick += (s, e) => AddMockEvent();
-        eventTimer.Start();
+        // Subscribe to events from all existing chat streams
+        if (_accordionManager != null)
+        {
+            foreach (var chatStream in _accordionManager.ChatStreams)
+            {
+                SubscribeToSessionEvents(chatStream.SessionId);
+            }
+        }
+
+        // Listen for new chat streams being added
+        if (_accordionManager != null)
+        {
+            _accordionManager.StreamsChanged += (s, e) => 
+            {
+                // Subscribe to events for newly added streams
+                foreach (var stream in _accordionManager.ChatStreams)
+                {
+                    if (!_eventSubscriptionTasks.ContainsKey(stream.SessionId))
+                    {
+                        SubscribeToSessionEvents(stream.SessionId);
+                    }
+                }
+            };
+        }
+    }
+
+    private void SubscribeToSessionEvents(Guid sessionId)
+    {
+        if (_eventSubscriptionTasks.ContainsKey(sessionId))
+        {
+            return; // Already subscribed
+        }
+
+        var subscriptionTask = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var @event in _sessionManager.Subscribe(sessionId))
+                {
+                    // Handle event on UI thread
+                    if (InvokeRequired)
+                    {
+                        Invoke(() => HandleOrchestratorEvent(@event));
+                    }
+                    else
+                    {
+                        HandleOrchestratorEvent(@event);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Event subscription for session {sessionId} ended: {ex.Message}");
+            }
+        });
+
+        _eventSubscriptionTasks[sessionId] = subscriptionTask;
+    }
+
+    private void HandleOrchestratorEvent(IEvent @event)
+    {
+        var timestamp = DateTimeOffset.Now;
+
+        // Route event to appropriate chat streams
+        _accordionManager?.RouteEventToStreams(@event, timestamp);
+        
+        // Handle artifacts
+        if (@event is ArtifactAvailable artifactEvent)
+        {
+            AddArtifactToChat(artifactEvent.Correlation.SessionId, artifactEvent.Artifact);
+        }
+
+        // Check for blocking conditions
+        CheckForBlockingConditions(@event);
+        
+        // Render to global events panel
+        eventRenderer?.RenderEvent(@event, timestamp);
     }
 
     private void AddMockEvent()
@@ -1057,33 +1207,86 @@ public partial class MainForm : Form
         e.DrawFocusRectangle();
     }
 
+    private void RefreshSessionsList()
+    {
+        if (sessionsListBox == null || isTestMode) return;
+
+        sessionsListBox.Items.Clear();
+
+        // For now, show sessions from chat streams
+        // In a full implementation, this would query the session manager for all sessions
+        if (_accordionManager != null)
+        {
+            foreach (var chatStream in _accordionManager.ChatStreams)
+            {
+                var sessionItem = new SessionItem 
+                { 
+                    Name = chatStream.AgentName, 
+                    Status = chatStream.Status 
+                };
+                sessionsListBox.Items.Add(sessionItem);
+            }
+        }
+    }
+
     private void FilterSessions(string status)
     {
-        sessionsListBox!.Items.Clear();
-
-        // Mock session data - in real app this would come from session manager
-        var allSessions = new[]
+        if (isTestMode)
         {
-            new SessionItem { Name = "Session 1", Status = JuniorDev.Contracts.SessionStatus.Running },
-            new SessionItem { Name = "Session 2", Status = JuniorDev.Contracts.SessionStatus.Paused },
-            new SessionItem { Name = "Session 3", Status = JuniorDev.Contracts.SessionStatus.Error },
-            new SessionItem { Name = "Session 4", Status = JuniorDev.Contracts.SessionStatus.Running },
-            new SessionItem { Name = "Session 5", Status = JuniorDev.Contracts.SessionStatus.NeedsApproval },
-            new SessionItem { Name = "Session 6", Status = JuniorDev.Contracts.SessionStatus.Completed }
-        };
+            // Original mock implementation for test mode
+            sessionsListBox!.Items.Clear();
 
-        foreach (var session in allSessions)
-        {
-            bool shouldShow = status == "All" ||
-                (status == "Running" && session.Status == JuniorDev.Contracts.SessionStatus.Running) ||
-                (status == "Paused" && session.Status == JuniorDev.Contracts.SessionStatus.Paused) ||
-                (status == "Error" && session.Status == JuniorDev.Contracts.SessionStatus.Error) ||
-                (status == "NeedsApproval" && session.Status == JuniorDev.Contracts.SessionStatus.NeedsApproval) ||
-                (status == "Completed" && session.Status == JuniorDev.Contracts.SessionStatus.Completed);
-
-            if (shouldShow)
+            var allSessions = new[]
             {
-                sessionsListBox!.Items.Add(session);
+                new SessionItem { Name = "Session 1", Status = JuniorDev.Contracts.SessionStatus.Running },
+                new SessionItem { Name = "Session 2", Status = JuniorDev.Contracts.SessionStatus.Paused },
+                new SessionItem { Name = "Session 3", Status = JuniorDev.Contracts.SessionStatus.Error },
+                new SessionItem { Name = "Session 4", Status = JuniorDev.Contracts.SessionStatus.Running },
+                new SessionItem { Name = "Session 5", Status = JuniorDev.Contracts.SessionStatus.NeedsApproval },
+                new SessionItem { Name = "Session 6", Status = JuniorDev.Contracts.SessionStatus.Completed }
+            };
+
+            foreach (var session in allSessions)
+            {
+                bool shouldShow = status == "All" ||
+                    (status == "Running" && session.Status == JuniorDev.Contracts.SessionStatus.Running) ||
+                    (status == "Paused" && session.Status == JuniorDev.Contracts.SessionStatus.Paused) ||
+                    (status == "Error" && session.Status == JuniorDev.Contracts.SessionStatus.Error) ||
+                    (status == "NeedsApproval" && session.Status == JuniorDev.Contracts.SessionStatus.NeedsApproval) ||
+                    (status == "Completed" && session.Status == JuniorDev.Contracts.SessionStatus.Completed);
+
+                if (shouldShow)
+                {
+                    sessionsListBox!.Items.Add(session);
+                }
+            }
+        }
+        else
+        {
+            // Real sessions filtering
+            sessionsListBox!.Items.Clear();
+
+            if (_accordionManager != null)
+            {
+                foreach (var chatStream in _accordionManager.ChatStreams)
+                {
+                    bool shouldShow = status == "All" ||
+                        (status == "Running" && chatStream.Status == JuniorDev.Contracts.SessionStatus.Running) ||
+                        (status == "Paused" && chatStream.Status == JuniorDev.Contracts.SessionStatus.Paused) ||
+                        (status == "Error" && chatStream.Status == JuniorDev.Contracts.SessionStatus.Error) ||
+                        (status == "NeedsApproval" && chatStream.Status == JuniorDev.Contracts.SessionStatus.NeedsApproval) ||
+                        (status == "Completed" && chatStream.Status == JuniorDev.Contracts.SessionStatus.Completed);
+
+                    if (shouldShow)
+                    {
+                        var sessionItem = new SessionItem 
+                        { 
+                            Name = chatStream.AgentName, 
+                            Status = chatStream.Status 
+                        };
+                        sessionsListBox!.Items.Add(sessionItem);
+                    }
+                }
             }
         }
     }
@@ -1223,7 +1426,7 @@ public partial class MainForm : Form
         }
     }
 
-    private void AddNewChatStream()
+    private async void AddNewChatStream()
     {
         if (_accordionManager == null) return;
 
@@ -1231,21 +1434,73 @@ public partial class MainForm : Form
         var agentNumber = _accordionManager.ChatStreams.Count + 1;
         var agentName = $"Agent {agentNumber}";
         
-        // Create new chat stream with mock status
-        var chatStream = new ChatStream(Guid.NewGuid(), agentName);
-        
-        // Add some variety to the mock data
-        var mockTasks = new[] { "Analyzing code", "Running tests", "Fixing bugs", "Implementing feature", "Reviewing changes" };
-        var mockStatuses = new[] { SessionStatus.Running, SessionStatus.Paused, SessionStatus.Error, SessionStatus.NeedsApproval };
-        
-        var random = new Random();
-        chatStream.Status = mockStatuses[random.Next(mockStatuses.Length)];
-        chatStream.CurrentTask = mockTasks[random.Next(mockTasks.Length)];
-        chatStream.ProgressPercentage = random.Next(0, 101);
-        
-        _accordionManager.AddChatStream(chatStream);
-        
-        Console.WriteLine($"Added new chat stream: {agentName} ({chatStream.Status}) - {chatStream.CurrentTask}");
+        if (!isTestMode)
+        {
+            try
+            {
+                // Create a real session
+                var sessionConfig = new SessionConfig(
+                    SessionId: Guid.NewGuid(),
+                    ParentSessionId: null,
+                    PlanNodeId: null,
+                    Policy: new PolicyProfile
+                    {
+                        Name = "default",
+                        ProtectedBranches = new HashSet<string> { "main", "master" },
+                        RequireTestsBeforePush = false,
+                        RequireApprovalForPush = false,
+                        CommandWhitelist = null,
+                        CommandBlacklist = null,
+                        MaxFilesPerCommit = null,
+                        AllowedWorkItemTransitions = null,
+                        Limits = new RateLimits
+                        {
+                            CallsPerMinute = 60,
+                            Burst = 10
+                        }
+                    },
+                    Repo: new RepoRef("default-repo", Environment.CurrentDirectory),
+                    Workspace: new WorkspaceRef(Environment.CurrentDirectory),
+                    WorkItem: null,
+                    AgentProfile: "default"
+                );
+
+                await _sessionManager.CreateSession(sessionConfig);
+
+                // Create chat stream for this session
+                var chatStream = new ChatStream(sessionConfig.SessionId, agentName);
+                _accordionManager.AddChatStream(chatStream);
+
+                Console.WriteLine($"Created new session: {agentName} ({sessionConfig.SessionId})");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to create new session: {ex.Message}");
+                // Fall back to mock mode
+                var chatStream = new ChatStream(Guid.NewGuid(), agentName);
+                chatStream.Status = SessionStatus.Running;
+                chatStream.CurrentTask = "Ready";
+                _accordionManager.AddChatStream(chatStream);
+            }
+        }
+        else
+        {
+            // Create new chat stream with mock status
+            var chatStream = new ChatStream(Guid.NewGuid(), agentName);
+            
+            // Add some variety to the mock data
+            var mockTasks = new[] { "Analyzing code", "Running tests", "Fixing bugs", "Implementing feature", "Reviewing changes" };
+            var mockStatuses = new[] { SessionStatus.Running, SessionStatus.Paused, SessionStatus.Error, SessionStatus.NeedsApproval };
+            
+            var random = new Random();
+            chatStream.Status = mockStatuses[random.Next(mockStatuses.Length)];
+            chatStream.CurrentTask = mockTasks[random.Next(mockTasks.Length)];
+            chatStream.ProgressPercentage = random.Next(0, 101);
+            
+            _accordionManager.AddChatStream(chatStream);
+            
+            Console.WriteLine($"Added new chat stream: {agentName} ({chatStream.Status}) - {chatStream.CurrentTask}");
+        }
     }
 
     private void AddTestChatStreams()
@@ -1487,29 +1742,38 @@ public partial class MainForm : Form
         }
     }
 
-    private void HandleBlockingAction(BlockingCondition condition)
+    private async void HandleBlockingAction(BlockingCondition condition)
     {
-        switch (condition.Type)
+        try
         {
-            case BlockingType.NeedsApproval:
-                // In a real app, this would show an approval dialog
-                // For now, just remove the blocking condition
-                RemoveBlockingCondition(condition.SessionId, condition.Type);
-                Console.WriteLine($"Approved session {condition.SessionId}");
-                break;
+            switch (condition.Type)
+            {
+                case BlockingType.NeedsApproval:
+                    // Approve the session
+                    await _sessionManager.ApproveSession(condition.SessionId);
+                    RemoveBlockingCondition(condition.SessionId, condition.Type);
+                    Console.WriteLine($"Approved session {condition.SessionId}");
+                    break;
 
-            case BlockingType.ConflictDetected:
-                // In a real app, this would show conflict resolution UI
-                // For now, just remove the blocking condition
-                RemoveBlockingCondition(condition.SessionId, condition.Type);
-                Console.WriteLine($"Resolved conflict for session {condition.SessionId}");
-                break;
+                case BlockingType.ConflictDetected:
+                    // In a real app, this would show conflict resolution UI
+                    // For now, just remove the blocking condition
+                    RemoveBlockingCondition(condition.SessionId, condition.Type);
+                    Console.WriteLine($"Resolved conflict for session {condition.SessionId}");
+                    break;
 
-            case BlockingType.Throttled:
-                // Throttling is time-based, just wait
-                // Could show retry options
-                Console.WriteLine($"Acknowledged throttling for session {condition.SessionId}");
-                break;
+                case BlockingType.Throttled:
+                    // Throttling is time-based, just wait
+                    // Could show retry options
+                    Console.WriteLine($"Acknowledged throttling for session {condition.SessionId}");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to handle blocking action: {ex.Message}");
+            // Still remove the condition to avoid getting stuck
+            RemoveBlockingCondition(condition.SessionId, condition.Type);
         }
     }
 }
