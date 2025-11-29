@@ -27,7 +27,11 @@ Junior Dev is a .NET-based platform for AI-assisted software development, featur
   - **ALWAYS** wait for the user to say "NEXT!" before closing any issue.
   - When the user says "NEXT!", THEN close the current issue using `gh issue close <number> --reason completed`, merge the feature branch back to master if applicable, and proceed to identify the next priority.
   - Once a ticket is taken up for implementation, do **NOT** move on to another ticket until it has been confirmed closed with "NEXT!".
-  - Also perform `git commit` and `git push` when transitioning between issues to maintain a clean, shareable state.
+  - **CLOSING RITUAL**: Before issue closure, complete these steps:
+    - Update all relevant documentation (CONTRACTS.md, ARCHITECTURE.md, etc.) with implementation details, version bumps, and rationale
+    - Add a final comment to the GitHub issue summarizing what was implemented, any additional work done alongside, and key outcomes
+    - Perform `git commit` and `git push` to ensure all changes are committed and pushed
+    - If working on a feature branch, merge back to master when closing the issue
   - **SAFEGUARD**: Before any issue closure action, explicitly ask the user for confirmation and wait for their response.
 - **Commit Message Convention**: Include the current stage or codename in the commit message prefix when applicable (e.g., `Envoy – feat: add reviewer agent` or `Dock – fix: vcs adapter`). This helps trace changes to module stages. If a GitHub issue was opened for the work, include the issue number in the commit message (e.g., `Envoy – feat: implement reviewer agent (#3)`).
 - **Test Issue Investigation**: When encountering test failures, take the investigative route rather than immediately changing the test. Tests represent the source of truth for expected behavior. Only modify tests after confirming the error is in the test assumptions, not the implementation. If a test fails, first investigate whether the code behavior is incorrect or if the test expectations need updating. This ensures we build robust software where tests validate correct behavior, not accommodate bugs.

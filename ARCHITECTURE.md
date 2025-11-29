@@ -84,6 +84,27 @@
 - Agents host emits commands; listens to events to adapt.
 - Adapters are swappable implementations of stable contracts.
 
+## Adapter Registration Patterns
+
+### **Core Orchestrator (Always Available)**
+```csharp
+services.AddOrchestrator(); // Registers fake adapters for testing/development
+```
+
+### **Optional Adapters (Host Application Choice)**
+Build functionality is **optional** and must be explicitly registered by the host application:
+
+```csharp
+services.AddOrchestrator()           // Core orchestrator with fake adapters
+        .AddDotnetBuildAdapter();     // Optional: adds real build functionality
+```
+
+This pattern maintains modular architecture where:
+- Core orchestrator remains lightweight with fake adapters
+- Real adapters are opt-in based on application needs
+- Avoids circular dependencies between projects
+- Allows different hosts to choose their adapter mix
+
 ## Interaction per session
 ```
 Agent/UI -> Orchestrator: Command (CreateBranch, ApplyPatch, RunTests, BuildProject, ...)
