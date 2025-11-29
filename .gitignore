@@ -38,3 +38,5 @@ artifacts/
 # Local config
 appsettings.Local.json
 secrets.json
+.env.local
+.env.*.local

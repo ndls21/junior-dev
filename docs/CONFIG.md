@@ -94,12 +94,11 @@ AI integration tests require valid AI service credentials and explicit opt-in. T
 To enable AI integration tests:
 
 ```bash
-# Set the opt-in flag
-export RUN_AI_TESTS=1
+# Option 1: Load from secrets file (recommended for development)
+.\load-secrets.ps1
 
-# Provide OpenAI credentials
-export OPENAI_API_KEY=your_openai_api_key
-# Or via config
+# Option 2: Set environment variables manually
+export RUN_AI_TESTS=1
 export JUNIORDEV__APPCONFIG__AUTH__OPENAI__APIKEY=your_openai_api_key
 
 # Run AI tests specifically
@@ -108,6 +107,8 @@ dotnet test --filter "Category=AI"
 # Or run all tests (AI tests will be skipped if not configured)
 dotnet test
 ```
+
+**Note:** AI tests are gated by the `RUN_AI_TESTS=1` environment variable to prevent accidental API usage and costs.
 
 ### CI/CD AI Tests
 
@@ -260,6 +261,24 @@ dotnet user-secrets init
 dotnet user-secrets set "AppConfig:Auth:OpenAI:ApiKey" "your-key-here"
 dotnet user-secrets set "AppConfig:Auth:GitHub:Token" "your-token-here"
 ```
+
+### Local Secrets File (Alternative)
+
+For easier development setup, you can create a `.env.local` file in the project root:
+
+```bash
+# Create secrets file
+cp .env.local.example .env.local
+
+# Edit with your secrets
+# JUNIORDEV__Auth__OpenAI__ApiKey=your_openai_key_here
+# RUN_AI_TESTS=1
+
+# Load secrets into environment
+.\load-secrets.ps1
+```
+
+The `.env.local` file is automatically ignored by `.gitignore` to prevent accidental commits.
 
 ## Quick Start
 

@@ -27,8 +27,7 @@ public class AiIntegrationTests
     {
         if (!_fixture.ShouldRunAiTests)
         {
-            Assert.True(true, "AI test skipped - not configured to run");
-            return;
+            return; // Skip test - not configured to run AI tests
         }
 
         // Arrange - Set up kernel with OpenAI chat completion
@@ -77,8 +76,7 @@ index 1234567..abcdef0 100644
     {
         if (!_fixture.ShouldRunAiTests)
         {
-            Assert.True(true, "AI test skipped - not configured to run");
-            return;
+            return; // Skip test - not configured to run AI tests
         }
 
         // Arrange - Set up kernel with OpenAI chat completion
