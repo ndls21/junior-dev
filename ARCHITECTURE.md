@@ -11,6 +11,7 @@
 - `contracts`: shared DTOs/interfaces for commands, events, plans, policy profiles.
 - `workitems-<provider>`: Jira first; supports get/update/comment/transition/assign/attach.
 - `vcs-<provider>`: git CLI first; later GitHub/ADO. Supports branch/commit/push/diff/patch export.
+- `build-<provider>`: opt-in build system support (dotnet, npm, etc.); enables BuildProject command.
 - `agents-<host>`: Semantic Kernel host for planner/executor/reviewer agents, emitting commands.
 - `orchestrator`: wires adapters via DI, enforces policy/rate limits, manages sessions, event log, artifacts.
 - `ui-shell`: DevExpress chat/docking UI with columnar layout; sessions list, conversation/log, artifacts/tests.
@@ -74,6 +75,11 @@
     │                 │                 │
     │                 ↓                 ↓
     │            (Jira, …)          (Git CLI, …)
+    │
+    │          [Build Adapter] (opt-in)
+    │                 │
+    │                 ↓
+    │            (Dotnet, NPM, …)
 ```
 - Orchestrator is the hub: enforces policy/rate limits, manages sessions/workspaces, logs events/artifacts.
 - UI consumes session event streams; sends commands (approve, pause/resume, etc.).
@@ -95,8 +101,8 @@ Orchestrator -> UI/Agent: Event stream (CommandAccepted, ..., ArtifactAvailable)
 ```
 Contracts
   ICommand / CommandBase (Id, Correlation, Kind)
-    CreateBranch, ApplyPatch, RunTests, Commit, Push,
-    TransitionTicket, Comment, SetAssignee, UploadArtifact, RequestApproval, SpawnSession (future)
+    CreateBranch, ApplyPatch, RunTests, Commit, Push, GetDiff,
+    BuildProject, TransitionTicket, Comment, SetAssignee, UploadArtifact, RequestApproval, SpawnSession (future)
   IEvent / EventBase (Id, Correlation, Kind)
     CommandAccepted, CommandRejected, CommandCompleted,
     ArtifactAvailable, Throttled, ConflictDetected,
@@ -108,7 +114,7 @@ Contracts
 Orchestrator interfaces
   ISessionManager (CreateSession, PublishCommand, Subscribe)
   IPolicyEnforcer, IRateLimiter, IWorkspaceProvider, IArtifactStore
-  IAdapter (unified interface for work items, VCS, and other capabilities)
+  IAdapter (unified interface for work items, VCS, build, and other capabilities)
 ```
 
 ## Repo Layout (proposed)
@@ -117,6 +123,7 @@ Orchestrator interfaces
 /orchestrator             (core session manager, policy/rate, workspace, event log, adapters)
 /workitems-jira           (Jira impl + fake) ✅ Dev J complete
 /vcs-git                  (git CLI impl + fake)
+/build-dotnet             (dotnet build adapter - opt-in)
 /agents/sk-host           (Semantic Kernel agents)
 /ui-shell                 (DevExpress UI)
 /docs                     (architecture, plans, setup, prompts)
@@ -240,3 +247,4 @@ This approach maintains the typed, auditable command system while giving agents 
 - Update (2025-11-28): Designed multi-agent chat architecture supporting concurrent AI conversations. Proposed tabbed interface for AI Chat area with combined Monitoring & Artifacts panel. Analyzed panel utilities and screen real estate requirements for laptop usage. Created MULTI_AGENT_CHAT_DESIGN.md with implementation options.
 - Update (2025-11-28): Revised multi-agent UI design to integrate per-agent event monitoring within each chat panel. Recognized that each AI agent generates its own event stream requiring dedicated monitoring per agent rather than global combined panel. Updated UI layout to use accordion approach with chat + events per agent, plus global artifacts panel. Alternative layouts explored: docked panels, split-panel, column-based, master-detail. Final decision: accordion layout as recommended default for optimal focus+overview balance.
 - Update (2025-11-28): Analyzed agent terminal access requirements. Determined that direct PowerShell access poses security and auditability risks. Recommended extending typed command system with new commands for package management, file operations, and script execution. Proposed TerminalAdapter pattern with SK function bindings for safe, auditable terminal operations. Created GitHub issues #19-23 for implementation phases. Created issue #24 for multi-agent chat UI implementation with accordion layout as recommended default.
+- Update (2025-11-30): Added BuildProject command and build adapter architecture. Build adapters are opt-in via AdaptersConfig.BuildAdapter setting. Added build-dotnet adapter to repo layout. Updated contracts to v1.3.

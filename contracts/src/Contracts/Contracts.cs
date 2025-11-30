@@ -7,7 +7,7 @@ namespace JuniorDev.Contracts;
 
 public static class ContractVersion
 {
-    public const string Current = "v1.2";
+    public const string Current = "v1.3";
 }
 
 public sealed record WorkItemRef(string Id, string? ProviderHint = null);
@@ -48,6 +48,9 @@ public sealed record Push(Guid Id, Correlation Correlation, RepoRef Repo, string
 
 public sealed record GetDiff(Guid Id, Correlation Correlation, RepoRef Repo, string Ref = "HEAD")
     : CommandBase(Id, Correlation, nameof(GetDiff));
+
+public sealed record BuildProject(Guid Id, Correlation Correlation, RepoRef Repo, string? Configuration = null, string? Target = null)
+    : CommandBase(Id, Correlation, nameof(BuildProject));
 
 public sealed record TransitionTicket(Guid Id, Correlation Correlation, WorkItemRef Item, string State)
     : CommandBase(Id, Correlation, nameof(TransitionTicket));
@@ -244,7 +247,8 @@ public sealed record AzureOpenAIAuthConfig(
 public sealed record AdaptersConfig(
     string WorkItemsAdapter, // "jira" or "github"
     string VcsAdapter, // "git" (only git supported currently)
-    string TerminalAdapter); // "powershell" or "bash" (only powershell on Windows)
+    string TerminalAdapter, // "powershell" or "bash" (only powershell on Windows)
+    string? BuildAdapter = null); // "dotnet", "npm", etc. - opt-in build system support
 
 /// <summary>
 /// Semantic Kernel / AI configuration
