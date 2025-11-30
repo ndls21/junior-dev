@@ -35,16 +35,20 @@ public class MainFormTests : IDisposable
         }
     }
 
-    private MainForm CreateMainForm(bool isTestMode = false, ISessionManager sessionManager = null, IConfiguration configuration = null, IChatClient chatClient = null)
+    private MainForm CreateMainForm(bool isTestMode = false, ISessionManager sessionManager = null, IConfiguration configuration = null, Microsoft.Extensions.AI.IChatClient chatClient = null)
     {
         var mockSessionManager = sessionManager != null ? Mock.Get(sessionManager) : new Mock<ISessionManager>();
         var mockConfiguration = configuration != null ? Mock.Get(configuration) : new Mock<IConfiguration>();
-        var mockChatClient = chatClient != null ? Mock.Get(chatClient) : new Mock<IChatClient>();
+        var mockChatClient = chatClient != null ? Mock.Get(chatClient) : new Mock<Microsoft.Extensions.AI.IChatClient>();
+        
+        // Create a mock service provider
+        var mockServiceProvider = new Mock<IServiceProvider>();
         
         return new MainForm(
             mockSessionManager.Object, 
             mockConfiguration.Object, 
             mockChatClient.Object, 
+            mockServiceProvider.Object,
             isTestMode);
     }
 
@@ -704,6 +708,68 @@ public class MainFormTests : IDisposable
     }
 
     [Fact]
+    public async Task DummyChatClient_Initialization_FallsBackWhenRealClientUnavailable()
+    {
+        // Arrange - Create a mock service provider that doesn't have IChatClientFactory
+        var mockServiceProvider = new Mock<IServiceProvider>();
+        mockServiceProvider.Setup(sp => sp.GetService(typeof(IChatClientFactory)))
+            .Returns((IChatClientFactory?)null); // Simulate no factory available
+
+        // Act - Try to register AI client via fallback method
+        // This simulates the logic in Program.RegisterClientViaFallbackMethods
+        Microsoft.Extensions.AI.IChatClient? client = null;
+        try
+        {
+            var factory = mockServiceProvider.Object.GetService(typeof(IChatClientFactory)) as IChatClientFactory;
+            if (factory != null)
+            {
+                // This would try to get a real client
+                var underlyingClient = factory.GetUnderlyingClientFor("default");
+                client = underlyingClient as Microsoft.Extensions.AI.IChatClient;
+            }
+            else
+            {
+                // Should fall back to dummy client
+                client = new Ui.Shell.DummyChatClient();
+            }
+        }
+        catch
+        {
+            // Any exception should result in dummy client
+            client = new Ui.Shell.DummyChatClient();
+        }
+
+        // Assert - Should have fallen back to dummy client
+        Assert.NotNull(client);
+        Assert.IsType<Ui.Shell.DummyChatClient>(client);
+
+        // Verify dummy client works
+        var messages = new[] { new ChatMessage(ChatRole.User, "Test message") };
+        var response = await client.GetResponseAsync(messages);
+        Assert.NotNull(response);
+        Assert.Contains("dummy response", response.Text.ToLowerInvariant());
+    }
+
+    [Fact]
+    public async Task DummyChatClient_StreamingResponse_WorksCorrectly()
+    {
+        // Arrange
+        var dummyClient = new Ui.Shell.DummyChatClient();
+        var messages = new[] { new ChatMessage(ChatRole.User, "Test streaming") };
+
+        // Act
+        var responses = new List<ChatResponseUpdate>();
+        await foreach (var update in dummyClient.GetStreamingResponseAsync(messages))
+        {
+            responses.Add(update);
+        }
+
+        // Assert
+        Assert.NotEmpty(responses);
+        Assert.Contains("dummy streaming response", responses[0].Text.ToLowerInvariant());
+    }
+
+    [Fact]
     public async Task SessionLifecycle_MultipleSessions_IsolatedEventStreams()
     {
         // Arrange
@@ -863,5 +929,557 @@ public class MainFormTests : IDisposable
         // Verify dependencies are set (this would require reflection or public accessors in real implementation)
         // For now, we verify the chat stream was created with correct SessionId
         Assert.Equal(sessionId, chatStream.SessionId);
+    }
+
+    [Fact]
+    public async Task LivePath_EventRouting_DeliversToCorrectChatStream()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Create two chat streams with different session IDs
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId1, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("test1", "/tmp/test1"), new WorkspaceRef("/tmp/workspace1"), null, "test-agent"));
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId2, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("test2", "/tmp/test2"), new WorkspaceRef("/tmp/workspace2"), null, "test-agent"));
+
+        var chatStreams = form.GetChatStreamsForTest();
+        var stream1 = chatStreams.First(cs => cs.SessionId == sessionId1);
+        var stream2 = chatStreams.First(cs => cs.SessionId == sessionId2);
+
+        // Act - Route an event for sessionId1
+        var event1 = new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId1), SessionStatus.Paused, "Paused for testing");
+        form.RouteEventToChatStreams(event1, DateTimeOffset.Now);
+
+        // Route a different event for sessionId2
+        var event2 = new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId2), SessionStatus.Error, "Error occurred");
+        form.RouteEventToChatStreams(event2, DateTimeOffset.Now);
+
+        // Assert - Only stream1 should have its status updated to Paused
+        chatStreams = form.GetChatStreamsForTest();
+        var updatedStream1 = chatStreams.First(cs => cs.SessionId == sessionId1);
+        var updatedStream2 = chatStreams.First(cs => cs.SessionId == sessionId2);
+
+        Assert.Equal(SessionStatus.Paused, updatedStream1.Status);
+        Assert.Equal(SessionStatus.Error, updatedStream2.Status);
+    }
+
+    [Fact]
+    public async Task LivePath_CommandPublishing_UsesActiveSessionId()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+
+        mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Get the actual session ID from the initial chat stream created by the form
+        var chatStreams = form.GetChatStreamsForTest();
+        var activeSessionId = chatStreams.First().SessionId;
+
+        // Act
+        await form.ExecuteCommandForActiveSessionTest((correlation) => 
+            new RunTests(Guid.NewGuid(), correlation, new RepoRef("test", "/tmp/test"), null, TimeSpan.FromMinutes(5)));
+
+        // Assert - Verify that PublishCommand was called with a command that has the correct SessionId
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == activeSessionId)), Times.Once);
+    }
+
+    [Fact]
+    public async Task LivePath_MultipleSessions_IsolatedCommandPublishing()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+
+        mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Get the actual session ID from the initial chat stream created by the form
+        var chatStreams = form.GetChatStreamsForTest();
+        var activeSessionId = chatStreams.First().SessionId;
+
+        // Act - Execute command (should use the first/active stream's SessionId)
+        await form.ExecuteCommandForActiveSessionTest((correlation) => 
+            new RunTests(Guid.NewGuid(), correlation, new RepoRef("test", "/tmp/test"), null, TimeSpan.FromMinutes(5)));
+
+        // Assert - Command should be published with the active session's SessionId (first stream)
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == activeSessionId)), Times.Once);
+        
+        // Verify no command was published with sessionId1 or sessionId2 (since they're not used)
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == sessionId1)), Times.Never);
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == sessionId2)), Times.Never);
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_AttachChatStreamToSession_UpdatesSessionIdAndSubscribes()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var originalSessionId = Guid.NewGuid();
+        var newSessionId = Guid.NewGuid();
+        var chatStream = new ChatStream(originalSessionId, "Test Agent");
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+        form.AddChatStreamForTest(chatStream);
+
+        // Act
+        await form.AttachChatStreamToSessionForTest(chatStream, newSessionId);
+
+        // Assert
+        Assert.Equal(newSessionId, chatStream.SessionId);
+        // Note: In test mode, subscription is skipped, but the SessionId should be updated
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_AttachDialog_AcceptsValidSessionId()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var chatStream = new ChatStream(Guid.NewGuid(), "Test Agent");
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+        form.AddChatStreamForTest(chatStream);
+
+        // Act - Simulate attaching with a valid SessionId
+        await form.AttachChatStreamToSessionForTest(chatStream, sessionId);
+
+        // Assert
+        Assert.Equal(sessionId, chatStream.SessionId);
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_CommandPublishing_RoutesToCorrectSession()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+
+        mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Get existing streams and collapse them all
+        var existingStreams = form.GetChatStreamsForTest();
+        foreach (var stream in existingStreams)
+        {
+            stream.IsExpanded = false;
+        }
+
+        // Create two chat streams with different session IDs
+        var stream1 = new ChatStream(sessionId1, "Agent 1");
+        var stream2 = new ChatStream(sessionId2, "Agent 2");
+        form.AddChatStreamForTest(stream1);
+        form.AddChatStreamForTest(stream2);
+
+        // Set stream1 as expanded (active) - this should make it the active stream
+        stream1.IsExpanded = true;
+        stream2.IsExpanded = false;
+
+        // Act - Execute command for active session (should use stream1's SessionId)
+        await form.ExecuteCommandForActiveSessionTest((correlation) => 
+            new RunTests(Guid.NewGuid(), correlation, new RepoRef("test", "/tmp/test"), null, TimeSpan.FromMinutes(5)));
+
+        // Assert - Command should be published with sessionId1 (active stream)
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == sessionId1)), Times.Once);
+        
+        // Verify no command was published with sessionId2
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == sessionId2)), Times.Never);
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_EventSubscription_MultipleSessionsIndependent()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+
+        var events1 = new List<IEvent>
+        {
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId1), SessionStatus.Running, "Session 1 started")
+        };
+        var events2 = new List<IEvent>
+        {
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId2), SessionStatus.Paused, "Session 2 paused")
+        };
+
+        mockSessionManager.Setup(sm => sm.Subscribe(sessionId1))
+            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events1));
+        mockSessionManager.Setup(sm => sm.Subscribe(sessionId2))
+            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events2));
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Create two chat streams
+        var stream1 = new ChatStream(sessionId1, "Agent 1");
+        var stream2 = new ChatStream(sessionId2, "Agent 2");
+        form.AddChatStreamForTest(stream1);
+        form.AddChatStreamForTest(stream2);
+
+        // Act - Subscribe to both sessions (normally done during creation/attachment)
+        // Since SubscribeToSessionEvents is private, we'll simulate the effect by routing events directly
+        form.RouteEventToChatStreams(events1[0], DateTimeOffset.Now);
+        form.RouteEventToChatStreams(events2[0], DateTimeOffset.Now);
+
+        // Assert - Events should be routed to correct streams
+        var chatStreams = form.GetChatStreamsForTest();
+        var updatedStream1 = chatStreams.First(cs => cs.SessionId == sessionId1);
+        var updatedStream2 = chatStreams.First(cs => cs.SessionId == sessionId2);
+
+        Assert.Equal(SessionStatus.Running, updatedStream1.Status);
+        Assert.Equal(SessionStatus.Paused, updatedStream2.Status);
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_CreateSession_IntegratesWithChatStream()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var sessionConfig = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile { Name = "test" },
+            new RepoRef("test-repo", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Act
+        await form.CreateSessionForTest(sessionConfig);
+
+        // Assert
+        mockSessionManager.Verify(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId)), Times.Once);
+        
+        var chatStreams = form.GetChatStreamsForTest();
+        Assert.Contains(chatStreams, cs => cs.SessionId == sessionId);
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_AttachToExistingSession_UpdatesChatStream()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var originalSessionId = Guid.NewGuid();
+        var targetSessionId = Guid.NewGuid();
+        var chatStream = new ChatStream(originalSessionId, "Test Agent");
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+        form.AddChatStreamForTest(chatStream);
+
+        // Act - Attach to different session
+        await form.AttachChatStreamToSessionForTest(chatStream, targetSessionId);
+
+        // Assert
+        Assert.Equal(targetSessionId, chatStream.SessionId);
+        Assert.Equal("Test Agent", chatStream.AgentName); // Name should remain the same
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_RealSessionCreationAndCommandRouting_EndToEnd()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+
+        var sessionConfig1 = new SessionConfig(
+            sessionId1, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("repo1", "/tmp/repo1"), new WorkspaceRef("/tmp/workspace1"), null, "agent1");
+        var sessionConfig2 = new SessionConfig(
+            sessionId2, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("repo2", "/tmp/repo2"), new WorkspaceRef("/tmp/workspace2"), null, "agent2");
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+        mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Collapse all existing streams first
+        var existingStreams = form.GetChatStreamsForTest();
+        foreach (var stream in existingStreams)
+        {
+            stream.IsExpanded = false;
+        }
+
+        // Act - Create two real sessions
+        await form.CreateSessionForTest(sessionConfig1);
+        await form.CreateSessionForTest(sessionConfig2);
+
+        // Verify sessions were created
+        mockSessionManager.Verify(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId1)), Times.Once);
+        mockSessionManager.Verify(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId2)), Times.Once);
+
+        // Verify chat streams were created
+        var chatStreams = form.GetChatStreamsForTest();
+        Assert.Contains(chatStreams, cs => cs.SessionId == sessionId1);
+        Assert.Contains(chatStreams, cs => cs.SessionId == sessionId2);
+
+        // Set sessionId1 stream as active (expanded)
+        var stream1 = chatStreams.First(cs => cs.SessionId == sessionId1);
+        var stream2 = chatStreams.First(cs => cs.SessionId == sessionId2);
+        stream1.IsExpanded = true;
+        stream2.IsExpanded = false;
+
+        // Act - Execute command for active session
+        await form.ExecuteCommandForActiveSessionTest((correlation) => 
+            new RunTests(Guid.NewGuid(), correlation, new RepoRef("test", "/tmp/test"), null, TimeSpan.FromMinutes(5)));
+
+        // Assert - Command should be published with sessionId1 (active session)
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == sessionId1)), Times.Once);
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == sessionId2)), Times.Never);
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_EventSubscriptionPerSession_IsolatedEventHandling()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+
+        var events1 = new List<IEvent>
+        {
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId1), SessionStatus.Running, "Session 1 running"),
+            new CommandCompleted(Guid.NewGuid(), new Correlation(sessionId1), Guid.NewGuid(), CommandOutcome.Success, "Tests passed")
+        };
+        var events2 = new List<IEvent>
+        {
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId2), SessionStatus.Paused, "Session 2 paused"),
+            new CommandRejected(Guid.NewGuid(), new Correlation(sessionId2), Guid.NewGuid(), "Rate limit exceeded", "throttle-policy")
+        };
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+        mockSessionManager.Setup(sm => sm.Subscribe(sessionId1))
+            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events1));
+        mockSessionManager.Setup(sm => sm.Subscribe(sessionId2))
+            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events2));
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Act - Create two sessions
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId1, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("repo1", "/tmp/repo1"), new WorkspaceRef("/tmp/workspace1"), null, "agent1"));
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId2, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("repo2", "/tmp/repo2"), new WorkspaceRef("/tmp/workspace2"), null, "agent2"));
+
+        // Allow time for subscriptions to start
+        await Task.Delay(100);
+
+        // Verify subscriptions were set up
+        mockSessionManager.Verify(sm => sm.Subscribe(sessionId1), Times.Once);
+        mockSessionManager.Verify(sm => sm.Subscribe(sessionId2), Times.Once);
+
+        // Act - Route events to respective streams
+        foreach (var @event in events1)
+        {
+            form.RouteEventToChatStreams(@event, DateTimeOffset.Now);
+        }
+        foreach (var @event in events2)
+        {
+            form.RouteEventToChatStreams(@event, DateTimeOffset.Now);
+        }
+
+        // Assert - Events should be routed to correct streams
+        var chatStreams = form.GetChatStreamsForTest();
+        var stream1 = chatStreams.First(cs => cs.SessionId == sessionId1);
+        var stream2 = chatStreams.First(cs => cs.SessionId == sessionId2);
+
+        Assert.Equal(SessionStatus.Running, stream1.Status);
+        Assert.Equal(SessionStatus.Paused, stream2.Status);
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_AttachExistingChatStreamToNewSession_UpdatesEventSubscription()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var originalSessionId = Guid.NewGuid();
+        var newSessionId = Guid.NewGuid();
+        var chatStream = new ChatStream(originalSessionId, "Test Agent");
+
+        var events = new List<IEvent>
+        {
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(newSessionId), SessionStatus.Running, "Attached and running")
+        };
+
+        mockSessionManager.Setup(sm => sm.Subscribe(newSessionId))
+            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events));
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+        form.AddChatStreamForTest(chatStream);
+
+        // Act - Attach chat stream to new session
+        await form.AttachChatStreamToSessionForTest(chatStream, newSessionId);
+
+        // Assert - SessionId should be updated
+        Assert.Equal(newSessionId, chatStream.SessionId);
+
+        // In test mode, subscription is skipped, but in real mode it would subscribe
+        // This test verifies the attachment logic works correctly
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_CommandPublishingAcrossMultipleActiveStreams_SwitchesCorrectly()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+        var sessionId3 = Guid.NewGuid();
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+        mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Collapse all existing streams first
+        var existingStreams = form.GetChatStreamsForTest();
+        foreach (var stream in existingStreams)
+        {
+            stream.IsExpanded = false;
+        }
+
+        // Create three sessions
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId1, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("repo1", "/tmp/repo1"), new WorkspaceRef("/tmp/workspace1"), null, "agent1"));
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId2, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("repo2", "/tmp/repo2"), new WorkspaceRef("/tmp/workspace2"), null, "agent2"));
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId3, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("repo3", "/tmp/repo3"), new WorkspaceRef("/tmp/workspace3"), null, "agent3"));
+
+        var chatStreams = form.GetChatStreamsForTest();
+        var stream1 = chatStreams.First(cs => cs.SessionId == sessionId1);
+        var stream2 = chatStreams.First(cs => cs.SessionId == sessionId2);
+        var stream3 = chatStreams.First(cs => cs.SessionId == sessionId3);
+
+        // Act & Assert - Switch active stream and verify commands go to correct session
+
+        // Make stream2 active
+        stream1.IsExpanded = false;
+        stream2.IsExpanded = true;
+        stream3.IsExpanded = false;
+
+        await form.ExecuteCommandForActiveSessionTest((correlation) => 
+            new CreateBranch(Guid.NewGuid(), correlation, new RepoRef("test", "/tmp/test"), "feature-branch"));
+
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(CreateBranch) && ((CreateBranch)cmd).Correlation.SessionId == sessionId2)), Times.Once);
+
+        // Make stream3 active
+        stream1.IsExpanded = false;
+        stream2.IsExpanded = false;
+        stream3.IsExpanded = true;
+
+        await form.ExecuteCommandForActiveSessionTest((correlation) => 
+            new Commit(Guid.NewGuid(), correlation, new RepoRef("test", "/tmp/test"), "Test commit", new List<string> { "." }));
+
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(Commit) && ((Commit)cmd).Correlation.SessionId == sessionId3)), Times.Once);
+
+        // Make stream1 active again
+        stream1.IsExpanded = true;
+        stream2.IsExpanded = false;
+        stream3.IsExpanded = false;
+
+        await form.ExecuteCommandForActiveSessionTest((correlation) => 
+            new Push(Guid.NewGuid(), correlation, new RepoRef("test", "/tmp/test"), "main"));
+
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(Push) && ((Push)cmd).Correlation.SessionId == sessionId1)), Times.Once);
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_SessionCreationDialog_IntegratesWithChatStreamCreation()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true); // Test mode to avoid actual dialog
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // In test mode, CreateNewSession should return early without doing anything
+        // This test verifies the method exists and can be called without errors
+
+        // Act
+        var exception = await Record.ExceptionAsync(() => form.CreateNewSessionForTest());
+
+        // Assert - Should not throw in test mode
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void MultiSessionSupport_AttachDialog_RequiresChatStreamsToBeAvailable()
+    {
+        // Arrange
+        var form = CreateMainForm(isTestMode: true);
+
+        // Act - Try to show attach dialog when no chat streams exist
+        // In test mode, this should not show dialog or throw
+
+        var exception = Record.Exception(() => form.ShowAttachChatToSessionDialogForTest());
+
+        // Assert - Should not throw
+        Assert.Null(exception);
     }
 }

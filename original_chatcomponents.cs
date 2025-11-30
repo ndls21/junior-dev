@@ -36,15 +36,14 @@ public class ChatStream
 
     public string GetStatusText()
     {
-        var sessionInfo = !string.IsNullOrEmpty(SessionId.ToString()) ? $" ({SessionId.ToString().Substring(0, 8)})" : "";
         return Status switch
         {
-            JuniorDev.Contracts.SessionStatus.Running => $"🔄 {AgentName}{sessionInfo} - {CurrentTask}",
-            JuniorDev.Contracts.SessionStatus.Paused => $"⏸️ {AgentName}{sessionInfo} - Paused",
-            JuniorDev.Contracts.SessionStatus.Error => $"❌ {AgentName}{sessionInfo} - Error",
-            JuniorDev.Contracts.SessionStatus.NeedsApproval => $"⚠️ {AgentName}{sessionInfo} - Needs Approval",
-            JuniorDev.Contracts.SessionStatus.Completed => $"✅ {AgentName}{sessionInfo} - Completed",
-            _ => $"❓ {AgentName}{sessionInfo} - Unknown"
+            JuniorDev.Contracts.SessionStatus.Running => $"🔄 {AgentName} - {CurrentTask}",
+            JuniorDev.Contracts.SessionStatus.Paused => $"⏸️ {AgentName} - Paused",
+            JuniorDev.Contracts.SessionStatus.Error => $"❌ {AgentName} - Error",
+            JuniorDev.Contracts.SessionStatus.NeedsApproval => $"⚠️ {AgentName} - Needs Approval",
+            JuniorDev.Contracts.SessionStatus.Completed => $"✅ {AgentName} - Completed",
+            _ => $"❓ {AgentName} - Unknown"
         };
     }
 
@@ -69,10 +68,9 @@ public class AgentPanel : Panel
     private readonly SplitContainer _splitContainer;
     
     // Command publishing
-    private ISessionManager? _sessionManager;
-    private IServiceProvider? _serviceProvider;
+    private readonly ISessionManager? _sessionManager;
+    private readonly IServiceProvider? _serviceProvider;
     private readonly ToolStrip _commandToolbar;
-    private readonly ContextMenuStrip _contextMenu;
     
     // Rich preview controls for collapsed state
     private readonly Panel _previewPanel;
@@ -152,10 +150,6 @@ public class AgentPanel : Panel
         // Initialize command toolbar
         _commandToolbar = new ToolStrip { Dock = DockStyle.Top };
         InitializeCommandToolbar();
-
-        // Initialize context menu
-        _contextMenu = new ContextMenuStrip();
-        InitializeContextMenu();
 
         // Check if we have valid AI credentials before creating AI chat control
         var hasValidCredentials = CheckValidAICredentials();
@@ -254,18 +248,6 @@ public class AgentPanel : Panel
         }
     }
 
-    private void InitializeContextMenu()
-    {
-        // Add session management menu items
-        var createSessionItem = new ToolStripMenuItem("Create New Session", null, (s, e) => CreateSessionForChatStream());
-        var attachToSessionItem = new ToolStripMenuItem("Attach to Session...", null, (s, e) => AttachChatStreamToSession());
-
-        _contextMenu.Items.AddRange(new ToolStripItem[] { createSessionItem, attachToSessionItem });
-
-        // Assign context menu to the panel
-        this.ContextMenuStrip = _contextMenu;
-    }
-
     private void PublishCommand(string commandType)
     {
         if (_sessionManager == null)
@@ -287,7 +269,7 @@ public class AgentPanel : Panel
             try
             {
                 var commandId = Guid.NewGuid();
-                var correlation = new Correlation(_chatStream.SessionId);
+                var correlation = new Correlation(_chatStream.SessionId, commandId);
                 
                 // For now, use hardcoded repo info - in future this should come from session config
                 var repo = new RepoRef("default", Path.Combine(Path.GetTempPath(), "JuniorDev", _chatStream.SessionId.ToString()));
@@ -344,6 +326,10 @@ public class AgentPanel : Panel
         }
     }
 
+
+
+
+
     /// <summary>
     /// Creates a placeholder control when AI chat is not available
     /// </summary>
@@ -376,30 +362,14 @@ public class AgentPanel : Panel
     }
 
     public event EventHandler? ExpandRequested;
-    public event EventHandler? CreateSessionRequested;
-    public event EventHandler? AttachToSessionRequested;
 
     public void RenderEvent(IEvent @event, DateTimeOffset timestamp)
     {
         // Only render events for this chat stream's session
         if (@event.Correlation.SessionId == _chatStream.SessionId)
         {
-            // Handle status changes
-            if (@event is SessionStatusChanged statusChanged)
-            {
-                _chatStream.Status = statusChanged.Status;
-                if (!string.IsNullOrEmpty(statusChanged.Reason))
-                {
-                    _chatStream.CurrentTask = statusChanged.Reason;
-                }
-                _chatStream.LastActivity = timestamp;
-            }
-            else
-            {
-                _chatStream.LastActivity = timestamp;
-            }
-
             _eventRenderer.RenderEvent(@event, timestamp);
+            _chatStream.LastActivity = timestamp;
             UpdatePreviewDisplay();
         }
     }
@@ -477,25 +447,6 @@ public class AgentPanel : Panel
         _statusLabel.ForeColor = statusColor;
     }
 
-    private void CreateSessionForChatStream()
-    {
-        CreateSessionRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    private void AttachChatStreamToSession()
-    {
-        AttachToSessionRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    /// <summary>
-    /// Sets the dependencies for this panel (for testing purposes)
-    /// </summary>
-    public void SetDependencies(ISessionManager? sessionManager, IServiceProvider? serviceProvider)
-    {
-        _sessionManager = sessionManager;
-        _serviceProvider = serviceProvider;
-    }
-
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -529,8 +480,6 @@ public class AccordionLayoutManager
     public event EventHandler<ChatStream>? StreamExpanded;
     public event EventHandler<ChatStream>? StreamCollapsed;
     public event EventHandler? StreamsChanged;
-    public event EventHandler<AgentPanel>? CreateSessionRequested;
-    public event EventHandler<AgentPanel>? AttachToSessionRequested;
 
     public AccordionLayoutManager(Panel container)
     {
@@ -544,13 +493,6 @@ public class AccordionLayoutManager
         if (chatStream.Panel == null)
         {
             chatStream.Panel = new AgentPanel(chatStream, sessionManager, serviceProvider);
-            
-            // Wire up session management events
-            if (chatStream.Panel is AgentPanel agentPanel)
-            {
-                agentPanel.CreateSessionRequested += (s, e) => CreateSessionRequested?.Invoke(this, agentPanel);
-                agentPanel.AttachToSessionRequested += (s, e) => AttachToSessionRequested?.Invoke(this, agentPanel);
-            }
         }
         
         _chatStreams.Add(chatStream);

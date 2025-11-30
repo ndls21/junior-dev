@@ -5,6 +5,7 @@ using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Xunit;
+using Xunit.Sdk;
 
 namespace JuniorDev.Agents.Sk.Tests;
 
@@ -27,7 +28,7 @@ public class AiIntegrationTests
     {
         if (!_fixture.ShouldRunAiTests)
         {
-            return; // Skip test - not configured to run AI tests
+            return; // Skip test if AI tests are not enabled
         }
 
         // Arrange - Set up kernel with OpenAI chat completion
@@ -76,7 +77,7 @@ index 1234567..abcdef0 100644
     {
         if (!_fixture.ShouldRunAiTests)
         {
-            return; // Skip test - not configured to run AI tests
+            return; // Skip test if AI tests are not enabled
         }
 
         // Arrange - Set up kernel with OpenAI chat completion

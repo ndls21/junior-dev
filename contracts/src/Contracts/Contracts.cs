@@ -40,9 +40,6 @@ public sealed record ApplyPatch(Guid Id, Correlation Correlation, RepoRef Repo, 
 public sealed record RunTests(Guid Id, Correlation Correlation, RepoRef Repo, string? Filter = null, TimeSpan? Timeout = null)
     : CommandBase(Id, Correlation, nameof(RunTests));
 
-public sealed record BuildProject(Guid Id, Correlation Correlation, RepoRef Repo, string ProjectPath, string? Configuration = null, string? TargetFramework = null, IReadOnlyList<string>? Targets = null, TimeSpan? Timeout = null)
-    : CommandBase(Id, Correlation, nameof(BuildProject));
-
 public sealed record Commit(Guid Id, Correlation Correlation, RepoRef Repo, string Message, IReadOnlyList<string> IncludePaths, bool Amend = false)
     : CommandBase(Id, Correlation, nameof(Commit));
 
@@ -52,7 +49,7 @@ public sealed record Push(Guid Id, Correlation Correlation, RepoRef Repo, string
 public sealed record GetDiff(Guid Id, Correlation Correlation, RepoRef Repo, string Ref = "HEAD")
     : CommandBase(Id, Correlation, nameof(GetDiff));
 
-public sealed record BuildProject(Guid Id, Correlation Correlation, RepoRef Repo, string? Configuration = null, string? Target = null)
+public sealed record BuildProject(Guid Id, Correlation Correlation, RepoRef Repo, string ProjectPath, string? Configuration = null, string? TargetFramework = null, IReadOnlyList<string>? Targets = null, TimeSpan? Timeout = null)
     : CommandBase(Id, Correlation, nameof(BuildProject));
 
 public sealed record TransitionTicket(Guid Id, Correlation Correlation, WorkItemRef Item, string State)

@@ -13,7 +13,6 @@ using JuniorDev.Orchestrator;
 using DevExpress.AIIntegration;
 using System.Xml;
 using System.Linq;
-using JuniorDev.Contracts;
 
 #pragma warning disable CS8602 // Dereference of possibly null reference - suppressed for fields initialized in constructor
 
@@ -233,6 +232,182 @@ public class SettingsDialog : Form
     }
 }
 
+public class SessionConfigDialog : Form
+{
+    private System.Windows.Forms.TextBox? repoNameTextBox;
+    private System.Windows.Forms.TextBox? repoPathTextBox;
+    private System.Windows.Forms.TextBox? workspacePathTextBox;
+    private System.Windows.Forms.TextBox? policyNameTextBox;
+    private System.Windows.Forms.CheckBox? requireTestsCheckBox;
+    private System.Windows.Forms.CheckBox? requireApprovalCheckBox;
+    private System.Windows.Forms.NumericUpDown? callsPerMinuteSpinner;
+    private System.Windows.Forms.Button? okButton;
+    private System.Windows.Forms.Button? cancelButton;
+
+    public SessionConfig SessionConfig { get; private set; } = new SessionConfig(
+        Guid.NewGuid(), null, null, new PolicyProfile { Name = "default" },
+        new RepoRef("default-repo", Environment.CurrentDirectory),
+        new WorkspaceRef(Environment.CurrentDirectory), null, "default");
+
+    public SessionConfigDialog()
+    {
+        InitializeDialog();
+        LoadDefaultValues();
+    }
+
+    private void InitializeDialog()
+    {
+        this.Text = "Create New Session";
+        this.Size = new Size(500, 350);
+        this.StartPosition = FormStartPosition.CenterParent;
+        this.FormBorderStyle = FormBorderStyle.FixedDialog;
+        this.MaximizeBox = false;
+        this.MinimizeBox = false;
+
+        // Repository section
+        var repoGroup = new GroupBox { Text = "Repository", Location = new Point(10, 10), Size = new Size(460, 80) };
+        
+        var repoNameLabel = new System.Windows.Forms.Label { Text = "Name:", Location = new Point(10, 20), AutoSize = true };
+        repoNameTextBox = new System.Windows.Forms.TextBox { Location = new Point(80, 18), Width = 150 };
+        
+        var repoPathLabel = new System.Windows.Forms.Label { Text = "Path:", Location = new Point(10, 45), AutoSize = true };
+        repoPathTextBox = new System.Windows.Forms.TextBox { Location = new Point(80, 43), Width = 300 };
+        var repoBrowseButton = new System.Windows.Forms.Button { Text = "...", Location = new Point(385, 41), Size = new Size(30, 23) };
+        repoBrowseButton.Click += (s, e) => BrowseForRepoPath();
+
+        repoGroup.Controls.AddRange(new System.Windows.Forms.Control[] { repoNameLabel, repoNameTextBox, repoPathLabel, repoPathTextBox, repoBrowseButton });
+
+        // Workspace section
+        var workspaceGroup = new GroupBox { Text = "Workspace", Location = new Point(10, 100), Size = new Size(460, 50) };
+        
+        var workspacePathLabel = new System.Windows.Forms.Label { Text = "Path:", Location = new Point(10, 20), AutoSize = true };
+        workspacePathTextBox = new System.Windows.Forms.TextBox { Location = new Point(80, 18), Width = 300 };
+        var workspaceBrowseButton = new System.Windows.Forms.Button { Text = "...", Location = new Point(385, 16), Size = new Size(30, 23) };
+        workspaceBrowseButton.Click += (s, e) => BrowseForWorkspacePath();
+
+        workspaceGroup.Controls.AddRange(new System.Windows.Forms.Control[] { workspacePathLabel, workspacePathTextBox, workspaceBrowseButton });
+
+        // Policy section
+        var policyGroup = new GroupBox { Text = "Policy", Location = new Point(10, 160), Size = new Size(460, 100) };
+        
+        var policyNameLabel = new System.Windows.Forms.Label { Text = "Name:", Location = new Point(10, 20), AutoSize = true };
+        policyNameTextBox = new System.Windows.Forms.TextBox { Location = new Point(80, 18), Width = 150, Text = "default" };
+        
+        requireTestsCheckBox = new System.Windows.Forms.CheckBox { Text = "Require tests before push", Location = new Point(10, 45), AutoSize = true };
+        requireApprovalCheckBox = new System.Windows.Forms.CheckBox { Text = "Require approval for push", Location = new Point(10, 70), AutoSize = true };
+        
+        var callsPerMinuteLabel = new System.Windows.Forms.Label { Text = "Calls/min:", Location = new Point(250, 20), AutoSize = true };
+        callsPerMinuteSpinner = new System.Windows.Forms.NumericUpDown { Location = new Point(320, 18), Width = 60, Minimum = 1, Maximum = 1000, Value = 60 };
+
+        policyGroup.Controls.AddRange(new System.Windows.Forms.Control[] { 
+            policyNameLabel, policyNameTextBox, requireTestsCheckBox, requireApprovalCheckBox, 
+            callsPerMinuteLabel, callsPerMinuteSpinner });
+
+        // Buttons
+        okButton = new System.Windows.Forms.Button { Text = "Create Session", Location = new Point(280, 275), DialogResult = DialogResult.OK };
+        cancelButton = new System.Windows.Forms.Button { Text = "Cancel", Location = new Point(370, 275), DialogResult = DialogResult.Cancel };
+
+        okButton.Click += OkButton_Click;
+
+        this.Controls.AddRange(new System.Windows.Forms.Control[] {
+            repoGroup, workspaceGroup, policyGroup, okButton, cancelButton
+        });
+
+        this.AcceptButton = okButton;
+        this.CancelButton = cancelButton;
+    }
+
+    private void LoadDefaultValues()
+    {
+        repoNameTextBox!.Text = "default-repo";
+        repoPathTextBox!.Text = Environment.CurrentDirectory;
+        workspacePathTextBox!.Text = Environment.CurrentDirectory;
+        policyNameTextBox!.Text = "default";
+        requireTestsCheckBox!.Checked = false;
+        requireApprovalCheckBox!.Checked = false;
+        callsPerMinuteSpinner!.Value = 60;
+    }
+
+    private void BrowseForRepoPath()
+    {
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Select repository directory",
+            SelectedPath = repoPathTextBox!.Text
+        };
+        
+        if (dialog.ShowDialog() == DialogResult.OK)
+        {
+            repoPathTextBox!.Text = dialog.SelectedPath;
+        }
+    }
+
+    private void BrowseForWorkspacePath()
+    {
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Select workspace directory",
+            SelectedPath = workspacePathTextBox!.Text
+        };
+        
+        if (dialog.ShowDialog() == DialogResult.OK)
+        {
+            workspacePathTextBox!.Text = dialog.SelectedPath;
+        }
+    }
+
+    private void OkButton_Click(object? sender, EventArgs e)
+    {
+        // Validate inputs
+        if (string.IsNullOrWhiteSpace(repoNameTextBox!.Text))
+        {
+            MessageBox.Show("Repository name is required.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+        
+        if (string.IsNullOrWhiteSpace(repoPathTextBox!.Text) || !Directory.Exists(repoPathTextBox!.Text))
+        {
+            MessageBox.Show("Valid repository path is required.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+        
+        if (string.IsNullOrWhiteSpace(workspacePathTextBox!.Text) || !Directory.Exists(workspacePathTextBox!.Text))
+        {
+            MessageBox.Show("Valid workspace path is required.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        // Create session config
+        var policy = new PolicyProfile
+        {
+            Name = policyNameTextBox!.Text,
+            ProtectedBranches = new HashSet<string> { "main", "master" },
+            RequireTestsBeforePush = requireTestsCheckBox!.Checked,
+            RequireApprovalForPush = requireApprovalCheckBox!.Checked,
+            CommandWhitelist = null,
+            CommandBlacklist = null,
+            MaxFilesPerCommit = null,
+            AllowedWorkItemTransitions = null,
+            Limits = new RateLimits
+            {
+                CallsPerMinute = (int)callsPerMinuteSpinner!.Value,
+                Burst = 10
+            }
+        };
+
+        SessionConfig = new SessionConfig(
+            SessionId: Guid.NewGuid(),
+            ParentSessionId: null,
+            PlanNodeId: null,
+            Policy: policy,
+            Repo: new RepoRef(repoNameTextBox!.Text, repoPathTextBox!.Text),
+            Workspace: new WorkspaceRef(workspacePathTextBox!.Text),
+            WorkItem: null,
+            AgentProfile: "default"
+        );
+    }
+}
+
 public partial class MainForm : Form
 {
     private DockManager? dockManager;
@@ -274,7 +449,8 @@ public partial class MainForm : Form
     // Orchestrator dependencies
     private ISessionManager _sessionManager;
     private readonly IConfiguration _configuration;
-    private readonly IChatClient _chatClient;
+    private readonly Microsoft.Extensions.AI.IChatClient _chatClient;
+    private readonly IServiceProvider _serviceProvider;
     private readonly Dictionary<Guid, Task> _eventSubscriptionTasks = new();
 
     private EventRenderer? eventRenderer;
@@ -288,11 +464,12 @@ public partial class MainForm : Form
     private string? _testSettingsFilePath;
     private string? _testChatStreamsFilePath;
 
-    public MainForm(ISessionManager sessionManager, IConfiguration configuration, IChatClient chatClient, bool isTestMode = false)
+    public MainForm(ISessionManager sessionManager, IConfiguration configuration, Microsoft.Extensions.AI.IChatClient chatClient, IServiceProvider serviceProvider, bool isTestMode = false)
     {
         _sessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _chatClient = chatClient ?? throw new ArgumentNullException(nameof(chatClient));
+        _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
 
         // Check for test mode argument or parameter
         this.isTestMode = isTestMode || Environment.GetCommandLineArgs().Contains("--test") || Environment.GetCommandLineArgs().Contains("-t");
@@ -406,12 +583,27 @@ public partial class MainForm : Form
         var getDiffItem = new ToolStripMenuItem("Show Diff");
         getDiffItem.Click += async (s, e) => await ExecuteCommandForActiveSession(c => new GetDiff(Guid.NewGuid(), c, GetCurrentRepo()));
 
-        commandsMenu.DropDownItems.Add(runTestsItem);
-        commandsMenu.DropDownItems.Add(createBranchItem);
-        commandsMenu.DropDownItems.Add(commitItem);
-        commandsMenu.DropDownItems.Add(pushItem);
-        commandsMenu.DropDownItems.Add(getDiffItem);
-        mainMenu.Items.Add(commandsMenu);
+        // Sessions menu
+        var sessionsMenu = new ToolStripMenuItem("Sessions");
+        
+        var createSessionItem = new ToolStripMenuItem("Create New Session");
+        createSessionItem.Click += async (s, e) => await CreateNewSession();
+        createSessionItem.ShortcutKeys = Keys.Control | Keys.Shift | Keys.N;
+        createSessionItem.ShowShortcutKeys = true;
+
+        var attachChatToSessionItem = new ToolStripMenuItem("Attach Chat to Session...");
+        attachChatToSessionItem.Click += (s, e) => ShowAttachChatToSessionDialog();
+
+        var refreshSessionsItem = new ToolStripMenuItem("Refresh Sessions List");
+        refreshSessionsItem.Click += (s, e) => RefreshSessionsList();
+        refreshSessionsItem.ShortcutKeys = Keys.F5;
+        refreshSessionsItem.ShowShortcutKeys = true;
+
+        sessionsMenu.DropDownItems.Add(createSessionItem);
+        sessionsMenu.DropDownItems.Add(attachChatToSessionItem);
+        sessionsMenu.DropDownItems.Add(new ToolStripSeparator());
+        sessionsMenu.DropDownItems.Add(refreshSessionsItem);
+        mainMenu.Items.Add(sessionsMenu);
     }
 
     private void SetupTestMode()
@@ -519,11 +711,30 @@ public partial class MainForm : Form
         sessionsPanel.FloatSize = new Size(300, 600);
         sessionsPanel.FloatLocation = new Point(10, 10);
 
-        // Create a panel with filters and session list
+        // Create a panel with action buttons, filters, and session list
         var panel = new Panel();
         panel.Dock = DockStyle.Fill;
 
-        // Add filter buttons at the top
+        // Add action buttons at the top
+        var actionPanel = new FlowLayoutPanel();
+        actionPanel.Dock = DockStyle.Top;
+        actionPanel.Height = 40;
+        actionPanel.FlowDirection = FlowDirection.LeftToRight;
+
+        var createButton = new SimpleButton();
+        createButton.Text = "Create Session";
+        createButton.Width = 100;
+        createButton.Click += async (s, e) => await CreateNewSession();
+
+        var attachButton = new SimpleButton();
+        attachButton.Text = "Attach";
+        attachButton.Width = 70;
+        attachButton.Click += (s, e) => ShowAttachChatToSessionDialog();
+
+        actionPanel.Controls.Add(createButton);
+        actionPanel.Controls.Add(attachButton);
+
+        // Add filter buttons below actions
         var filterPanel = new FlowLayoutPanel();
         filterPanel.Dock = DockStyle.Top;
         filterPanel.Height = 40;
@@ -576,6 +787,7 @@ public partial class MainForm : Form
 
         panel.Controls.Add(sessionsListBox);
         panel.Controls.Add(filterPanel);
+        panel.Controls.Add(actionPanel);
 
         sessionsPanel.Controls.Add(panel);
     }
@@ -597,24 +809,11 @@ public partial class MainForm : Form
 
         // Wire up events
         _accordionManager.StreamsChanged += (s, e) => UpdateChatFilterOptions();
+        _accordionManager.CreateSessionRequested += OnCreateSessionRequested;
+        _accordionManager.AttachToSessionRequested += OnAttachToSessionRequested;
 
-        // Create initial chat stream with real session
-        if (!isTestMode)
-        {
-            CreateInitialSession();
-        }
-        else
-        {
-            // Create initial chat stream
-            var initialChatStream = new ChatStream(Guid.NewGuid(), "Agent 1");
-            _accordionManager.AddChatStream(initialChatStream);
-        }
-        
-        // Add a few more streams for testing rich previews
-        if (isTestMode)
-        {
-            AddTestChatStreams();
-        }
+        // Don't auto-create initial session - let user create sessions explicitly
+        // CreateInitialSession() is removed to prevent auto-creation
 
         conversationPanel.Controls.Add(_chatContainerPanel);
     }
@@ -655,12 +854,12 @@ public partial class MainForm : Form
 
             // Create chat stream for this session with proper SessionId mapping
             var chatStream = new ChatStream(sessionConfig.SessionId, "Agent 1");
-            _accordionManager?.AddChatStream(chatStream);
+            _accordionManager?.AddChatStream(chatStream, _sessionManager, _serviceProvider);
 
             // Set dependencies on the panel for command publishing
             if (chatStream.Panel != null)
             {
-                chatStream.Panel.SetDependencies(_sessionManager, new RepoRef("default-repo", Environment.CurrentDirectory));
+                // Dependencies are now set in the constructor
             }
 
             // Subscribe to session events for real-time updates
@@ -1246,16 +1445,16 @@ public partial class MainForm : Form
 
         sessionsListBox.Items.Clear();
 
-        // For now, show sessions from chat streams
-        // In a full implementation, this would query the session manager for all sessions
+        // Show sessions from chat streams - each chat stream represents an active session
+        // In the future, we could query the session manager for additional session metadata
         if (_accordionManager != null)
         {
             foreach (var chatStream in _accordionManager.ChatStreams)
             {
-                var sessionItem = new SessionItem 
-                { 
-                    Name = chatStream.AgentName, 
-                    Status = chatStream.Status 
+                var sessionItem = new SessionItem
+                {
+                    Name = chatStream.AgentName,
+                    Status = chatStream.Status
                 };
                 sessionsListBox.Items.Add(sessionItem);
             }
@@ -1380,7 +1579,7 @@ public partial class MainForm : Form
 
         if (chatStream.Panel != null)
         {
-            chatStream.Panel.SetDependencies(_sessionManager, config.Repo);
+            // Dependencies are now set in the constructor
         }
 
         SubscribeToSessionEvents(config.SessionId);
@@ -1404,6 +1603,43 @@ public partial class MainForm : Form
         await ExecuteCommandForActiveSession(commandFactory);
     }
 
+    public async Task AttachChatStreamToSessionForTest(ChatStream chatStream, Guid sessionId)
+    {
+        // For testing only - bypass test mode check
+        try
+        {
+            // Update the chat stream's SessionId to match the orchestrator session
+            var oldSessionId = chatStream.SessionId;
+            chatStream.SessionId = sessionId;
+
+            // Unsubscribe from old session events if different
+            if (oldSessionId != sessionId && _eventSubscriptionTasks.ContainsKey(oldSessionId))
+            {
+                // Cancel old subscription
+                _eventSubscriptionTasks[oldSessionId].Dispose();
+                _eventSubscriptionTasks.Remove(oldSessionId);
+            }
+
+            // Subscribe to the new session events (skip in test mode)
+            if (!isTestMode)
+            {
+                SubscribeToSessionEvents(sessionId);
+            }
+
+            // Update the panel's dependencies
+            if (chatStream.Panel != null)
+            {
+                // Dependencies are already set in the constructor
+            }
+
+            Console.WriteLine($"Attached chat stream '{chatStream.AgentName}' to session {sessionId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to attach chat stream to session: {ex.Message}");
+        }
+    }
+
     public async Task ExecuteRunTestsCommandForTest()
     {
         // For testing only - simulate clicking Run Tests menu
@@ -1423,6 +1659,18 @@ public partial class MainForm : Form
         {
             return false;
         }
+    }
+
+    public async Task CreateNewSessionForTest()
+    {
+        // For testing only - bypass test mode check
+        await CreateNewSession();
+    }
+
+    public void ShowAttachChatToSessionDialogForTest()
+    {
+        // For testing only - bypass test mode check
+        ShowAttachChatToSessionDialog();
     }
 
     private string GetSettingsFilePath()
@@ -1565,14 +1813,13 @@ public partial class MainForm : Form
 
                 await _sessionManager.CreateSession(sessionConfig);
 
-                // Create chat stream for this session with proper SessionId mapping
-                var chatStream = new ChatStream(sessionConfig.SessionId, agentName);
-                _accordionManager.AddChatStream(chatStream);
-
+            // Create chat stream for this session with proper SessionId mapping
+            var chatStream = new ChatStream(sessionConfig.SessionId, agentName);
+            _accordionManager.AddChatStream(chatStream, _sessionManager, _serviceProvider);
                 // Set dependencies on the panel for command publishing
                 if (chatStream.Panel != null)
                 {
-                    chatStream.Panel.SetDependencies(_sessionManager, new RepoRef("default-repo", Environment.CurrentDirectory));
+                    // Dependencies are now set in the constructor
                 }
 
                 // Subscribe to session events for real-time updates
@@ -1633,6 +1880,83 @@ public partial class MainForm : Form
 
             // Add some mock artifacts for this stream
             AddMockArtifactsForStream(stream.SessionId, name);
+        }
+    }
+
+    private async Task AttachChatStreamToSession(ChatStream chatStream, Guid sessionId)
+    {
+        try
+        {
+            // Update the chat stream's SessionId to match the orchestrator session
+            var oldSessionId = chatStream.SessionId;
+            chatStream.SessionId = sessionId;
+
+            // Unsubscribe from old session events if different
+            if (oldSessionId != sessionId && _eventSubscriptionTasks.ContainsKey(oldSessionId))
+            {
+                // Cancel old subscription
+                _eventSubscriptionTasks[oldSessionId].Dispose();
+                _eventSubscriptionTasks.Remove(oldSessionId);
+            }
+
+            // Subscribe to the new session events
+            SubscribeToSessionEvents(sessionId);
+
+            // Update the panel's dependencies
+            if (chatStream.Panel != null)
+            {
+                // Dependencies are already set in the constructor
+            }
+
+            Console.WriteLine($"Attached chat stream '{chatStream.AgentName}' to session {sessionId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to attach chat stream to session: {ex.Message}");
+        }
+    }
+
+    private async Task CreateSessionForChatStream(ChatStream chatStream)
+    {
+        try
+        {
+            // Create a real session for the chat stream
+            var sessionConfig = new SessionConfig(
+                SessionId: Guid.NewGuid(),
+                ParentSessionId: null,
+                PlanNodeId: null,
+                Policy: new PolicyProfile
+                {
+                    Name = "default",
+                    ProtectedBranches = new HashSet<string> { "main", "master" },
+                    RequireTestsBeforePush = false,
+                    RequireApprovalForPush = false,
+                    CommandWhitelist = null,
+                    CommandBlacklist = null,
+                    MaxFilesPerCommit = null,
+                    AllowedWorkItemTransitions = null,
+                    Limits = new RateLimits
+                    {
+                        CallsPerMinute = 60,
+                        Burst = 10
+                    }
+                },
+                Repo: new RepoRef("default-repo", Environment.CurrentDirectory),
+                Workspace: new WorkspaceRef(Environment.CurrentDirectory),
+                WorkItem: null,
+                AgentProfile: "default"
+            );
+
+            await _sessionManager.CreateSession(sessionConfig);
+
+            // Attach the chat stream to the new session
+            await AttachChatStreamToSession(chatStream, sessionConfig.SessionId);
+
+            Console.WriteLine($"Created session {sessionConfig.SessionId} for chat stream '{chatStream.AgentName}'");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to create session for chat stream: {ex.Message}");
         }
     }
 
@@ -1915,6 +2239,141 @@ public partial class MainForm : Form
             // Re-throw the exception in both test and production mode so it can be properly handled
             throw;
         }
+    }
+
+    private async Task CreateNewSession()
+    {
+        try
+        {
+            // Show session configuration dialog
+            using var dialog = new SessionConfigDialog();
+            if (dialog.ShowDialog() != DialogResult.OK)
+            {
+                return; // User cancelled
+            }
+
+            var sessionConfig = dialog.SessionConfig;
+
+            await _sessionManager.CreateSession(sessionConfig);
+
+            // Create a chat stream for the new session
+            var agentNumber = (_accordionManager?.ChatStreams.Count ?? 0) + 1;
+            var agentName = $"Agent {agentNumber}";
+            var chatStream = new ChatStream(sessionConfig.SessionId, agentName);
+            _accordionManager?.AddChatStream(chatStream, _sessionManager, _serviceProvider);
+
+            // Subscribe to session events
+            SubscribeToSessionEvents(sessionConfig.SessionId);
+
+            // Refresh the sessions list
+            RefreshSessionsList();
+
+            Console.WriteLine($"Created new session: {agentName} ({sessionConfig.SessionId}) with repo '{sessionConfig.Repo.Name}' at '{sessionConfig.Repo.Path}'");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to create new session: {ex.Message}");
+            MessageBox.Show($"Failed to create session: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void ShowAttachChatToSessionDialog()
+    {
+        if (_accordionManager == null || _accordionManager.ChatStreams.Count == 0)
+        {
+            MessageBox.Show("No chat streams available to attach. Please create a chat stream first.", "No Chat Streams", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new Form
+        {
+            Text = "Attach Chat Stream to Session",
+            Size = new Size(400, 250),
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false
+        };
+
+        var chatLabel = new System.Windows.Forms.Label { Text = "Select Chat Stream:", Location = new Point(10, 10), AutoSize = true };
+        var chatCombo = new System.Windows.Forms.ComboBox
+        {
+            Location = new Point(10, 30),
+            Width = 360,
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
+
+        var sessionLabel = new System.Windows.Forms.Label { Text = "Session ID:", Location = new Point(10, 70), AutoSize = true };
+        var sessionTextBox = new System.Windows.Forms.TextBox
+        {
+            Location = new Point(10, 90),
+            Width = 360,
+            PlaceholderText = "Enter Session ID (GUID format)"
+        };
+
+        var attachButton = new System.Windows.Forms.Button { Text = "Attach", Location = new Point(220, 170), DialogResult = DialogResult.OK };
+        var cancelButton = new System.Windows.Forms.Button { Text = "Cancel", Location = new Point(300, 170), DialogResult = DialogResult.Cancel };
+
+        // Populate chat streams
+        foreach (var stream in _accordionManager.ChatStreams)
+        {
+            chatCombo.Items.Add(new { Name = stream.AgentName, Stream = stream });
+        }
+        if (chatCombo.Items.Count > 0) chatCombo.SelectedIndex = 0;
+
+        attachButton.Click += async (s, e) =>
+        {
+            if (chatCombo.SelectedItem != null && !string.IsNullOrWhiteSpace(sessionTextBox.Text))
+            {
+                // Get the selected chat stream
+                dynamic selectedItem = chatCombo.SelectedItem;
+                var stream = selectedItem.Stream as ChatStream;
+
+                if (stream != null)
+                {
+                    try
+                    {
+                        // Parse the session ID
+                        if (!Guid.TryParse(sessionTextBox.Text.Trim(), out var sessionId))
+                        {
+                            MessageBox.Show("Invalid Session ID format. Please enter a valid GUID.", "Invalid Session ID", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            return;
+                        }
+
+                        await AttachChatStreamToSession(stream, sessionId);
+                        dialog.DialogResult = DialogResult.OK;
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Failed to attach chat stream: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+            else
+            {
+                MessageBox.Show("Please select a chat stream and enter a Session ID.", "Missing Information", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        };
+
+        dialog.Controls.AddRange(new System.Windows.Forms.Control[] {
+            chatLabel, chatCombo, sessionLabel, sessionTextBox, attachButton, cancelButton
+        });
+
+        dialog.AcceptButton = attachButton;
+        dialog.CancelButton = cancelButton;
+
+        dialog.ShowDialog();
+    }
+
+    private async void OnCreateSessionRequested(object? sender, AgentPanel agentPanel)
+    {
+        await CreateSessionForChatStream(agentPanel.ChatStream);
+    }
+
+    private async void OnAttachToSessionRequested(object? sender, AgentPanel agentPanel)
+    {
+        // For now, show the attach dialog - in the future this could be more direct
+        ShowAttachChatToSessionDialog();
     }
 
     private RepoRef GetCurrentRepo()

@@ -11,6 +11,10 @@
   <ItemGroup>
     <ProjectReference Include="..\contracts\Contracts.csproj" />
     <ProjectReference Include="..\orchestrator\Orchestrator.csproj" />
+    <ProjectReference Include="..\agents\Agents.csproj" />
+    <ProjectReference Include="..\workitems-github\WorkItems.GitHub.csproj" />
+    <ProjectReference Include="..\workitems-jira\WorkItems.Jira.csproj" />
+    <ProjectReference Include="..\vcs-git\Vcs.Git.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -24,6 +28,8 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
   </ItemGroup>
 
 </Project>

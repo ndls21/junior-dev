@@ -1,3 +1,5 @@
+using Xunit;
+
 namespace Build.Dotnet.Tests;
 
 public class UnitTest1
