@@ -305,7 +305,7 @@ public class OrchestratorTests
             sessionId,
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string> { "main" }, Limits = new RateLimits { CallsPerMinute = 1, null, null } }, // 1 call per minute
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string> { "main" }, Limits = new RateLimits { CallsPerMinute = 1 } }, // 1 call per minute
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,

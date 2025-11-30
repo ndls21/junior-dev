@@ -1,46 +1,58 @@
-# Copilot Instructions for Junior Dev
+# Copilot Instructions (Generic)
 
-## Project Overview
-Junior Dev is a .NET-based platform for AI-assisted software development, featuring modular services (orchestrator, adapters for Jira/git/Semantic Kernel, UI) with typed action protocols, session isolation, and policy enforcement. Key files: `ARCHITECTURE.md`, `CONTRACTS.md`, `docs/module-plan.md`.
+These guidelines are reusable across projects. Project-specific guidance for this repo is in `.github/copilot-project.md` (read that too).
 
-## Architecture Patterns
-- **Modular Services**: Orchestrator coordinates adapters (workitems-jira, vcs-git, agents-sk, ui-shell). Adapters implement the single `IAdapter` (capability-based routing via `CanHandle/HandleCommand`) using contracts DTOs.
-- **Action Protocol**: Use typed commands (e.g., `CreateBranch`, `RunTests`) and events (e.g., `CommandCompleted`, `ArtifactAvailable`) with `Correlation` for traceability. Example: `Commit` command includes `IncludePaths` and `Amend` flag.
-- **Session Isolation**: One workspace per session; interactions via git artifacts/events. Avoid shared mutable state.
-- **Policy Enforcement**: Central checks in orchestrator against `PolicyProfile` (whitelists, protected branches, rate limits). Reject with `CommandRejected` event.
+## General Review & Testing Guidelines
+- **Tests & coverage**: Prefer over-testing; cover happy paths and edge cases (null/missing inputs, invalid data, timeouts). Don’t skip “unlikely” paths—assert behavior when inputs/config are absent.
+- **Input validation & guardrails**: Validate inputs early; fail fast with clear errors. Handle null/missing config gracefully. Avoid silent failures; log/throw with actionable messages.
+- **Docs & contracts**: Keep code, tests, and docs in sync. When interfaces/contracts change, update docs/versioning (if applicable) and add serialization/compatibility tests.
+- **Secrets & config**: Never commit secrets. Load secrets via env vars/user secrets/CI secrets. Gate integration/AI/live tests with opt-in flags; provide fallbacks/dummy clients for offline/test modes.
+- **Dependencies**: Keep dependencies explicit and minimal. Avoid circular refs and hidden global state. Make optional features opt-in to avoid bloating the core.
+- **Error handling & logging**: Provide clear, contextual logging for failures. Prefer explicit exceptions over silent catches; surface enough info to debug without leaking secrets.
+- **Performance & resources**: Be mindful of long-running/expensive calls; add timeouts/cancellation. Dispose/cleanup deterministically in tests and production.
+- **UI/UX (if applicable)**: Avoid blocking UI in tests; provide test modes. Ensure accessibility basics (labels, shortcuts), sensible defaults, and graceful degradation when services are unavailable.
+- **CI discipline**: Keep integration/live/AI tests opt-in; default CI to deterministic, offline-safe tests. Use flags to enable heavier suites.
+- **Code quality**: Favor readability over cleverness; small, single-responsibility functions; meaningful names; consistent formatting; minimize shared mutable state.
+- **Test strata expectations**: Unit tests for core logic and edge cases; integration tests for module interactions (env-gated); smoke tests as minimal E2E (fakes/dry-run by default, live opt-in); AI/external tests opt-in with secrets/flags; UI tests non-blocking with test modes. In reviews, look for tests on error/guard paths, proper gating of external dependencies, and smoke coverage.
 
-## Developer Workflows
-- **Build/Test**: Use `dotnet build` on `jDev.sln`, `dotnet test` for unit/integration. Contracts changes require version bump in `ContractVersion.Current` and doc updates.
-- **UI Testing**: For automated UI inspection during development, use `dotnet run -- --test` to run the application in test mode. The UI will display for 2 seconds then automatically exit, allowing inspection of layout and functionality changes without manual intervention.
-- **Debugging**: Event logs are append-only; correlate via `Correlation` IDs. Surface throttling/conflicts in UI.
-- **CI Guard**: Any contract/architecture change must update docs with date/reason (e.g., in `CONTRACTS.md`). Enforce in pre-commit hooks.
-- **Version Control Discipline**: Always `git commit` and `git push` when shifting gears into the next body of work to maintain a clean, shareable state and enable collaboration. Always `git commit` and `git push` when switching between GitHub issues to maintain a clean state and enable collaboration.
-- **Issue Management**: Prefix issue titles with the current stage name (e.g., "Envoy – Feature Name") to indicate the development phase. Create detailed GitHub issues for all TODO items with implementation requirements, technical considerations, and acceptance criteria.
-- **TODO Management**: When stubbing out functionality for later implementation, add detailed TODO comments with issue references. Format: `// TODO: [Brief description] - Issue: #[number]`. Create corresponding GitHub issues for tracking. TODOs should include implementation requirements, technical considerations, and acceptance criteria.
-- **Dependencies**: When creating issues, note dependencies explicitly (e.g., "Blocked by #X", "Blocks #Y") in the body/comments so ordering is clear for developers.
+## Workflow & Collaboration
+- **Claiming work**: Link to or create a GitHub issue when you start. Reference the issue in TODOs (`// TODO: ... - Issue: #123`).
+- **Branching**: Prefer feature branches (`agent/<issue>-desc`). Work on `master` only for small, safe changes when approved; include issue/rationale in the commit message.
+- **Issue closure**: Don’t auto-close issues; wait for explicit go-ahead. Clean up and commit before switching issues.
+- **Commit messages**: Include issue/stage context if applicable (e.g., `Feat: implement X (#123)`).
+- **Test failures**: Investigate code vs. test assumptions; don’t just change tests to make them pass.
+- **Stage transitions**: Before moving to a new development stage or completing a feature, run the full test suite (`dotnet test`) to ensure all tests pass and no regressions were introduced. This includes unit tests, integration tests, and UI tests. Never proceed to the next stage with failing tests.
+- **Transparency**: Surface major/refactor/reset decisions immediately; get consent for disruptive changes.
 
-## Copilot Workflow Rules
-- **Claiming Work**: When Copilot (or any automated coding agent) picks up an issue to implement, it MUST open or link to a GitHub issue and add a comment indicating it has started work. The issue number MUST be referenced in any `TODO` comments added to the code (format: `// TODO: ... - Issue: #[number]`).
-- **Branching Guidance**: By default prefer creating a feature branch named `agent/<issue-number>-short-desc` when implementing an issue. Working directly on `master` is allowed only when explicitly approved by the repository owner or maintainer and when the change is small, well-tested, and non-breaking. When working on `master`, include the issue number and rationale in the commit message.
-- **Issue Closure**: DO NOT automatically close GitHub issues. Wait for explicit user confirmation by saying "NEXT!" before closing any issue and moving to the next most significant ticket. When the user says "NEXT!", then close the current issue using `gh issue close <number> --reason completed` and proceed to identify the next priority. Once a ticket is taken up for implementation, do not move on to another ticket until it has been confirmed closed with "NEXT!". Also perform `git commit` and `git push` when transitioning between issues to maintain a clean, shareable state.
-- **Commit Message Convention**: Include the current stage or codename in the commit message prefix when applicable (e.g., `Envoy – feat: add reviewer agent` or `Dock – fix: vcs adapter`). This helps trace changes to module stages. If a GitHub issue was opened for the work, include the issue number in the commit message (e.g., `Envoy – feat: implement reviewer agent (#3)`).
-- **Test Issue Investigation**: When encountering test failures, take the investigative route rather than immediately changing the test. Tests represent the source of truth for expected behavior. Only modify tests after confirming the error is in the test assumptions, not the implementation. If a test fails, first investigate whether the code behavior is incorrect or if the test expectations need updating. This ensures we build robust software where tests validate correct behavior, not accommodate bugs.
-- **Transparency for Major Changes**: When making significant changes such as git resets, branch switches, major refactors, or pivoting from the planned approach, immediately inform the user what happened, why it was necessary, and what the impact is. Do not proceed with major changes without user awareness and consent.
+## Config/Secrets & AI Tests
+- Use env vars or user-secrets for secrets; never commit them. Keep appsettings checked in with placeholders only.
+- AI/Live/Integration tests should be opt-in (`RUN_AI_TESTS=1` or similar) and skip when creds are absent. Provide dummy clients for offline modes to avoid crashes.
 
-## Conventions and Patterns
-- **DTOs**: Use sealed records for immutability (e.g., `WorkItemRef`, `SessionConfig`). Interfaces like `ICommand` with `Kind` for polymorphism.
-- **Versioning**: Bump `ContractVersion` on schema changes; update `CONTRACTS.md` with rationale.
-- **Testing Bias**: Prefer over-testing: unit tests for serialization (golden files), scenario tests for orchestrator, smoke tests gated by env vars.
-- **Documentation Discipline**: Changes to contracts/policy/architecture require doc updates (e.g., `ARCHITECTURE.md`, `CONTRACTS.md`) with timestamps.
-- **Placeholder Implementation**: When implementing incomplete features, provide clear placeholder implementations that log warnings and return descriptive error messages. Include detailed TODO comments explaining what's needed for full implementation.
+## Where to find project-specific instructions
+- See `.github/copilot-project.md` for this repo’s architecture, staging, UI patterns, and process specifics.
 
-## Integration Points
-- **External Dependencies**: Jira (workitems), Git CLI (VCS), Semantic Kernel (agents), DevExpress (UI dockable layout).
-- **Communication**: Event-driven; artifacts carry diffs/patches/logs. Rate limits via `Throttled` events with backoff.
-- **UI Layout**: Columnar dockable: sessions left, conversation center, artifacts right. Persist layout.
+## Review Expectations (for code reviewers and agents)
+- **Tests coverage**: Check for adequate unit/interaction tests for both happy paths and edge cases (null/missing config, invalid inputs, timeouts, policy rejections). Ask “what happens when this value is null/missing/empty?” and ensure there’s a test.
+- **Guardrails**: Validate inputs and handle null/config-not-set gracefully; prefer explicit rejections/events over silent failure. Ensure new commands/events have serialization tests.
+- **Doc alignment**: Verify contracts/architecture/policy changes are mirrored in docs with date/reason. Confirm CI guards (contract guard) remain green.
+- **Secrets and gating**: Live/AI/integration paths must be env-gated; no secrets in code/appsettings. Ensure dummy/fallbacks exist for offline/test modes.
+- **Dependency clarity**: New services/adapters should be opt-in if they introduce cross-module dependencies; avoid hidden circular refs.
+
+## General Review & Testing Guidelines (project-agnostic)
+- **Tests & coverage**: Prefer over-testing; cover happy paths and edge cases (null/missing inputs, invalid data, timeouts). Don’t skip “unlikely” paths—assert behavior when inputs/config are absent.
+- **Input validation & guardrails**: Validate inputs early; fail fast with clear errors. Handle null/missing config gracefully. Avoid silent failures; log/throw with actionable messages.
+- **Docs & contracts**: Keep code, tests, and docs in sync. When interfaces/contracts change, update docs/versioning (if applicable) and add serialization/compatibility tests.
+- **Secrets & config**: Never commit secrets. Load secrets via env vars/user secrets/CI secrets. Gate integration/AI/live tests with opt-in flags; provide fallbacks/dummy clients for offline/test modes.
+- **Dependencies**: Keep dependencies explicit and minimal. Avoid circular refs and hidden global state. Make optional features opt-in to avoid bloating the core.
+- **Error handling & logging**: Provide clear, contextual logging for failures. Prefer explicit exceptions over silent catches; surface enough info to debug without leaking secrets.
+- **Performance & resources**: Be mindful of long-running/expensive calls; add timeouts/cancellation. Dispose/cleanup deterministically in tests and production.
+- **UI/UX (if applicable)**: Avoid blocking UI in tests; provide test modes. Ensure accessibility basics (labels, shortcuts), sensible defaults, and graceful degradation when services are unavailable.
+- **CI discipline**: Keep integration/live/AI tests opt-in; default CI to deterministic, offline-safe tests. Use flags to enable heavier suites.
+- **Code quality**: Favor readability over cleverness; small, single-responsibility functions; meaningful names; consistent formatting; minimize shared mutable state.
 
 ## UI Development Guidelines
 
+- **Error Handling**: Prefer throwing exceptions over showing modal dialogs for error conditions. Modal dialogs block automated testing and don't provide debuggable information to LLMs or automated systems. Use `isTestMode` checks to conditionally show dialogs only in interactive user sessions.
 - **Testing UI Changes**: Always test UI changes using `dotnet run -- --test` to verify layout and functionality without manual intervention. Describe what you observe (panel positions, control states, any visual issues).
 - **Layout Verification**: When implementing UI features, verify dockable panels work correctly, layout persists between runs, and reset functionality restores defaults.
 - **Error Reporting**: When UI issues occur, provide specific details: which panel/control is affected, what behavior was expected vs observed, any error messages, and current layout state.

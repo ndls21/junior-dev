@@ -59,7 +59,7 @@ public class GitHubAdapterIntegrationTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,
@@ -91,7 +91,7 @@ public class GitHubAdapterIntegrationTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,
@@ -115,6 +115,142 @@ public class GitHubAdapterIntegrationTests
     }
 
     [Fact]
+    public async Task HandleComment_WithInvalidCredentials_EmitsCommandRejected()
+    {
+        if (_adapter == null) return; // Skip if no adapter
+
+        // Create adapter with invalid credentials to test error handling
+        var originalToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("GITHUB_TOKEN", "invalid");
+
+            var invalidAdapter = new GitHubAdapter();
+
+            var config = new SessionConfig(
+                Guid.NewGuid(),
+                null,
+                null,
+                new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
+                new RepoRef("test", "/tmp/test"),
+                new WorkspaceRef("/tmp/workspace"),
+                null,
+                "test-agent");
+            var session = new TestSessionState(config);
+            var correlation = new Correlation(Guid.NewGuid());
+            var command = new Comment(Guid.NewGuid(), correlation, new WorkItemRef("999999"), "Test comment");
+
+            await invalidAdapter.HandleCommand(command, session);
+
+            // Should emit CommandAccepted and CommandRejected
+            Assert.Equal(2, session.Events.Count);
+            Assert.IsType<CommandAccepted>(session.Events[0]);
+            Assert.IsType<CommandRejected>(session.Events[1]);
+
+            var rejected = (CommandRejected)session.Events[1];
+            Assert.Equal(command.Id, rejected.CommandId);
+            Assert.Equal(correlation, rejected.Correlation);
+            Assert.Equal("AUTH_ERROR", rejected.Reason);
+        }
+        finally
+        {
+            // Restore original environment variable
+            Environment.SetEnvironmentVariable("GITHUB_TOKEN", originalToken);
+        }
+    }
+
+    [Fact]
+    public async Task HandleTransition_WithInvalidCredentials_EmitsCommandRejected()
+    {
+        if (_adapter == null) return; // Skip if no adapter
+
+        // Create adapter with invalid credentials to test error handling
+        var originalToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("GITHUB_TOKEN", "invalid");
+
+            var invalidAdapter = new GitHubAdapter();
+
+            var config = new SessionConfig(
+                Guid.NewGuid(),
+                null,
+                null,
+                new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
+                new RepoRef("test", "/tmp/test"),
+                new WorkspaceRef("/tmp/workspace"),
+                null,
+                "test-agent");
+            var session = new TestSessionState(config);
+            var correlation = new Correlation(Guid.NewGuid());
+            var command = new TransitionTicket(Guid.NewGuid(), correlation, new WorkItemRef("999999"), "Done");
+
+            await invalidAdapter.HandleCommand(command, session);
+
+            // Should emit CommandAccepted and CommandRejected
+            Assert.Equal(2, session.Events.Count);
+            Assert.IsType<CommandAccepted>(session.Events[0]);
+            Assert.IsType<CommandRejected>(session.Events[1]);
+
+            var rejected = (CommandRejected)session.Events[1];
+            Assert.Equal(command.Id, rejected.CommandId);
+            Assert.Equal(correlation, rejected.Correlation);
+            Assert.Equal("AUTH_ERROR", rejected.Reason);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GITHUB_TOKEN", originalToken);
+        }
+    }
+
+    [Fact]
+    public async Task HandleSetAssignee_WithInvalidCredentials_EmitsCommandRejected()
+    {
+        if (_adapter == null) return; // Skip if no adapter
+
+        // Create adapter with invalid credentials to test error handling
+        var originalToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("GITHUB_TOKEN", "invalid");
+
+            var invalidAdapter = new GitHubAdapter();
+
+            var config = new SessionConfig(
+                Guid.NewGuid(),
+                null,
+                null,
+                new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
+                new RepoRef("test", "/tmp/test"),
+                new WorkspaceRef("/tmp/workspace"),
+                null,
+                "test-agent");
+            var session = new TestSessionState(config);
+            var correlation = new Correlation(Guid.NewGuid());
+            var command = new SetAssignee(Guid.NewGuid(), correlation, new WorkItemRef("999999"), "user");
+
+            await invalidAdapter.HandleCommand(command, session);
+
+            // Should emit CommandAccepted and CommandRejected
+            Assert.Equal(2, session.Events.Count);
+            Assert.IsType<CommandAccepted>(session.Events[0]);
+            Assert.IsType<CommandRejected>(session.Events[1]);
+
+            var rejected = (CommandRejected)session.Events[1];
+            Assert.Equal(command.Id, rejected.CommandId);
+            Assert.Equal(correlation, rejected.Correlation);
+            Assert.Equal("AUTH_ERROR", rejected.Reason);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GITHUB_TOKEN", originalToken);
+        }
+    }
+
+    [Fact]
     public async Task RetryLogic_HandlesTransientErrors()
     {
         if (_adapter == null) return; // Skip if no adapter
@@ -123,7 +259,7 @@ public class GitHubAdapterIntegrationTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test", "/tmp/test"),
             new WorkspaceRef("/tmp/workspace"),
             null,

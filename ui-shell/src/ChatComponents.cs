@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using DevExpress.AIIntegration.WinForms.Chat;
 using DevExpress.XtraEditors;
 using JuniorDev.Contracts;
+using JuniorDev.Orchestrator;
 
 namespace Ui.Shell;
 
@@ -32,14 +33,15 @@ public class ChatStream
 
     public string GetStatusText()
     {
+        var sessionInfo = !string.IsNullOrEmpty(SessionId.ToString()) ? $" ({SessionId.ToString().Substring(0, 8)})" : "";
         return Status switch
         {
-            JuniorDev.Contracts.SessionStatus.Running => $"🔄 {AgentName} - {CurrentTask}",
-            JuniorDev.Contracts.SessionStatus.Paused => $"⏸️ {AgentName} - Paused",
-            JuniorDev.Contracts.SessionStatus.Error => $"❌ {AgentName} - Error",
-            JuniorDev.Contracts.SessionStatus.NeedsApproval => $"⚠️ {AgentName} - Needs Approval",
-            JuniorDev.Contracts.SessionStatus.Completed => $"✅ {AgentName} - Completed",
-            _ => $"❓ {AgentName} - Unknown"
+            JuniorDev.Contracts.SessionStatus.Running => $"🔄 {AgentName}{sessionInfo} - {CurrentTask}",
+            JuniorDev.Contracts.SessionStatus.Paused => $"⏸️ {AgentName}{sessionInfo} - Paused",
+            JuniorDev.Contracts.SessionStatus.Error => $"❌ {AgentName}{sessionInfo} - Error",
+            JuniorDev.Contracts.SessionStatus.NeedsApproval => $"⚠️ {AgentName}{sessionInfo} - Needs Approval",
+            JuniorDev.Contracts.SessionStatus.Completed => $"✅ {AgentName}{sessionInfo} - Completed",
+            _ => $"❓ {AgentName}{sessionInfo} - Unknown"
         };
     }
 
@@ -70,6 +72,10 @@ public class AgentPanel : Panel
     private readonly System.Windows.Forms.Label _taskLabel;
     private readonly System.Windows.Forms.Label _progressLabel;
     private readonly System.Windows.Forms.Label _timeLabel;
+
+    // Dependencies for command publishing
+    private ISessionManager? _sessionManager;
+    private RepoRef? _repoRef;
 
     public ChatStream ChatStream => _chatStream;
     public AIChatControl ChatControl => _chatControl;
@@ -146,6 +152,9 @@ public class AgentPanel : Panel
         // Wire up AI client to the chat control
         WireUpAIClient();
 
+        // Wire up message interception for command publishing
+        WireUpCommandInterception();
+
         _eventsMemo = new MemoEdit
         {
             Dock = DockStyle.Fill,
@@ -182,6 +191,12 @@ public class AgentPanel : Panel
         SetCollapsedState();
     }
 
+    public void SetDependencies(ISessionManager sessionManager, RepoRef repoRef)
+    {
+        _sessionManager = sessionManager;
+        _repoRef = repoRef;
+    }
+
     private void WireUpAIClient()
     {
         try
@@ -194,6 +209,50 @@ public class AgentPanel : Panel
         {
             Console.WriteLine($"Failed to wire up AI client for {ChatStream.AgentName}: {ex.Message}");
         }
+    }
+
+    private void WireUpCommandInterception()
+    {
+        // For now, command interception is disabled
+        // Commands will be triggered through UI buttons/menu items instead
+        // TODO: Implement proper message interception when DevExpress API is better understood
+    }
+
+    private ICommand? ParseCommand(string message, Guid sessionId, RepoRef repo)
+    {
+        var correlation = new Correlation(sessionId);
+        var commandId = Guid.NewGuid();
+        var lowerMessage = message.ToLower().Trim();
+
+        if (lowerMessage.Contains("run tests") || lowerMessage.Contains("test"))
+        {
+            return new RunTests(commandId, correlation, repo, null, TimeSpan.FromMinutes(5));
+        }
+        else if (lowerMessage.Contains("create branch") || lowerMessage.Contains("new branch"))
+        {
+            // Extract branch name from message or use default
+            var branchName = "feature/user-request";
+            return new CreateBranch(commandId, correlation, repo, branchName);
+        }
+        else if (lowerMessage.Contains("commit"))
+        {
+            return new Commit(commandId, correlation, repo, "User requested commit", new List<string> { "." });
+        }
+        else if (lowerMessage.Contains("push"))
+        {
+            return new Push(commandId, correlation, repo, "main"); // Default to main branch
+        }
+        else if (lowerMessage.Contains("diff") || lowerMessage.Contains("changes"))
+        {
+            return new GetDiff(commandId, correlation, repo);
+        }
+        else if (lowerMessage.Contains("query backlog") || lowerMessage.Contains("backlog"))
+        {
+            return new QueryBacklog(commandId, correlation);
+        }
+
+        // Return null to let the message go to AI
+        return null;
     }
 
     private void OnPreviewPanelClicked()
@@ -209,6 +268,12 @@ public class AgentPanel : Panel
         // Only render events for this chat stream's session
         if (@event.Correlation.SessionId == _chatStream.SessionId)
         {
+            // Update status if this is a status change event
+            if (@event is SessionStatusChanged statusChanged)
+            {
+                UpdateStatus(statusChanged.Status, statusChanged.Reason, null);
+            }
+
             _eventRenderer.RenderEvent(@event, timestamp);
             _chatStream.LastActivity = timestamp;
             UpdatePreviewDisplay();

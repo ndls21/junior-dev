@@ -24,7 +24,7 @@ public class OrchestratorFunctionBindingsTests
             Guid.NewGuid(),
             null,
             null,
-            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() }, null, false, false, null, null),
+            new PolicyProfile { Name = "test", ProtectedBranches = new HashSet<string>() },
             new RepoRef("test-repo", "/repos/test-repo"),
             new WorkspaceRef("/workspaces/test-ws"),
             null,
