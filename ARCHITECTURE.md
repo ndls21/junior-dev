@@ -11,19 +11,20 @@
 - `contracts`: shared DTOs/interfaces for commands, events, plans, policy profiles.
 - `workitems-<provider>`: Jira first; supports get/update/comment/transition/assign/attach.
 - `vcs-<provider>`: git CLI first; later GitHub/ADO. Supports branch/commit/push/diff/patch export.
+- `build-<provider>`: opt-in build system support (dotnet, npm, etc.); enables BuildProject command.
 - `agents-<host>`: Semantic Kernel host for planner/executor/reviewer agents, emitting commands.
 - `orchestrator`: wires adapters via DI, enforces policy/rate limits, manages sessions, event log, artifacts.
 - `ui-shell`: DevExpress chat/docking UI with columnar layout; sessions list, conversation/log, artifacts/tests.
 
 ## Action Protocol (summary)
-- Commands are intents (e.g., `CreateBranch`, `ApplyPatch`, `RunTests`, `BuildProject`, `Commit`, `Push`, `TransitionTicket`, `Comment`, `UploadArtifact`, `RequestApproval`, `QueryBacklog`, `QueryWorkItem`).
+- Commands are intents (e.g., `CreateBranch`, `ApplyPatch`, `RunTests`, `Commit`, `Push`, `TransitionTicket`, `Comment`, `UploadArtifact`, `RequestApproval`, `QueryBacklog`, `QueryWorkItem`).
 - Results report success/failure with reasons; artifacts carry payloads (diffs, patches, logs, test output).
 - All items carry correlation IDs and optional parent links to reconstruct flows; stored in an append-only session log.
 
 ## Command Flow (orchestrator path)
-1) Agent or UI emits a Command with correlation/session metadata (e.g., `CreateBranch`, `ApplyPatch`, `RunTests`, `BuildProject`, `Commit`, `Push`, `TransitionTicket`, `Comment`, `QueryBacklog`, `QueryWorkItem`).
+1) Agent or UI emits a Command with correlation/session metadata.
 2) Orchestrator checks policy profile and rate limits; reject early with reasons if blocked.
-3) Routed to the bound adapter (work items, VCS, build, agents, etc.) with workspace context.
+3) Routed to the bound adapter (work items, VCS, agents, etc.) with workspace context.
 4) Adapter returns results/artifacts; orchestrator emits events to the session log/UI.
 5) Errors/conflicts/throttling become explicit events; retry/backoff is policy-driven.
 
@@ -70,47 +71,27 @@
     │            policy/rate            │
     │                 │                 │
     │                 ↓                 ↓
-    │     [WorkItems Adapter]   [VCS Adapter]
-    │                 │                 │
-    │            (Jira, …)          (Git CLI, …)
+    │          [WorkItems Adapter]   [VCS Adapter]
     │                 │                 │
     │                 ↓                 ↓
-    │          [Build Adapter]     [Other Adapters]
-    │                 │                 │
-    │            (dotnet CLI, …)   (future adapters)
+    │            (Jira, …)          (Git CLI, …)
+    │
+    │          [Build Adapter] (opt-in)
+    │                 │
+    │                 ↓
+    │            (Dotnet, NPM, …)
 ```
 - Orchestrator is the hub: enforces policy/rate limits, manages sessions/workspaces, logs events/artifacts.
 - UI consumes session event streams; sends commands (approve, pause/resume, etc.).
 - Agents host emits commands; listens to events to adapt.
 - Adapters are swappable implementations of stable contracts.
 
-## Adapter Registration Patterns
-
-### **Core Orchestrator (Always Available)**
-```csharp
-services.AddOrchestrator(); // Registers fake adapters for testing/development
-```
-
-### **Optional Adapters (Host Application Choice)**
-Build functionality is **optional** and must be explicitly registered by the host application:
-
-```csharp
-services.AddOrchestrator()           // Core orchestrator with fake adapters
-        .AddDotnetBuildAdapter();     // Optional: adds real build functionality
-```
-
-This pattern maintains modular architecture where:
-- Core orchestrator remains lightweight with fake adapters
-- Real adapters are opt-in based on application needs
-- Avoids circular dependencies between projects
-- Allows different hosts to choose their adapter mix
-
 ## Interaction per session
 ```
-Agent/UI -> Orchestrator: Command (CreateBranch, ApplyPatch, RunTests, BuildProject, ...)
+Agent/UI -> Orchestrator: Command (CreateBranch, ApplyPatch, ...)
 Orchestrator -> Policy/Rate: Check
 Policy/Rate -> Orchestrator: Allow/Reject/Throttle
-Orchestrator -> Adapter: Invoke (VCS/WorkItem/Build)
+Orchestrator -> Adapter: Invoke (VCS/WorkItem)
 Adapter -> Orchestrator: Result/Artifact/Conflict
 Orchestrator -> EventLog: Append
 Orchestrator -> UI/Agent: Event stream (CommandAccepted, ..., ArtifactAvailable)
@@ -120,8 +101,8 @@ Orchestrator -> UI/Agent: Event stream (CommandAccepted, ..., ArtifactAvailable)
 ```
 Contracts
   ICommand / CommandBase (Id, Correlation, Kind)
-    CreateBranch, ApplyPatch, RunTests, BuildProject, Commit, Push,
-    TransitionTicket, Comment, SetAssignee, UploadArtifact, RequestApproval, SpawnSession (future)
+    CreateBranch, ApplyPatch, RunTests, Commit, Push, GetDiff,
+    BuildProject, TransitionTicket, Comment, SetAssignee, UploadArtifact, RequestApproval, SpawnSession (future)
   IEvent / EventBase (Id, Correlation, Kind)
     CommandAccepted, CommandRejected, CommandCompleted,
     ArtifactAvailable, Throttled, ConflictDetected,
@@ -133,7 +114,7 @@ Contracts
 Orchestrator interfaces
   ISessionManager (CreateSession, PublishCommand, Subscribe)
   IPolicyEnforcer, IRateLimiter, IWorkspaceProvider, IArtifactStore
-  IAdapter (unified interface for work items, VCS, and other capabilities)
+  IAdapter (unified interface for work items, VCS, build, and other capabilities)
 ```
 
 ## Repo Layout (proposed)
@@ -142,6 +123,7 @@ Orchestrator interfaces
 /orchestrator             (core session manager, policy/rate, workspace, event log, adapters)
 /workitems-jira           (Jira impl + fake) ✅ Dev J complete
 /vcs-git                  (git CLI impl + fake)
+/build-dotnet             (dotnet build adapter - opt-in)
 /agents/sk-host           (Semantic Kernel agents)
 /ui-shell                 (DevExpress UI)
 /docs                     (architecture, plans, setup, prompts)
@@ -265,5 +247,4 @@ This approach maintains the typed, auditable command system while giving agents 
 - Update (2025-11-28): Designed multi-agent chat architecture supporting concurrent AI conversations. Proposed tabbed interface for AI Chat area with combined Monitoring & Artifacts panel. Analyzed panel utilities and screen real estate requirements for laptop usage. Created MULTI_AGENT_CHAT_DESIGN.md with implementation options.
 - Update (2025-11-28): Revised multi-agent UI design to integrate per-agent event monitoring within each chat panel. Recognized that each AI agent generates its own event stream requiring dedicated monitoring per agent rather than global combined panel. Updated UI layout to use accordion approach with chat + events per agent, plus global artifacts panel. Alternative layouts explored: docked panels, split-panel, column-based, master-detail. Final decision: accordion layout as recommended default for optimal focus+overview balance.
 - Update (2025-11-28): Analyzed agent terminal access requirements. Determined that direct PowerShell access poses security and auditability risks. Recommended extending typed command system with new commands for package management, file operations, and script execution. Proposed TerminalAdapter pattern with SK function bindings for safe, auditable terminal operations. Created GitHub issues #19-23 for implementation phases. Created issue #24 for multi-agent chat UI implementation with accordion layout as recommended default.
-- Update (2025-11-29): Added BuildProject command and DotnetBuildAdapter to enable safe agent-accessible build functionality. Updated architecture to include build adapter in module diagram and command flow. Bumped contract version to v1.3 with proper security validation (path checking, target whitelisting, timeout enforcement) and artifact generation.
-- Update (2025-11-29): Implemented AI tests policy with opt-in mechanism using RUN_AI_TESTS=1 environment variable and credential validation. Added AI integration test collection with automatic skipping when not configured. Updated ReviewerAgent to use real LLM analysis for diff/log/test reviews when AI services are available. Enhanced CI pipeline with conditional AI test execution triggered by [run-ai] commit messages. Dummy IChatClient prevents UI crashes in offline/test scenarios.
+- Update (2025-11-30): Added BuildProject command and build adapter architecture. Build adapters are opt-in via AdaptersConfig.BuildAdapter setting. Added build-dotnet adapter to repo layout. Updated contracts to v1.3.

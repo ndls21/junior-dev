@@ -39,4 +39,3 @@ artifacts/
 appsettings.Local.json
 secrets.json
 .env.local
-.env.*.local

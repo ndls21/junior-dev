@@ -1,12 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Threading.Tasks;
 using DevExpress.AIIntegration.WinForms.Chat;
 using DevExpress.XtraEditors;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Ui.Shell;
 
@@ -36,14 +33,15 @@ public class ChatStream
 
     public string GetStatusText()
     {
+        var sessionInfo = !string.IsNullOrEmpty(SessionId.ToString()) ? $" ({SessionId.ToString().Substring(0, 8)})" : "";
         return Status switch
         {
-            JuniorDev.Contracts.SessionStatus.Running => $"🔄 {AgentName} - {CurrentTask}",
-            JuniorDev.Contracts.SessionStatus.Paused => $"⏸️ {AgentName} - Paused",
-            JuniorDev.Contracts.SessionStatus.Error => $"❌ {AgentName} - Error",
-            JuniorDev.Contracts.SessionStatus.NeedsApproval => $"⚠️ {AgentName} - Needs Approval",
-            JuniorDev.Contracts.SessionStatus.Completed => $"✅ {AgentName} - Completed",
-            _ => $"❓ {AgentName} - Unknown"
+            JuniorDev.Contracts.SessionStatus.Running => $"🔄 {AgentName}{sessionInfo} - {CurrentTask}",
+            JuniorDev.Contracts.SessionStatus.Paused => $"⏸️ {AgentName}{sessionInfo} - Paused",
+            JuniorDev.Contracts.SessionStatus.Error => $"❌ {AgentName}{sessionInfo} - Error",
+            JuniorDev.Contracts.SessionStatus.NeedsApproval => $"⚠️ {AgentName}{sessionInfo} - Needs Approval",
+            JuniorDev.Contracts.SessionStatus.Completed => $"✅ {AgentName}{sessionInfo} - Completed",
+            _ => $"❓ {AgentName}{sessionInfo} - Unknown"
         };
     }
 
@@ -62,15 +60,10 @@ public class ChatStream
 public class AgentPanel : Panel
 {
     private readonly ChatStream _chatStream;
-    private readonly Control _chatControl;
+    private readonly AIChatControl _chatControl;
     private readonly MemoEdit _eventsMemo;
     private readonly EventRenderer _eventRenderer;
     private readonly SplitContainer _splitContainer;
-    
-    // Command publishing
-    private readonly ISessionManager? _sessionManager;
-    private readonly IServiceProvider? _serviceProvider;
-    private readonly ToolStrip _commandToolbar;
     
     // Rich preview controls for collapsed state
     private readonly Panel _previewPanel;
@@ -80,15 +73,17 @@ public class AgentPanel : Panel
     private readonly System.Windows.Forms.Label _progressLabel;
     private readonly System.Windows.Forms.Label _timeLabel;
 
+    // Dependencies for command publishing
+    private ISessionManager? _sessionManager;
+    private RepoRef? _repoRef;
+
     public ChatStream ChatStream => _chatStream;
-    public Control ChatControl => _chatControl;
+    public AIChatControl ChatControl => _chatControl;
     public MemoEdit EventsMemo => _eventsMemo;
 
-    public AgentPanel(ChatStream chatStream, ISessionManager? sessionManager = null, IServiceProvider? serviceProvider = null)
+    public AgentPanel(ChatStream chatStream)
     {
         _chatStream = chatStream;
-        _sessionManager = sessionManager;
-        _serviceProvider = serviceProvider;
         _chatStream.Panel = this;
 
         // Initialize rich preview controls
@@ -147,41 +142,18 @@ public class AgentPanel : Panel
         // Handle click to expand
         _previewPanel.Click += (s, e) => OnPreviewPanelClicked();
 
-        // Initialize command toolbar
-        _commandToolbar = new ToolStrip { Dock = DockStyle.Top };
-        InitializeCommandToolbar();
-
-        // Check if we have valid AI credentials before creating AI chat control
-        var hasValidCredentials = CheckValidAICredentials();
-        
-        if (hasValidCredentials)
+        // Initialize components
+        _chatControl = new AIChatControl
         {
-            // Try to create AI chat control only when we have valid credentials
-            try
-            {
-                _chatControl = new AIChatControl
-                {
-                    Dock = DockStyle.Fill,
-                    UseStreaming = DevExpress.Utils.DefaultBoolean.True
-                };
+            Dock = DockStyle.Fill,
+            UseStreaming = DevExpress.Utils.DefaultBoolean.True
+        };
 
-                // Global DevExpress AI configuration in Program.cs should handle service provider setup
-                // No need to set per-control service providers here
-                Console.WriteLine($"AI chat control created for agent '{_chatStream.AgentName}'");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to create AI chat control for agent '{_chatStream.AgentName}': {ex.Message}");
-                // Create a placeholder control when AI is not available
-                _chatControl = CreatePlaceholderChatControl();
-            }
-        }
-        else
-        {
-            // No valid AI credentials - use placeholder control
-            Console.WriteLine($"No valid AI credentials found - using placeholder for agent '{_chatStream.AgentName}'");
-            _chatControl = CreatePlaceholderChatControl();
-        }
+        // Wire up AI client to the chat control
+        WireUpAIClient();
+
+        // Wire up message interception for command publishing
+        WireUpCommandInterception();
 
         _eventsMemo = new MemoEdit
         {
@@ -209,11 +181,7 @@ public class AgentPanel : Panel
         _splitContainer.Panel1.Controls.Add(_chatControl);
         _splitContainer.Panel2.Controls.Add(_eventsMemo);
 
-        // Create main container with command toolbar on top
-        var mainContainer = new Panel { Dock = DockStyle.Fill };
-        mainContainer.Controls.AddRange(new Control[] { _commandToolbar, _splitContainer });
-
-        this.Controls.Add(mainContainer);
+        this.Controls.Add(_splitContainer);
         this.Controls.Add(_previewPanel); // Add preview panel on top
         this.BorderStyle = BorderStyle.FixedSingle;
         this.Padding = new Padding(2);
@@ -223,136 +191,68 @@ public class AgentPanel : Panel
         SetCollapsedState();
     }
 
-    private void InitializeCommandToolbar()
+    public void SetDependencies(ISessionManager sessionManager, RepoRef repoRef)
     {
-        // Add command buttons
-        var buildButton = new ToolStripButton("Build", null, (s, e) => PublishCommand("Build"));
-        var testButton = new ToolStripButton("Test", null, (s, e) => PublishCommand("Test"));
-        var commentButton = new ToolStripButton("Comment", null, (s, e) => PublishCommand("Comment"));
-        var transitionButton = new ToolStripButton("Transition", null, (s, e) => PublishCommand("Transition"));
-
-        _commandToolbar.Items.AddRange(new ToolStripItem[] { buildButton, testButton, commentButton, transitionButton });
-
-        // Disable buttons if session manager is available (live mode) - commands need proper repo/work item config
-        // TODO: Re-enable when proper parameter input dialogs are implemented - Issue: #33
-        if (_sessionManager != null)
-        {
-            buildButton.Enabled = false;
-            testButton.Enabled = false;
-            commentButton.Enabled = false;
-            transitionButton.Enabled = false;
-            buildButton.ToolTipText = "Disabled in live mode - needs repo configuration";
-            testButton.ToolTipText = "Disabled in live mode - needs repo configuration";
-            commentButton.ToolTipText = "Disabled in live mode - needs work item configuration";
-            transitionButton.ToolTipText = "Disabled in live mode - needs work item configuration";
-        }
+        _sessionManager = sessionManager;
+        _repoRef = repoRef;
     }
 
-    private void PublishCommand(string commandType)
-    {
-        if (_sessionManager == null)
-        {
-            Console.WriteLine("Session manager not available - cannot publish commands");
-            return;
-        }
-
-        // TEMPORARY: Disable command execution in live mode until proper repo/work item configuration is implemented
-        // TODO: Remove this check when parameter input dialogs are added - Issue: #33
-        Console.WriteLine($"Command '{commandType}' disabled in live mode - needs proper repo/work item configuration");
-        return;
-
-        // TODO: Implement command publishing with proper parameters - Issue: #33
-        // This will need to create the appropriate command DTO and call _sessionManager.PublishCommand()
-        /*
-        Task.Run(async () =>
-        {
-            try
-            {
-                var commandId = Guid.NewGuid();
-                var correlation = new Correlation(_chatStream.SessionId, commandId);
-                
-                // For now, use hardcoded repo info - in future this should come from session config
-                var repo = new RepoRef("default", Path.Combine(Path.GetTempPath(), "JuniorDev", _chatStream.SessionId.ToString()));
-                
-                ICommand command = commandType switch
-                {
-                    "Build" => new RunTests(commandId, correlation, repo, "build", TimeSpan.FromMinutes(5)),
-                    "Test" => new RunTests(commandId, correlation, repo),
-                    "Comment" => new Comment(commandId, correlation, new WorkItemRef("default", "PROJ-123"), "UI-triggered comment"),
-                    "Transition" => new TransitionTicket(commandId, correlation, new WorkItemRef("default", "PROJ-123"), "In Progress"),
-                    _ => throw new ArgumentException($"Unknown command type: {commandType}")
-                };
-                
-                await _sessionManager.PublishCommand(command);
-                Console.WriteLine($"Published {commandType} command for session {_chatStream.SessionId}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to publish {commandType} command: {ex.Message}");
-            }
-        });
-        */
-    }
-
-    private bool CheckValidAICredentials()
+    private void WireUpAIClient()
     {
         try
         {
-            // Check if we have a service provider and chat client factory
-            if (_serviceProvider == null)
-            {
-                Console.WriteLine("No service provider available for credential check");
-                return false;
-            }
-
-            var factory = _serviceProvider.GetService(typeof(IChatClientFactory)) as IChatClientFactory;
-            if (factory == null)
-            {
-                Console.WriteLine("ChatClientFactory not available in service provider");
-                return false;
-            }
-
-            // Try to get a client for this agent - if it returns a real client, we have valid credentials
-            var agentProfile = _chatStream.AgentName.ToLower().Replace(" ", "-");
-            var underlyingClient = factory.GetUnderlyingClientFor(agentProfile);
-            
-            // If we get a real Microsoft.Extensions.AI.IChatClient, credentials are valid
-            return underlyingClient is Microsoft.Extensions.AI.IChatClient;
+            // The AI client is registered globally in MainForm.RegisterAIClient()
+            // The AIChatControl should automatically use the registered client
+            // No additional wiring needed as DevExpress handles this internally
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error checking AI credentials: {ex.Message}");
-            return false;
+            Console.WriteLine($"Failed to wire up AI client for {ChatStream.AgentName}: {ex.Message}");
         }
     }
 
-
-
-
-
-    /// <summary>
-    /// Creates a placeholder control when AI chat is not available
-    /// </summary>
-    private Control CreatePlaceholderChatControl()
+    private void WireUpCommandInterception()
     {
-        var placeholder = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(250, 250, 250),
-            BorderStyle = BorderStyle.FixedSingle
-        };
+        // For now, command interception is disabled
+        // Commands will be triggered through UI buttons/menu items instead
+        // TODO: Implement proper message interception when DevExpress API is better understood
+    }
 
-        var label = new System.Windows.Forms.Label
-        {
-            Text = "AI Chat Not Available\r\n\r\nPlease configure OpenAI API key in appsettings.json to enable AI chat functionality.",
-            TextAlign = ContentAlignment.MiddleCenter,
-            Dock = DockStyle.Fill,
-            Font = new Font(FontFamily.GenericSansSerif, 10, FontStyle.Regular),
-            ForeColor = Color.Gray
-        };
+    private ICommand? ParseCommand(string message, Guid sessionId, RepoRef repo)
+    {
+        var correlation = new Correlation(sessionId);
+        var commandId = Guid.NewGuid();
+        var lowerMessage = message.ToLower().Trim();
 
-        placeholder.Controls.Add(label);
-        return placeholder;
+        if (lowerMessage.Contains("run tests") || lowerMessage.Contains("test"))
+        {
+            return new RunTests(commandId, correlation, repo, null, TimeSpan.FromMinutes(5));
+        }
+        else if (lowerMessage.Contains("create branch") || lowerMessage.Contains("new branch"))
+        {
+            // Extract branch name from message or use default
+            var branchName = "feature/user-request";
+            return new CreateBranch(commandId, correlation, repo, branchName);
+        }
+        else if (lowerMessage.Contains("commit"))
+        {
+            return new Commit(commandId, correlation, repo, "User requested commit", new List<string> { "." });
+        }
+        else if (lowerMessage.Contains("push"))
+        {
+            return new Push(commandId, correlation, repo, "main"); // Default to main branch
+        }
+        else if (lowerMessage.Contains("diff") || lowerMessage.Contains("changes"))
+        {
+            return new GetDiff(commandId, correlation, repo);
+        }
+        else if (lowerMessage.Contains("query backlog") || lowerMessage.Contains("backlog"))
+        {
+            return new QueryBacklog(commandId, correlation);
+        }
+
+        // Return null to let the message go to AI
+        return null;
     }
 
     private void OnPreviewPanelClicked()
@@ -368,6 +268,12 @@ public class AgentPanel : Panel
         // Only render events for this chat stream's session
         if (@event.Correlation.SessionId == _chatStream.SessionId)
         {
+            // Update status if this is a status change event
+            if (@event is SessionStatusChanged statusChanged)
+            {
+                UpdateStatus(statusChanged.Status, statusChanged.Reason, null);
+            }
+
             _eventRenderer.RenderEvent(@event, timestamp);
             _chatStream.LastActivity = timestamp;
             UpdatePreviewDisplay();
@@ -451,14 +357,7 @@ public class AgentPanel : Panel
     {
         if (disposing)
         {
-            if (_chatControl is AIChatControl aiChatControl)
-            {
-                aiChatControl.Dispose();
-            }
-            else
-            {
-                _chatControl?.Dispose();
-            }
+            _chatControl?.Dispose();
             _eventsMemo?.Dispose();
             _splitContainer?.Dispose();
             _previewPanel?.Dispose();
@@ -487,14 +386,8 @@ public class AccordionLayoutManager
         _container.AutoScroll = true;
     }
 
-    public void AddChatStream(ChatStream chatStream, ISessionManager? sessionManager = null, IServiceProvider? serviceProvider = null)
+    public void AddChatStream(ChatStream chatStream)
     {
-        // Create the AgentPanel for this chat stream
-        if (chatStream.Panel == null)
-        {
-            chatStream.Panel = new AgentPanel(chatStream, sessionManager, serviceProvider);
-        }
-        
         _chatStreams.Add(chatStream);
         if (_chatStreams.Count == 1)
         {

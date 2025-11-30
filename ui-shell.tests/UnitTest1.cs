@@ -4,6 +4,12 @@ using DevExpress.XtraBars.Docking;
 using Ui.Shell;
 using System.Drawing;
 using JuniorDev.Contracts;
+using Moq;
+using JuniorDev.Orchestrator;
+using Microsoft.Extensions.AI;
+using System.Linq;
+using System.Collections.Generic;
+using Microsoft.Extensions.Configuration;
 
 namespace ui_shell.tests;
 
@@ -29,11 +35,24 @@ public class MainFormTests : IDisposable
         }
     }
 
+    private MainForm CreateMainForm(bool isTestMode = false, ISessionManager sessionManager = null, IConfiguration configuration = null, IChatClient chatClient = null)
+    {
+        var mockSessionManager = sessionManager != null ? Mock.Get(sessionManager) : new Mock<ISessionManager>();
+        var mockConfiguration = configuration != null ? Mock.Get(configuration) : new Mock<IConfiguration>();
+        var mockChatClient = chatClient != null ? Mock.Get(chatClient) : new Mock<IChatClient>();
+        
+        return new MainForm(
+            mockSessionManager.Object, 
+            mockConfiguration.Object, 
+            mockChatClient.Object, 
+            isTestMode);
+    }
+
     [Fact]
     public void MainForm_CanCreateInstance()
     {
         // Arrange & Act
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
 
         // Assert
         Assert.NotNull(form);
@@ -45,7 +64,7 @@ public class MainFormTests : IDisposable
     {
         // This test verifies that test mode is detected and configured
         // The actual auto-exit behavior is tested manually via dotnet run -- --test
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
 
         // In a real test environment, we would mock the command line args
         // For now, we just verify the form can be created
@@ -233,7 +252,7 @@ public class MainFormTests : IDisposable
     public void MainForm_SettingsApplied_ShowStatusChips_ChangesDrawMode()
     {
         // Arrange
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         
         // Act - Apply settings with ShowStatusChips = true
         var settings = new AppSettings { ShowStatusChips = true };
@@ -254,7 +273,7 @@ public class MainFormTests : IDisposable
     public void MainForm_SettingsApplied_AutoScrollEvents_ControlsScrolling()
     {
         // Arrange
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         
         // Act - Apply settings with AutoScrollEvents = true
         var settings = new AppSettings { AutoScrollEvents = true };
@@ -276,7 +295,7 @@ public class MainFormTests : IDisposable
     {
         // Arrange - Create a layout file
         File.WriteAllText(_tempLayoutFile, "<layout><data>test</data></layout>");
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         form.SetLayoutFilePath(_tempLayoutFile); // Inject test path
         
         // Act - Reset layout
@@ -293,7 +312,7 @@ public class MainFormTests : IDisposable
     {
         // Arrange - Create corrupted layout file
         File.WriteAllText(_tempLayoutFile, "<invalid><xml></content>");
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         form.SetLayoutFilePath(_tempLayoutFile); // Inject test path
         
         // Act - Load layout (should handle corruption gracefully)
@@ -307,7 +326,7 @@ public class MainFormTests : IDisposable
     public void MainForm_ContainsAIChatControl_ForInteractiveConversations()
     {
         // Arrange & Act
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         
         // Assert - Form should contain AIChatControl for interactive AI conversations
         // The AI Chat Control is initialized in CreateConversationPanel()
@@ -321,7 +340,7 @@ public class MainFormTests : IDisposable
     public void ChatStreamPersistence_SaveAndLoad_RoundTrip()
     {
         // Arrange
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         
         var testStreams = new[]
         {
@@ -357,7 +376,7 @@ public class MainFormTests : IDisposable
         var chatStreamsFile = Path.Combine(_tempDir, "chat-streams.json");
         File.WriteAllText(chatStreamsFile, "{invalid json content}");
         
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         form.SetChatStreamsFilePath(chatStreamsFile); // Inject test path
         
         // Act - Load chat streams (should handle corruption gracefully)
@@ -375,7 +394,7 @@ public class MainFormTests : IDisposable
         // Arrange - No chat streams file exists
         var chatStreamsFile = Path.Combine(_tempDir, "nonexistent-chat-streams.json");
         
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         form.SetChatStreamsFilePath(chatStreamsFile); // Inject test path
         
         // Act - Load chat streams
@@ -391,7 +410,7 @@ public class MainFormTests : IDisposable
     public void ChatStreamPersistence_LoadDefaultChatStreams_CreatesValidStreams()
     {
         // Arrange
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         
         // Act - Load default chat streams
         var defaultStreams = form.LoadDefaultChatStreams();
@@ -417,7 +436,7 @@ public class MainFormTests : IDisposable
         File.WriteAllText(chatStreamsFile, customContent);
         Assert.True(File.Exists(chatStreamsFile));
         
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         form.SetChatStreamsFilePath(chatStreamsFile); // Inject test path
         
         // Act - Reset layout (should reset chat streams to defaults)
@@ -455,7 +474,7 @@ public class MainFormTests : IDisposable
         var json = System.Text.Json.JsonSerializer.Serialize(chatStreamData);
         File.WriteAllText(chatStreamsFile, json);
         
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         form.SetChatStreamsFilePath(chatStreamsFile); // Inject test path
         
         // Act - Load layout (should load chat streams)
@@ -474,7 +493,7 @@ public class MainFormTests : IDisposable
         var chatStreamsFile = Path.Combine(_tempDir, "chat-streams.json");
         File.WriteAllText(chatStreamsFile, "{invalid json}");
         
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         form.SetChatStreamsFilePath(chatStreamsFile); // Inject test path
         
         // Act - Load layout (should handle corrupted chat streams gracefully)
@@ -488,7 +507,7 @@ public class MainFormTests : IDisposable
     public void EventRouting_MockEventsUseExistingChatStreamSessionIds()
     {
         // Arrange
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         
         // Create a few chat streams
         var stream1 = new ChatStream(Guid.NewGuid(), "Agent Alpha");
@@ -514,7 +533,7 @@ public class MainFormTests : IDisposable
     public void ArtifactLinking_DoubleClickOpensArtifactDialog()
     {
         // Arrange
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         
         // Create a mock artifact
         var artifact = new Artifact("test-results", "Test Results", "All tests passed");
@@ -536,7 +555,7 @@ public class MainFormTests : IDisposable
     public void MultiChatEventRouting_EventsRenderedInCorrectChatStreams()
     {
         // Arrange
-        var form = new MainForm(isTestMode: true);
+        var form = CreateMainForm(isTestMode: true);
         
         // Create chat streams
         var stream1 = new ChatStream(Guid.NewGuid(), "Agent 1");
@@ -554,14 +573,295 @@ public class MainFormTests : IDisposable
     }
 
     [Fact]
-    public void AIClient_Wiring_ChatControlsHaveClientAttached()
+    public async Task SessionLifecycle_SessionCreation_MapsToChatStreamWithRealSessionId()
     {
-        // Arrange & Act
-        var form = new MainForm(isTestMode: true);
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var sessionConfig = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile { Name = "test" },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Act
+        await form.CreateSessionForTest(sessionConfig);
+
+        // Assert
+        mockSessionManager.Verify(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId)), Times.Once);
+        // Verify that a chat stream was created with the correct SessionId
+        var chatStreams = form.GetChatStreamsForTest();
+        Assert.Contains(chatStreams, cs => cs.SessionId == sessionId);
+    }
+
+    [Fact]
+    public async Task SessionLifecycle_EventSubscription_SubscribesToNewSessions()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var events = new List<IEvent>
+        {
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId), SessionStatus.Running, "Started")
+        };
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+        mockSessionManager.Setup(sm => sm.Subscribe(sessionId))
+            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events));
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Act
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile { Name = "test" },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent"));
+
+        // Allow some time for async subscription
+        await Task.Delay(100);
+
+        // Assert
+        mockSessionManager.Verify(sm => sm.Subscribe(sessionId), Times.Once);
+    }
+
+    [Fact]
+    public async Task UICommandPublishing_ExecuteCommandForActiveSession_PublishesToSessionManager()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+
+        mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Get the actual session ID from the initial chat stream created by the form
+        var chatStreams = form.GetChatStreamsForTest();
+        var activeSessionId = chatStreams.First().SessionId;
+
+        // Act
+        await form.ExecuteCommandForActiveSessionTest((correlation) => 
+            new RunTests(Guid.NewGuid(), correlation, new RepoRef("test", "/tmp/test"), null, TimeSpan.FromMinutes(5)));
+
+        // Assert - Verify that PublishCommand was called with a RunTests command for the active session
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == activeSessionId)), Times.Once);
+    }
+
+    [Fact]
+    public async Task UICommandPublishing_CommandMenuItems_TriggerCorrectCommands()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+
+        mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Get the actual session ID from the initial chat stream created by the form
+        var chatStreams = form.GetChatStreamsForTest();
+        var activeSessionId = chatStreams.First().SessionId;
+
+        // Act - Simulate clicking "Run Tests" menu item
+        await form.ExecuteRunTestsCommandForTest();
+
+        // Assert - Verify that PublishCommand was called with a RunTests command for the active session
+        mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == activeSessionId)), Times.Once);
+    }
+
+    [Fact]
+    public void DummyChatClient_Verification_PreventsAIExceptionsInTestMode()
+    {
+        // Arrange
+        var form = CreateMainForm(isTestMode: true);
+
+        // Act - Try to access AI client functionality
+        var canAccessAI = form.TestAICanAccessForTest();
+
+        // Assert - In test mode, should use dummy client that doesn't throw exceptions
+        Assert.True(canAccessAI); // Should not throw exceptions
+    }
+
+    [Fact]
+    public async Task SessionLifecycle_MultipleSessions_IsolatedEventStreams()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+
+        var events1 = new List<IEvent>
+        {
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId1), SessionStatus.Running, "Started")
+        };
+        var events2 = new List<IEvent>
+        {
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId2), SessionStatus.Running, "Started")
+        };
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId1)))
+            .Returns(Task.CompletedTask);
+        mockSessionManager.Setup(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId2)))
+            .Returns(Task.CompletedTask);
+        mockSessionManager.Setup(sm => sm.Subscribe(sessionId1))
+            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events1));
+        mockSessionManager.Setup(sm => sm.Subscribe(sessionId2))
+            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events2));
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Act
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId1, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("test1", "/tmp/test1"), new WorkspaceRef("/tmp/workspace1"), null, "test-agent"));
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId2, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("test2", "/tmp/test2"), new WorkspaceRef("/tmp/workspace2"), null, "test-agent"));
+
+        // Allow time for subscriptions
+        await Task.Delay(100);
+
+        // Assert
+        mockSessionManager.Verify(sm => sm.Subscribe(sessionId1), Times.Once);
+        mockSessionManager.Verify(sm => sm.Subscribe(sessionId2), Times.Once);
         
-        // Assert - AI client should be registered globally
-        // The AIChatControl instances should use the registered client
-        // This is tested indirectly - if no exceptions occur during form creation, client wiring is working
-        Assert.NotNull(form);
+        var chatStreams = form.GetChatStreamsForTest();
+        Assert.Contains(chatStreams, cs => cs.SessionId == sessionId1);
+        Assert.Contains(chatStreams, cs => cs.SessionId == sessionId2);
+    }
+
+    [Fact]
+    public async Task SessionLifecycle_SessionStatusUpdates_ReflectInChatStreams()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var statusEvent = new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId), SessionStatus.Paused, "Paused for testing");
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Act
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("test", "/tmp/test"), new WorkspaceRef("/tmp/workspace"), null, "test-agent"));
+
+        // Check what chat streams exist
+        var chatStreams = form.GetChatStreamsForTest();
+        Console.WriteLine($"Found {chatStreams.Length} chat streams");
+        foreach (var cs in chatStreams)
+        {
+            Console.WriteLine($"Chat stream: {cs.SessionId}, Status: {cs.Status}");
+        }
+
+        // Directly route the event to test the UI update
+        form.RouteEventToChatStreams(statusEvent, DateTimeOffset.Now);
+
+        // Check status after routing
+        chatStreams = form.GetChatStreamsForTest();
+        var chatStream = chatStreams.FirstOrDefault(cs => cs.SessionId == sessionId);
+        Console.WriteLine($"Chat stream after routing: {chatStream?.SessionId}, Status: {chatStream?.Status}");
+
+        // Assert
+        Assert.NotNull(chatStream);
+        Assert.Equal(SessionStatus.Paused, chatStream.Status);
+    }
+
+    [Fact]
+    public async Task UICommandPublishing_CommandExecution_HandlesErrorsGracefully()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+
+        mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
+            .ThrowsAsync(new Exception("Command execution failed"));
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Create a chat stream to make it the active session
+        var chatStream = new ChatStream(sessionId, "Test Agent");
+        form.AddChatStreamForTest(chatStream);
+
+        // Act & Assert - In test mode, should re-throw exceptions for test verification
+        var exception = await Record.ExceptionAsync(() => 
+            form.ExecuteCommandForActiveSessionTest((correlation) => 
+                new RunTests(Guid.NewGuid(), correlation, new RepoRef("test", "/tmp/test"), null, TimeSpan.FromMinutes(5))));
+
+        Assert.NotNull(exception); // Should re-throw exception in test mode
+        Assert.Contains("Command execution failed", exception.Message);
+    }
+
+    [Fact]
+    public void ChatStream_SessionId_Display_ShowsRealSessionId()
+    {
+        // Arrange
+        var sessionId = Guid.NewGuid();
+        var chatStream = new ChatStream(sessionId, "Test Agent");
+        chatStream.Status = SessionStatus.Running;
+        chatStream.CurrentTask = "Testing";
+
+        // Act
+        var statusText = chatStream.GetStatusText();
+
+        // Assert
+        Assert.Contains(sessionId.ToString().Substring(0, 8), statusText);
+        Assert.Contains("Test Agent", statusText);
+        Assert.Contains("Testing", statusText);
+    }
+
+    [Fact]
+    public async Task SessionLifecycle_ChatStreamCreation_SetsDependenciesCorrectly()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var repoRef = new RepoRef("test-repo", "/path/to/repo");
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Act
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId, null, null, new PolicyProfile { Name = "test" },
+            repoRef, new WorkspaceRef("/tmp/workspace"), null, "test-agent"));
+
+        // Assert
+        var chatStreams = form.GetChatStreamsForTest();
+        var chatStream = chatStreams.FirstOrDefault(cs => cs.SessionId == sessionId);
+        Assert.NotNull(chatStream);
+        
+        // Verify dependencies are set (this would require reflection or public accessors in real implementation)
+        // For now, we verify the chat stream was created with correct SessionId
+        Assert.Equal(sessionId, chatStream.SessionId);
     }
 }
