@@ -249,7 +249,7 @@ public class GauntletSmokeTest
             // Override with real adapters for live mode
             if (hasJiraConfig)
             {
-                services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter());
+                services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter(appConfig));
                 _output.WriteLine("Using real Jira adapter");
             }
             else
@@ -263,34 +263,38 @@ public class GauntletSmokeTest
                 AllowPush = Environment.GetEnvironmentVariable("RUN_LIVE_PUSH") == "1",
                 IsIntegrationTest = true
             }, isFake: false));
-            services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.GitHub.GitHubAdapter());
+            services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.GitHub.GitHubAdapter(appConfig));
             _output.WriteLine("Using real Git and GitHub adapters");
         }
         else if (useLiveAdapters && appConfig == null)
         {
-            // Config failed to load, but we have environment variables - set them up manually
-            _output.WriteLine("Config failed to load, using environment variables directly");
+            // Config failed to load, but we have environment variables - create minimal AppConfig from env vars
+            _output.WriteLine("Config failed to load, creating minimal config from environment variables");
             
-            // Ensure environment variables are set for adapters
-            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GITHUB_TOKEN")))
+            // Create minimal AppConfig from environment variables
+            var envAppConfig = new AppConfig
             {
-                Environment.SetEnvironmentVariable("GITHUB_TOKEN", Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__GITHUB__TOKEN"));
-            }
-            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GITHUB_REPO")))
-            {
-                var repo = Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__GITHUB__DEFAULTREPO") ?? "owner/repo";
-                Environment.SetEnvironmentVariable("GITHUB_REPO", repo);
-            }
-            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_TOKEN")))
-            {
-                Environment.SetEnvironmentVariable("GIT_TOKEN", Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__GIT__PERSONALACCESSTOKEN"));
-            }
+                Auth = new AuthConfig
+                {
+                    GitHub = new GitHubAuthConfig(
+                        Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__GITHUB__TOKEN") ?? 
+                        Environment.GetEnvironmentVariable("GITHUB_TOKEN") ?? "dummy-token",
+                        null, // DefaultOrg
+                        null  // DefaultRepo
+                    ),
+                    Jira = hasJiraConfig ? new JiraAuthConfig(
+                        Environment.GetEnvironmentVariable("JIRA_URL") ?? "https://dummy.atlassian.net",
+                        Environment.GetEnvironmentVariable("JIRA_USER") ?? "dummy-user",
+                        Environment.GetEnvironmentVariable("JIRA_TOKEN") ?? "dummy-token"
+                    ) : null
+                }
+            };
 
-            // Register adapters
+            // Register adapters with the constructed config
             if (hasJiraConfig)
             {
-                services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter());
-                _output.WriteLine("Using real Jira adapter");
+                services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter(envAppConfig));
+                _output.WriteLine("Using real Jira adapter (from env vars)");
             }
             else
             {
@@ -303,7 +307,7 @@ public class GauntletSmokeTest
                 AllowPush = Environment.GetEnvironmentVariable("RUN_LIVE_PUSH") == "1",
                 IsIntegrationTest = true
             }, isFake: false));
-            services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.GitHub.GitHubAdapter());
+            services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.GitHub.GitHubAdapter(envAppConfig));
             _output.WriteLine("Using real Git and GitHub adapters (from env vars)");
         }
         else

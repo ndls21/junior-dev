@@ -24,7 +24,14 @@ public class JiraAdapterIntegrationTests
         if (!string.IsNullOrEmpty(baseUrl) && !string.IsNullOrEmpty(username) &&
             !string.IsNullOrEmpty(apiToken) && !string.IsNullOrEmpty(projectKey))
         {
-            _adapter = new JiraAdapter();
+            var appConfig = new AppConfig
+            {
+                Auth = new AuthConfig
+                {
+                    Jira = new JiraAuthConfig(baseUrl, username, apiToken)
+                }
+            };
+            _adapter = new JiraAdapter(appConfig);
         }
         // If environment variables are not set, _adapter remains null and tests will be skipped
     }
@@ -140,7 +147,17 @@ public class JiraAdapterIntegrationTests
             Environment.SetEnvironmentVariable("JIRA_USERNAME", "invalid");
             Environment.SetEnvironmentVariable("JIRA_API_TOKEN", "invalid");
 
-            var invalidAdapter = new JiraAdapter();
+            var invalidAppConfig = new AppConfig
+            {
+                Auth = new AuthConfig
+                {
+                    Jira = new JiraAuthConfig(
+                        Environment.GetEnvironmentVariable("JIRA_BASE_URL") ?? "https://invalid.atlassian.net",
+                        "invalid",
+                        "invalid")
+                }
+            };
+            var invalidAdapter = new JiraAdapter(invalidAppConfig);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),
@@ -189,7 +206,17 @@ public class JiraAdapterIntegrationTests
             Environment.SetEnvironmentVariable("JIRA_USERNAME", "invalid");
             Environment.SetEnvironmentVariable("JIRA_API_TOKEN", "invalid");
 
-            var invalidAdapter = new JiraAdapter();
+            var invalidAppConfig = new AppConfig
+            {
+                Auth = new AuthConfig
+                {
+                    Jira = new JiraAuthConfig(
+                        Environment.GetEnvironmentVariable("JIRA_BASE_URL") ?? "https://invalid.atlassian.net",
+                        "invalid",
+                        "invalid")
+                }
+            };
+            var invalidAdapter = new JiraAdapter(invalidAppConfig);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),
@@ -237,7 +264,17 @@ public class JiraAdapterIntegrationTests
             Environment.SetEnvironmentVariable("JIRA_USERNAME", "invalid");
             Environment.SetEnvironmentVariable("JIRA_API_TOKEN", "invalid");
 
-            var invalidAdapter = new JiraAdapter();
+            var invalidAppConfig = new AppConfig
+            {
+                Auth = new AuthConfig
+                {
+                    Jira = new JiraAuthConfig(
+                        Environment.GetEnvironmentVariable("JIRA_BASE_URL") ?? "https://invalid.atlassian.net",
+                        "invalid",
+                        "invalid")
+                }
+            };
+            var invalidAdapter = new JiraAdapter(invalidAppConfig);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),

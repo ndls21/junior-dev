@@ -10,12 +10,24 @@ public class GitHubAdapter : IAdapter
 {
     private readonly HttpClient _httpClient;
     private readonly string _repo;
+    private readonly bool _dryRun;
 
-    public GitHubAdapter()
+    public GitHubAdapter(AppConfig appConfig)
     {
-        var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
-        _repo = Environment.GetEnvironmentVariable("GITHUB_REPO") ?? "owner/repo";
-        var baseUrl = Environment.GetEnvironmentVariable("GITHUB_BASE_URL") ?? "https://api.github.com";
+        _dryRun = appConfig.LivePolicy?.DryRun ?? true;
+
+        var gitHubAuth = appConfig.Auth?.GitHub;
+        if (gitHubAuth == null || string.IsNullOrEmpty(gitHubAuth.Token))
+        {
+            throw new InvalidOperationException("GitHub authentication configuration is missing. Please configure AppConfig.Auth.GitHub.Token in appsettings.json or environment variables.");
+        }
+
+        var token = gitHubAuth.Token;
+        _repo = !string.IsNullOrEmpty(gitHubAuth.DefaultOrg) && !string.IsNullOrEmpty(gitHubAuth.DefaultRepo)
+            ? $"{gitHubAuth.DefaultOrg}/{gitHubAuth.DefaultRepo}"
+            : "owner/repo"; // fallback
+
+        var baseUrl = "https://api.github.com";
 
         _httpClient = new HttpClient { BaseAddress = new Uri(baseUrl) };
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -35,6 +47,16 @@ public class GitHubAdapter : IAdapter
         };
 
         await session.AddEvent(new CommandAccepted(Guid.NewGuid(), correlation, command.Id));
+
+        // Check for dry-run mode
+        if (_dryRun)
+        {
+            await session.AddEvent(new CommandCompleted(Guid.NewGuid(), correlation, command.Id, CommandOutcome.Success));
+
+            var artifact = new Artifact("text", "GitHub Issue Updated (Dry Run)", InlineText: "Command would be executed (dry-run mode)", ContentType: "text/plain");
+            await session.AddEvent(new ArtifactAvailable(Guid.NewGuid(), correlation, artifact));
+            return;
+        }
 
         try
         {

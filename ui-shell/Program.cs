@@ -173,19 +173,29 @@ static class Program
 
     private static void RegisterAdapters(IServiceCollection services, IConfiguration configuration)
     {
-        var useLiveAdapters = configuration.GetValue<bool>("UseLiveAdapters", false);
+        var appConfig = JuniorDev.Contracts.ConfigBuilder.GetAppConfig(configuration);
+        var adapters = appConfig.Adapters ?? new AdaptersConfig("fake", "fake", "powershell");
 
-        if (useLiveAdapters)
+        // Validate live adapter configuration if any live adapters are selected
+        ConfigBuilder.ValidateLiveAdapters(appConfig);
+
+        // Register work items adapter based on configuration
+        if (adapters.WorkItemsAdapter?.ToLower() == "github")
         {
-            // Register live adapters
-            services.AddGitHubWorkItemAdapter();
-            services.AddWorkItemAdapters(useReal: true);
-            services.AddVcsGitAdapter(new VcsConfig(), isFake: false);
+            services.AddGitHubWorkItemAdapter(appConfig);
         }
-        else
+        else if (adapters.WorkItemsAdapter?.ToLower() == "jira")
         {
-            // Register mock adapters for testing (already registered by orchestrator)
+            services.AddWorkItemAdapters(appConfig, useReal: true);
         }
+        // Default to fake adapters if not specified or set to "fake"
+
+        // Register VCS adapter based on configuration
+        if (adapters.VcsAdapter?.ToLower() == "git")
+        {
+            services.AddVcsGitAdapter(new VcsConfig(), isFake: false, appConfig);
+        }
+        // Default to fake VCS adapter if not specified or set to "fake"
     }
 
     private static string FindWorkspaceRoot()

@@ -30,30 +30,67 @@ Junior Dev uses a layered configuration approach with Microsoft.Extensions.Confi
 
 ### Jira Authentication
 
-Set these environment variables:
+Set these environment variables or configure in `appsettings.json`:
 
 ```bash
-# Required
+# Required for live Jira integration
 JUNIORDEV__APPCONFIG__AUTH__JIRA__BASEURL=https://yourcompany.atlassian.net
 JUNIORDEV__APPCONFIG__AUTH__JIRA__USERNAME=your.email@company.com
 JUNIORDEV__APPCONFIG__AUTH__JIRA__APITOKEN=your_jira_api_token
 
-# Or use user secrets (development)
-dotnet user-secrets set "AppConfig:Auth:Jira:BaseUrl" "https://yourcompany.atlassian.net"
-dotnet user-secrets set "AppConfig:Auth:Jira:Username" "your.email@company.com"
-dotnet user-secrets set "AppConfig:Auth:Jira:ApiToken" "your_jira_api_token"
+# Optional: Default project key (can be overridden per command)
+JUNIORDEV__APPCONFIG__AUTH__JIRA__PROJECTKEY=PROJ
 ```
+
+Or in `appsettings.json`:
+
+```json
+{
+  "AppConfig": {
+    "Auth": {
+      "Jira": {
+        "BaseUrl": "https://yourcompany.atlassian.net",
+        "Username": "your.email@company.com",
+        "ApiToken": "your_jira_api_token"
+      }
+    }
+  }
+}
+```
+
+**Note:** The project key is used as a fallback when work item IDs don't include it (e.g., "PROJ-123" vs "123").
 
 ### GitHub Authentication
 
 ```bash
-# Personal Access Token
-JUNIORDEV__APPCONFIG__AUTH__GITHUB__TOKEN=your_github_token
+# Required for live GitHub integration
+JUNIORDEV__APPCONFIG__AUTH__GITHUB__TOKEN=your_github_personal_access_token
 
-# Optional defaults
-JUNIORDEV__APPCONFIG__AUTH__GITHUB__DEFAULTORG=your-org
+# Optional defaults (used when not specified in commands)
+JUNIORDEV__APPCONFIG__AUTH__GITHUB__DEFAULTORG=your-organization
 JUNIORDEV__APPCONFIG__AUTH__GITHUB__DEFAULTREPO=your-repo
 ```
+
+Or in `appsettings.json`:
+
+```json
+{
+  "AppConfig": {
+    "Auth": {
+      "GitHub": {
+        "Token": "your_github_token",
+        "DefaultOrg": "your-org",
+        "DefaultRepo": "your-repo"
+      }
+    }
+  }
+}
+```
+
+**GitHub Token Requirements:**
+- Must have `repo` scope for issue operations
+- Must have `read:org` scope if working with organization repositories
+- Personal Access Token (classic) or fine-grained token with appropriate permissions
 
 ### Git Authentication
 
@@ -139,7 +176,20 @@ jobs:
 - Tests marked with `[Trait("Category", "AI")]` and use test collection `"AI Integration Tests"`
 - Dummy clients prevent crashes when AI is not configured for UI/agent testing
 
-## Adapter Selection
+## Live Adapter Configuration
+
+### Safe Defaults Policy
+
+Junior Dev prioritizes safety by defaulting to mock/fake adapters that don't make real API calls. This prevents accidental data modification or API usage during development and testing.
+
+**Default Behavior:**
+- **Base configuration** (`appsettings.json`) ships with fake adapters to prevent accidental live operations
+- Adapters default to `"fake"` when not specified or set to `"fake"`
+- Live adapters (`"github"`, `"jira"`, `"git"`) require explicit configuration
+- Push operations are disabled by default
+- Dry-run mode is enabled by default for live operations
+
+### Adapter Selection
 
 Configure which adapters to use in `appsettings.json`:
 
@@ -147,13 +197,68 @@ Configure which adapters to use in `appsettings.json`:
 {
   "AppConfig": {
     "Adapters": {
-      "WorkItemsAdapter": "jira",  // or "github"
-      "VcsAdapter": "git",         // only "git" supported
-      "TerminalAdapter": "powershell"  // or "bash" (powershell on Windows)
+      "WorkItemsAdapter": "fake",  // "fake" (default), "github", or "jira"
+      "VcsAdapter": "fake",        // "fake" (default) or "git"
+      "TerminalAdapter": "powershell"
     }
   }
 }
 ```
+
+**Adapter Options:**
+- **WorkItemsAdapter**: `"fake"` (mock), `"github"` (real GitHub), `"jira"` (real Jira)
+- **VcsAdapter**: `"fake"` (mock), `"git"` (real Git operations)
+- **TerminalAdapter**: `"powershell"` (Windows), `"bash"` (Linux/macOS)
+
+### Live Policy Configuration
+
+Control live adapter behavior with the `LivePolicy` section:
+
+```json
+{
+  "AppConfig": {
+    "LivePolicy": {
+      "PushEnabled": false,        // Default: false - require explicit opt-in for push operations
+      "DryRun": true,             // Default: true - require explicit opt-in for live operations
+      "RequireCredentialsValidation": true  // Whether to validate credentials before allowing live adapters
+    }
+  }
+}
+```
+
+**LivePolicy Settings:**
+- **PushEnabled**: Controls whether VCS push operations are allowed (default: `false`)
+- **DryRun**: When `true`, adapters skip actual API calls and return success with dry-run artifacts (default: `true`)
+- **RequireCredentialsValidation**: Whether to validate credentials at startup when using live adapters (default: `true`)
+
+### Enabling Live Operations
+
+To enable real API calls and push operations:
+
+```json
+{
+  "AppConfig": {
+    "Adapters": {
+      "WorkItemsAdapter": "github",
+      "VcsAdapter": "git"
+    },
+    "LivePolicy": {
+      "PushEnabled": true,
+      "DryRun": false
+    }
+  }
+}
+```
+
+### Dry-Run Mode
+
+When `LivePolicy.DryRun` is `true`, adapters will:
+- Accept commands normally
+- Skip actual API calls
+- Return success events with dry-run indicators
+- Create artifacts showing what would have been executed
+
+This allows testing workflows without making real changes.
 
 ## Semantic Kernel Configuration
 

@@ -809,5 +809,154 @@ public class ConfigurationTests
             Environment.SetEnvironmentVariable("JUNIORDEV__AppConfig__SemanticKernel__DefaultModel", null);
         }
     }
+
+    [Fact]
+    public void ValidateLiveAdapterCredentials_SucceedsWithValidConfig()
+    {
+        // Arrange
+        var appConfig = new AppConfig
+        {
+            Adapters = new AdaptersConfig("github", "git", "powershell"),
+            Auth = new AuthConfig
+            {
+                GitHub = new GitHubAuthConfig("ghp_1234567890abcdef")
+            }
+        };
+
+        // Act & Assert - Should not throw exception
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapterCredentials(appConfig));
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void ValidateLiveAdapterCredentials_FailsWithMissingGitHubConfig()
+    {
+        // Arrange
+        var appConfig = new AppConfig
+        {
+            Adapters = new AdaptersConfig("github", "git", "powershell")
+        };
+
+        // Act & Assert - Should throw with specific error
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapterCredentials(appConfig));
+        Assert.NotNull(exception);
+        Assert.Contains("GitHub authentication not configured", exception.Message);
+    }
+
+    [Fact]
+    public void ValidateLiveAdapterCredentials_FailsWithIncompleteJiraConfig()
+    {
+        // Arrange
+        var appConfig = new AppConfig
+        {
+            Adapters = new AdaptersConfig("jira", "git", "powershell"),
+            Auth = new AuthConfig
+            {
+                Jira = new JiraAuthConfig("", "user@company.com", "api-token-123")
+            }
+        };
+
+        // Act & Assert - Should throw with specific error
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapterCredentials(appConfig));
+        Assert.NotNull(exception);
+        Assert.Contains("Jira BaseUrl is required", exception.Message);
+    }
+
+    [Fact]
+    public void ValidateLiveAdapters_SucceedsWithFakeAdapters()
+    {
+        // Arrange
+        var appConfig = new AppConfig
+        {
+            Adapters = new AdaptersConfig("fake", "fake", "powershell"),
+            LivePolicy = new LivePolicyConfig { RequireCredentialsValidation = true }
+        };
+
+        // Act & Assert - Should not throw exception
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapters(appConfig));
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void ValidateLiveAdapters_SucceedsWithLiveAdaptersAndValidCreds()
+    {
+        // Arrange
+        var appConfig = new AppConfig
+        {
+            Adapters = new AdaptersConfig("github", "git", "powershell"),
+            Auth = new AuthConfig
+            {
+                GitHub = new GitHubAuthConfig("ghp_1234567890abcdef")
+            },
+            LivePolicy = new LivePolicyConfig { RequireCredentialsValidation = true }
+        };
+
+        // Act & Assert - Should not throw exception
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapters(appConfig));
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void ValidateLiveAdapters_SucceedsWithLiveAdaptersAndValidationDisabled()
+    {
+        // Arrange
+        var appConfig = new AppConfig
+        {
+            Adapters = new AdaptersConfig("github", "git", "powershell"),
+            LivePolicy = new LivePolicyConfig { RequireCredentialsValidation = false }
+        };
+
+        // Act & Assert - Should not throw exception even without creds
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapters(appConfig));
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void ValidateLiveAdapters_FailsWithLiveAdaptersAndMissingCreds()
+    {
+        // Arrange
+        var appConfig = new AppConfig
+        {
+            Adapters = new AdaptersConfig("github", "git", "powershell"),
+            LivePolicy = new LivePolicyConfig { RequireCredentialsValidation = true }
+        };
+
+        // Act & Assert - Should throw with specific error
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapters(appConfig));
+        Assert.NotNull(exception);
+        Assert.Contains("Live adapter credentials validation failed", exception.Message);
+    }
+
+    [Fact]
+    public void AppConfig_DefaultsToNullAdapters_WhenNotConfigured()
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string>("AppConfig:SemanticKernel:DefaultProvider", "openai"),
+                new KeyValuePair<string, string>("AppConfig:SemanticKernel:DefaultModel", "gpt-4")
+            })
+            .Build();
+
+        // Act
+        var appConfig = ConfigBuilder.GetAppConfig(configuration);
+
+        // Assert
+        Assert.NotNull(appConfig);
+        Assert.Null(appConfig.Adapters); // Should be null when not configured
+    }
+
+    [Fact]
+    public void LivePolicyConfig_HasSafeDefaults()
+    {
+        // Arrange & Act
+        var livePolicy = new LivePolicyConfig();
+
+        // Assert
+        Assert.False(livePolicy.PushEnabled);
+        Assert.True(livePolicy.DryRun);
+        Assert.True(livePolicy.RequireCredentialsValidation);
+    }
 }
 }

@@ -197,6 +197,7 @@ public sealed record AppConfig(
     UiConfig? Ui = null,
     WorkspaceConfig? Workspace = null,
     PolicyConfig? Policy = null,
+    LivePolicyConfig? LivePolicy = null,
     TranscriptConfig? Transcript = null);
 
 /// <summary>
@@ -372,6 +373,14 @@ public sealed record PolicyConfig(
     RateLimits GlobalLimits);
 
 /// <summary>
+/// Live adapter policy configuration for safety defaults
+/// </summary>
+public sealed record LivePolicyConfig(
+    bool PushEnabled = false, // Default to false for safety - require explicit opt-in for push operations
+    bool DryRun = true, // Default to true for safety - require explicit opt-in for live operations
+    bool RequireCredentialsValidation = true); // Whether to validate credentials before allowing live adapters
+
+/// <summary>
 /// Transcript persistence configuration
 /// </summary>
 public sealed record TranscriptConfig(
@@ -423,5 +432,86 @@ public static class ConfigBuilder
     public static AppConfig GetAppConfig(IConfiguration configuration)
     {
         return configuration.GetSection("AppConfig").Get<AppConfig>() ?? new AppConfig();
+    }
+
+    /// <summary>
+    /// Validates live adapter configuration and credentials.
+    /// This should be called when live adapters are configured to ensure safety settings are honored.
+    /// </summary>
+    public static void ValidateLiveAdapters(AppConfig appConfig)
+    {
+        var adapters = appConfig.Adapters ?? new AdaptersConfig("fake", "fake", "powershell");
+        var livePolicy = appConfig.LivePolicy ?? new LivePolicyConfig();
+
+        // Check if any live adapters are configured
+        bool hasLiveAdapters = 
+            (adapters.WorkItemsAdapter?.ToLower() == "github" || adapters.WorkItemsAdapter?.ToLower() == "jira") ||
+            adapters.VcsAdapter?.ToLower() == "git";
+
+        if (hasLiveAdapters && livePolicy.RequireCredentialsValidation)
+        {
+            // Validate credentials for live adapters
+            try
+            {
+                ValidateLiveAdapterCredentials(appConfig);
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException("Live adapter credentials validation failed: " + ex.Message, ex);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Validates that authentication credentials are properly configured for live adapters.
+    /// This method validates credentials for the adapters that are configured to be live.
+    /// </summary>
+    /// <param name="appConfig">The application configuration to validate.</param>
+    /// <exception cref="InvalidOperationException">Thrown when required credentials are missing or incomplete.</exception>
+    public static void ValidateLiveAdapterCredentials(AppConfig appConfig)
+    {
+        var adapters = appConfig.Adapters ?? new AdaptersConfig("fake", "fake", "powershell");
+        var auth = appConfig.Auth ?? new AuthConfig();
+
+        // Validate GitHub adapter credentials if configured
+        if (adapters.WorkItemsAdapter?.ToLower() == "github")
+        {
+            if (auth.GitHub == null)
+            {
+                throw new InvalidOperationException("GitHub authentication not configured. Please configure GitHub credentials in the Auth section.");
+            }
+            if (string.IsNullOrWhiteSpace(auth.GitHub.Token))
+            {
+                throw new InvalidOperationException("GitHub Token is required but not configured.");
+            }
+        }
+
+        // Validate Jira adapter credentials if configured
+        if (adapters.WorkItemsAdapter?.ToLower() == "jira")
+        {
+            if (auth.Jira == null)
+            {
+                throw new InvalidOperationException("Jira authentication not configured. Please configure Jira credentials in the Auth section.");
+            }
+            if (string.IsNullOrWhiteSpace(auth.Jira.BaseUrl))
+            {
+                throw new InvalidOperationException("Jira BaseUrl is required but not configured.");
+            }
+            if (string.IsNullOrWhiteSpace(auth.Jira.Username))
+            {
+                throw new InvalidOperationException("Jira Username is required but not configured.");
+            }
+            if (string.IsNullOrWhiteSpace(auth.Jira.ApiToken))
+            {
+                throw new InvalidOperationException("Jira ApiToken is required but not configured.");
+            }
+        }
+
+        // Validate VCS adapter credentials if configured for git
+        if (adapters.VcsAdapter?.ToLower() == "git")
+        {
+            // Git adapter typically doesn't need explicit auth config in this setup
+            // as it uses system git config or SSH keys, but we could add validation here if needed
+        }
     }
 }

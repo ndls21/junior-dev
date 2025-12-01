@@ -1,21 +1,22 @@
 using Microsoft.Extensions.DependencyInjection;
+using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
 
 namespace JuniorDev.WorkItems.Jira;
 
 public static class WorkItemAdapterExtensions
 {
-    public static IServiceCollection AddWorkItemAdapters(this IServiceCollection services, bool useReal = false)
+    public static IServiceCollection AddWorkItemAdapters(this IServiceCollection services, AppConfig appConfig, bool useReal = false)
     {
-        var hasEnv =
-            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JIRA_URL")) &&
-            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JIRA_USER")) &&
-            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JIRA_TOKEN")) &&
-            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JIRA_PROJECT"));
+        var jiraAuth = appConfig.Auth?.Jira;
+        var hasJiraConfig = jiraAuth != null &&
+                           !string.IsNullOrEmpty(jiraAuth.BaseUrl) &&
+                           !string.IsNullOrEmpty(jiraAuth.Username) &&
+                           !string.IsNullOrEmpty(jiraAuth.ApiToken);
 
-        if (useReal && hasEnv)
+        if (useReal && hasJiraConfig)
         {
-            services.AddSingleton<IAdapter, JiraAdapter>();
+            services.AddSingleton<IAdapter>(sp => new JiraAdapter(appConfig));
         }
         else
         {

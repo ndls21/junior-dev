@@ -21,7 +21,14 @@ public class GitHubAdapterIntegrationTests
 
         if (!string.IsNullOrEmpty(token) && !string.IsNullOrEmpty(repo))
         {
-            _adapter = new GitHubAdapter();
+            var appConfig = new AppConfig
+            {
+                Auth = new AuthConfig
+                {
+                    GitHub = new GitHubAuthConfig(token, repo.Split('/')[0], repo.Split('/')[1])
+                }
+            };
+            _adapter = new GitHubAdapter(appConfig);
         }
         // If environment variables are not set, _adapter remains null and tests will be skipped
     }
@@ -126,7 +133,14 @@ public class GitHubAdapterIntegrationTests
         {
             Environment.SetEnvironmentVariable("GITHUB_TOKEN", "invalid");
 
-            var invalidAdapter = new GitHubAdapter();
+            var invalidAppConfig = new AppConfig
+            {
+                Auth = new AuthConfig
+                {
+                    GitHub = new GitHubAuthConfig("invalid", "test", "repo")
+                }
+            };
+            var invalidAdapter = new GitHubAdapter(invalidAppConfig);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),
@@ -172,7 +186,14 @@ public class GitHubAdapterIntegrationTests
         {
             Environment.SetEnvironmentVariable("GITHUB_TOKEN", "invalid");
 
-            var invalidAdapter = new GitHubAdapter();
+            var invalidAppConfig = new AppConfig
+            {
+                Auth = new AuthConfig
+                {
+                    GitHub = new GitHubAuthConfig("invalid", "test", "repo")
+                }
+            };
+            var invalidAdapter = new GitHubAdapter(invalidAppConfig);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),
@@ -217,7 +238,14 @@ public class GitHubAdapterIntegrationTests
         {
             Environment.SetEnvironmentVariable("GITHUB_TOKEN", "invalid");
 
-            var invalidAdapter = new GitHubAdapter();
+            var invalidAppConfig = new AppConfig
+            {
+                Auth = new AuthConfig
+                {
+                    GitHub = new GitHubAuthConfig("invalid", "test", "repo")
+                }
+            };
+            var invalidAdapter = new GitHubAdapter(invalidAppConfig);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),

@@ -10,13 +10,15 @@ public class VcsGitAdapter : IAdapter
 {
     private readonly bool _isFake;
     private readonly VcsConfig _config;
+    private readonly AppConfig _appConfig;
     private readonly Dictionary<string, List<string>> _fakeBranches = new();
     private readonly Dictionary<string, List<string>> _fakeCommits = new();
 
-    public VcsGitAdapter(VcsConfig config, bool isFake = false)
+    public VcsGitAdapter(VcsConfig config, bool isFake = false, AppConfig? appConfig = null)
     {
         _config = config;
         _isFake = isFake;
+        _appConfig = appConfig ?? new AppConfig();
     }
 
     public bool CanHandle(ICommand command)
@@ -186,7 +188,7 @@ public class VcsGitAdapter : IAdapter
                 await session.AddEvent(commitEvent);
                 break;
             case Push p:
-                if (!_config.AllowPush)
+                if (!_config.AllowPush || !(_appConfig.LivePolicy?.PushEnabled ?? false))
                 {
                     await EmitCommandCompletedFailure(session, command, "Push is disabled");
                     return;

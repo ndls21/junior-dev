@@ -25,6 +25,7 @@ Junior Dev is a .NET-based platform for AI-assisted software development, featur
 - **Issue Closure**: Don't auto-close; wait for explicit go-ahead. Commit/push when transitioning between issues.
 - **Commit Message Convention**: Include stage/codename when applicable and issue number (e.g., `Dock – fix: vcs adapter (#10)`).
 - **Test Issue Investigation**: Investigate failing tests before changing them; tests are the expected-behavior source of truth.
+- **Change verification policy**: Always verify code changes, edits, or test runs immediately after applying them using tools like read_file, run_in_terminal, or grep_search to confirm the actual state of the workspace before summarizing progress, reporting completion, or proceeding to the next step. Do not assume success based on tool call responses alone—explicitly check the codebase to prevent inaccurate reports.
 - **Transparency**: Announce major changes (resets, refactors, pivots) and impact; get consent before disruptive actions.
 
 ## Conventions and Patterns

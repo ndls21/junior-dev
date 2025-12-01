@@ -19,61 +19,26 @@ public class JiraAdapter : IAdapter
     private readonly string _baseUrl;
     private readonly string _projectKey;
     private readonly string _authHeader;
-    private async Task<HttpResponseMessage> ExecuteWithRetry(Func<Task<HttpResponseMessage>> operation)
+    private readonly bool _dryRun;
+
+    public JiraAdapter(AppConfig appConfig)
     {
-        var delay = TimeSpan.FromMilliseconds(BaseDelayMs);
+        _dryRun = appConfig.LivePolicy?.DryRun ?? true;
 
-        for (int attempt = 0; attempt <= MaxRetries; attempt++)
+        var jiraAuth = appConfig.Auth?.Jira;
+        if (jiraAuth == null)
         {
-            try
-            {
-                var response = await operation();
-                if (response.IsSuccessStatusCode || attempt == MaxRetries)
-                {
-                    return response;
-                }
-
-                // For transient errors, retry
-                if (attempt < MaxRetries && IsTransientError(response.StatusCode))
-                {
-                    await Task.Delay(delay);
-                    delay = delay * 2; // Exponential backoff
-                }
-                else
-                {
-                    return response;
-                }
-            }
-            catch (HttpRequestException) when (attempt < MaxRetries)
-            {
-                // Network errors are transient, retry
-                await Task.Delay(delay);
-                delay = delay * 2;
-            }
+            throw new InvalidOperationException("Jira authentication configuration is missing. Please configure AppConfig.Auth.Jira in appsettings.json or environment variables.");
         }
 
-        throw new InvalidOperationException("Retry logic failed unexpectedly");
-    }
+        _baseUrl = jiraAuth.BaseUrl ?? throw new InvalidOperationException("Jira BaseUrl is not configured");
+        _projectKey = Environment.GetEnvironmentVariable("JIRA_PROJECT") ?? "PROJ"; // Default fallback
 
-    private bool IsTransientError(System.Net.HttpStatusCode statusCode)
-    {
-        return statusCode == System.Net.HttpStatusCode.RequestTimeout ||
-               statusCode == System.Net.HttpStatusCode.InternalServerError ||
-               statusCode == System.Net.HttpStatusCode.BadGateway ||
-               statusCode == System.Net.HttpStatusCode.ServiceUnavailable ||
-               statusCode == System.Net.HttpStatusCode.GatewayTimeout;
-    } // 1 second
+        var username = jiraAuth.Username ?? throw new InvalidOperationException("Jira Username is not configured");
+        var token = jiraAuth.ApiToken ?? throw new InvalidOperationException("Jira ApiToken is not configured");
 
-    public JiraAdapter()
-    {
+        _authHeader = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{token}"));
         _httpClient = new HttpClient();
-        _baseUrl = Environment.GetEnvironmentVariable("JIRA_URL") ?? throw new InvalidOperationException("JIRA_URL environment variable not set");
-        _projectKey = Environment.GetEnvironmentVariable("JIRA_PROJECT") ?? throw new InvalidOperationException("JIRA_PROJECT environment variable not set");
-
-        var user = Environment.GetEnvironmentVariable("JIRA_USER") ?? throw new InvalidOperationException("JIRA_USER environment variable not set");
-        var token = Environment.GetEnvironmentVariable("JIRA_TOKEN") ?? throw new InvalidOperationException("JIRA_TOKEN environment variable not set");
-
-        _authHeader = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{user}:{token}"));
         _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", _authHeader);
     }
 
@@ -91,6 +56,29 @@ public class JiraAdapter : IAdapter
             command.Id);
 
         await session.AddEvent(acceptedEvent);
+
+        // Check for dry-run mode
+        if (_dryRun)
+        {
+            var dryRunEvent = new CommandCompleted(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Id,
+                CommandOutcome.Success);
+
+            await session.AddEvent(dryRunEvent);
+
+            var artifact = new Artifact(
+                "workitem-dry-run",
+                $"Dry Run: {command.GetType().Name}",
+                $"Command {command.GetType().Name} would be executed (dry-run mode)",
+                null,
+                null,
+                "text/plain");
+
+            await session.AddEvent(new ArtifactAvailable(Guid.NewGuid(), command.Correlation, artifact));
+            return;
+        }
 
         try
         {
@@ -124,7 +112,7 @@ public class JiraAdapter : IAdapter
                 Guid.NewGuid(),
                 command.Correlation,
                 command.Id,
-                "Authentication failed. Check JIRA_USER and JIRA_TOKEN environment variables.",
+                "Authentication failed. Check Jira credentials in configuration.",
                 "AUTH_ERROR");
 
             await session.AddEvent(rejectedEvent);
@@ -289,6 +277,33 @@ public class JiraAdapter : IAdapter
         }
         // Otherwise, prepend project key
         return $"{_projectKey}-{workItemId}";
+    }
+
+    private async Task<HttpResponseMessage> ExecuteWithRetry(Func<Task<HttpResponseMessage>> operation)
+    {
+        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        {
+            try
+            {
+                var response = await operation();
+                if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                    response.StatusCode == System.Net.HttpStatusCode.Forbidden || response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    return response;
+                }
+                // For other errors, retry
+            }
+            catch (HttpRequestException)
+            {
+                if (attempt == MaxRetries - 1) throw;
+            }
+
+            if (attempt < MaxRetries - 1)
+            {
+                await Task.Delay(BaseDelayMs * (int)Math.Pow(2, attempt));
+            }
+        }
+        throw new InvalidOperationException("Max retries exceeded");
     }
 
     private class JiraCommentResponse

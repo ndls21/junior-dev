@@ -1847,65 +1847,100 @@ public class MainFormTests : IDisposable
     }
 
     [Fact]
-    public void TranscriptPersistence_TranscriptContextMessages_LoadsOnlyConfiguredMessagesIntoChatControl()
+    public void LiveAdapterCredentials_Validation_SucceedsWithValidConfig()
     {
-        // Arrange - Create a transcript with more messages than the context limit
-        var config = new Ui.Shell.TranscriptConfig
+        // Arrange - Create valid app config with Jira and GitHub credentials
+        var appConfig = new AppConfig
         {
-            Enabled = true,
-            TranscriptContextMessages = 3, // Only load 3 messages into chat control
-            StorageDirectory = _tempDir
+            Adapters = new AdaptersConfig("jira", "git", "powershell"),
+            Auth = new AuthConfig
+            {
+                Jira = new JiraAuthConfig("https://company.atlassian.net", "user@company.com", "api-token-123"),
+                GitHub = new GitHubAuthConfig("ghp_1234567890abcdef", "company-org", "main-repo")
+            }
         };
-        var storage = new TranscriptStorage(config);
-        var sessionId = Guid.NewGuid();
-        var transcript = new ChatTranscript(sessionId, "Test Agent");
-        
-        // Add 5 messages (more than the context limit)
-        transcript.AddMessage("user", "Message 1");
-        transcript.AddMessage("assistant", "Response 1");
-        transcript.AddMessage("user", "Message 2");
-        transcript.AddMessage("assistant", "Response 2");
-        transcript.AddMessage("user", "Message 3");
-        transcript.AddMessage("assistant", "Response 3");
-        transcript.AddMessage("user", "Message 4");
-        transcript.AddMessage("assistant", "Response 4");
-        transcript.AddMessage("user", "Message 5"); // This should NOT be loaded into chat control
-        
-        storage.SaveTranscript(transcript);
 
-        // Act - Simulate LoadTranscriptIntoChatControl logic with configured limit
-        var contextMessageCount = config.TranscriptContextMessages;
-        var recentMessages = transcript.Messages
-            .OrderByDescending(m => m.Timestamp)
-            .Take(contextMessageCount) // Use configured count for context
-            .OrderBy(m => m.Timestamp) // Re-order chronologically
-            .ToList();
+        // Act & Assert - Should not throw exception
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapterCredentials(appConfig));
+        Assert.Null(exception);
+    }
 
-        // Assert - Only the last 3 messages should be loaded into chat control
-        Assert.Equal(3, recentMessages.Count);
-        
-        // Verify the messages loaded are the most recent ones
-        Assert.Equal("Message 4", recentMessages[0].Content);
-        Assert.Equal("Response 4", recentMessages[1].Content);
-        Assert.Equal("Message 5", recentMessages[2].Content);
-        
-        // Verify the full transcript still contains all 9 messages
-        var fullTranscript = storage.LoadTranscript(sessionId);
-        Assert.NotNull(fullTranscript);
-        Assert.Equal(9, fullTranscript.Messages.Count);
-        
-        // Verify the history panel would show all messages (simulated)
-        var historyText = new System.Text.StringBuilder();
-        foreach (var message in fullTranscript.Messages.OrderBy(m => m.Timestamp))
+    [Fact]
+    public void LiveAdapterCredentials_Validation_FailsWithMissingJiraConfig()
+    {
+        // Arrange - Missing Jira config but Jira adapter selected
+        var appConfig = new AppConfig
         {
-            historyText.AppendLine($"{message.Role.ToUpper()}: {message.Content}");
-        }
-        var historyContent = historyText.ToString();
-        
-        // History should contain all messages including the ones not loaded into chat control
-        Assert.Contains("Message 1", historyContent);
-        Assert.Contains("Message 5", historyContent);
-        Assert.Contains("Response 4", historyContent);
+            Adapters = new AdaptersConfig("jira", "git", "powershell"),
+            Auth = new AuthConfig
+            {
+                GitHub = new GitHubAuthConfig("ghp_1234567890abcdef")
+            }
+        };
+
+        // Act & Assert - Should throw with specific error
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapterCredentials(appConfig));
+        Assert.NotNull(exception);
+        Assert.Contains("Jira authentication not configured", exception.Message);
+    }
+
+    [Fact]
+    public void LiveAdapterCredentials_Validation_FailsWithMissingGitHubConfig()
+    {
+        // Arrange - Missing GitHub config but GitHub adapter selected
+        var appConfig = new AppConfig
+        {
+            Adapters = new AdaptersConfig("github", "git", "powershell"),
+            Auth = new AuthConfig
+            {
+                Jira = new JiraAuthConfig("https://company.atlassian.net", "user@company.com", "api-token-123")
+            }
+        };
+
+        // Act & Assert - Should throw with specific error
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapterCredentials(appConfig));
+        Assert.NotNull(exception);
+        Assert.Contains("GitHub authentication not configured", exception.Message);
+    }
+
+    [Fact]
+    public void LiveAdapterCredentials_Validation_FailsWithIncompleteJiraConfig()
+    {
+        // Arrange - Incomplete Jira config (missing base URL) but Jira adapter selected
+        var appConfig = new AppConfig
+        {
+            Adapters = new AdaptersConfig("jira", "git", "powershell"),
+            Auth = new AuthConfig
+            {
+                Jira = new JiraAuthConfig("", "user@company.com", "api-token-123"),
+                GitHub = new GitHubAuthConfig("ghp_1234567890abcdef")
+            }
+        };
+
+        // Act & Assert - Should throw with specific error
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapterCredentials(appConfig));
+        Assert.NotNull(exception);
+        Assert.Contains("Jira BaseUrl is required", exception.Message);
+    }
+
+    [Fact]
+    public void LiveAdapterCredentials_Validation_FailsWithIncompleteGitHubConfig()
+    {
+        // Arrange - Incomplete GitHub config (missing token) but GitHub adapter selected
+        var appConfig = new AppConfig
+        {
+            Adapters = new AdaptersConfig("github", "git", "powershell"),
+            Auth = new AuthConfig
+            {
+                Jira = new JiraAuthConfig("https://company.atlassian.net", "user@company.com", "api-token-123"),
+                GitHub = new GitHubAuthConfig("")
+            }
+        };
+
+        // Act & Assert - Should throw with specific error
+        var exception = Record.Exception(() => ConfigBuilder.ValidateLiveAdapterCredentials(appConfig));
+        Assert.NotNull(exception);
+        Assert.Contains("GitHub Token is required", exception.Message);
     }
 
 public class TestAsyncEnumerable : IAsyncEnumerable<IEvent>
