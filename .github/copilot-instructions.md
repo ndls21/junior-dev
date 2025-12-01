@@ -18,7 +18,15 @@ These guidelines are reusable across projects. Project-specific guidance for thi
 ## Workflow & Collaboration
 - **Claiming work**: Link to or create a GitHub issue when you start. Reference the issue in TODOs (`// TODO: ... - Issue: #123`).
 - **Branching**: Prefer feature branches (`agent/<issue>-desc`). Always fetch from origin and branch off master to ensure you're at the tip and avoid merge conflicts. Work on `master` only for small, safe changes when approved; include issue/rationale in the commit message.
-- **Issue closure**: Don’t auto-close issues; wait for explicit go-ahead. Clean up and commit before switching issues.
+- **Issue closure**: Don't auto-close issues; wait for explicit go-ahead. Clean up and commit before switching issues.
+- **NEXT! ritual**: When completing an issue and ready to move to the next:
+  - Run full test suite to ensure no regressions
+  - Commit changes with descriptive message including issue reference
+  - Push to remote repository
+  - Close the completed issue
+  - Claim the next issue with a comment
+  - Create feature branch if needed (`agent/<issue>-short-desc`)
+  - Reference issue numbers in all TODOs
 - **Commit messages**: Include issue/stage context if applicable (e.g., `Feat: implement X (#123)`).
 - **Test failures**: Investigate code vs. test assumptions; don’t just change tests to make them pass.
 - **Stage transitions**: Before moving to a new development stage or completing a feature, run the full test suite (`dotnet test`) to ensure all tests pass and no regressions were introduced. This includes unit tests, integration tests, and UI tests. Never proceed to the next stage with failing tests.

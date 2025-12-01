@@ -22,7 +22,7 @@ Junior Dev is a .NET-based platform for AI-assisted software development, featur
 ## Copilot Workflow Rules (project)
 - **Claiming Work**: When picking up an issue, comment on it and link the work. Reference the issue number in TODOs.
 - **Branching Guidance**: Prefer feature branches `agent/<issue>-short-desc`. If working on `master`, include issue and rationale in commit.
-- **Issue Closure**: Don’t auto-close; wait for explicit “NEXT!” before closing. Commit/push when transitioning between issues.
+- **Issue Closure**: Don't auto-close; wait for explicit go-ahead. Commit/push when transitioning between issues.
 - **Commit Message Convention**: Include stage/codename when applicable and issue number (e.g., `Dock – fix: vcs adapter (#10)`).
 - **Test Issue Investigation**: Investigate failing tests before changing them; tests are the expected-behavior source of truth.
 - **Transparency**: Announce major changes (resets, refactors, pivots) and impact; get consent before disruptive actions.
