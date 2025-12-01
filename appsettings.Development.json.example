@@ -1,37 +1,14 @@
 {
   "AppConfig": {
-    "Auth": {
-      "Jira": {
-        "BaseUrl": "https://yourcompany.atlassian.net",
-        "Username": "your.email@company.com",
-        "ApiToken": "your-jira-api-token"
-      },
-      "GitHub": {
-        "Token": "ghp_your-github-personal-access-token",
-        "DefaultOrg": "your-org",
-        "DefaultRepo": "your-repo"
-      },
-      "Git": {
-        "SshKeyPath": "~/.ssh/id_rsa",
-        "PersonalAccessToken": "your-git-pat",
-        "UserName": "Your Name",
-        "UserEmail": "your.email@company.com",
-        "DefaultRemote": "origin"
-      },
-      "OpenAI": {
-        "ApiKey": "sk-your-openai-api-key",
-        "OrganizationId": "org-your-org-id"
-      },
-      "AzureOpenAI": {
-        "Endpoint": "https://your-resource.openai.azure.com/",
-        "ApiKey": "your-azure-api-key",
-        "DeploymentName": "your-deployment-name"
-      }
-    },
     "Adapters": {
       "WorkItemsAdapter": "github",
       "VcsAdapter": "git",
       "TerminalAdapter": "powershell"
+    },
+    "LivePolicy": {
+      "PushEnabled": false, // Default to false for safety - require explicit opt-in for push operations
+      "DryRun": true, // Default to true for safety - require explicit opt-in for live operations
+      "RequireCredentialsValidation": true // Whether to validate credentials before allowing live adapters
     },
     "LivePolicy": {
       "PushEnabled": false, // Default to false for safety - require explicit opt-in for push operations

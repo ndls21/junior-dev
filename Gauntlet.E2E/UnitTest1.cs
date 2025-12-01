@@ -133,6 +133,9 @@ public class GauntletSmokeTest
         {
             var config = ConfigBuilder.Build("Development", Path.GetFullPath("../../.."));
             appConfig = ConfigBuilder.GetAppConfig(config);
+            
+            // Validate live adapters before proceeding - this enforces LivePolicy safety
+            ConfigBuilder.ValidateLiveAdapters(appConfig);
         }
         catch (Exception ex)
         {
