@@ -26,6 +26,7 @@ These guidelines are reusable across projects. Project-specific guidance for thi
   - Close the completed issue
   - Claim the next issue with a comment
   - Reference issue numbers in all TODOs
+  - **ONTO command**: If you say "ONTO <issue_number>" instead of "NEXT!", perform the above ritual but jump to the specified issue number instead of claiming the next sequential issue. Only use this if the specified issue is open and available.
 - **Commit messages**: Include issue/stage context if applicable (e.g., `Feat: implement X (#123)`).
 - **Test failures**: Investigate code vs. test assumptions; don’t just change tests to make them pass.
 - **Stage transitions**: Before moving to a new development stage or completing a feature, run the full test suite (`dotnet test`) to ensure all tests pass and no regressions were introduced. This includes unit tests, integration tests, and UI tests. Never proceed to the next stage with failing tests.
