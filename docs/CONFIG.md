@@ -214,37 +214,61 @@ Configure which adapters to use in `appsettings.json`:
 }
 ```
 
-## Policy Configuration
+## Transcript Persistence Configuration
+
+Configure chat transcript persistence in `appsettings.json`:
 
 ```json
 {
   "AppConfig": {
-    "Policy": {
-      "Profiles": {
-        "default": {
-          "Name": "Default Policy",
-          "ProtectedBranches": ["master", "main", "develop"],
-          "MaxFilesPerCommit": 50,
-          "RequireTestsBeforePush": true,
-          "RequireApprovalForPush": false,
-          "Limits": {
-            "CallsPerMinute": 60,
-            "Burst": 10,
-            "PerCommandCaps": {
-              "RunTests": 5,
-              "Push": 3
-            }
-          }
-        }
-      },
-      "DefaultProfile": "default",
-      "GlobalLimits": {
-        "CallsPerMinute": 120,
-        "Burst": 20
-      }
+    "Transcript": {
+      "Enabled": true,
+      "MaxMessagesPerTranscript": 1000,
+      "MaxTranscriptSizeBytes": 10485760,
+      "MaxTranscriptAge": "30.00:00:00",
+      "TranscriptContextMessages": 10,
+      "StorageDirectory": null
     }
   }
 }
+```
+
+### Transcript Settings
+
+- **Enabled**: Enable/disable transcript persistence (default: `true`)
+- **MaxMessagesPerTranscript**: Maximum number of messages to keep per transcript (default: `1000`)
+- **MaxTranscriptSizeBytes**: Maximum transcript file size in bytes (default: `10485760` = 10MB)
+- **MaxTranscriptAge**: Maximum age of messages to keep (default: `"30.00:00:00"` = 30 days)
+- **TranscriptContextMessages**: Number of recent messages to load into AI chat control for context (default: `10`)
+- **StorageDirectory**: Custom directory for transcript files (default: `%APPDATA%\JuniorDev\Transcripts`)
+
+### Transcript Storage
+
+Transcripts are stored as JSON files in `%APPDATA%\JuniorDev\Transcripts\` by default:
+
+- **File naming**: `{SessionId}.json`
+- **Content**: Timestamped user/assistant message pairs
+- **Pruning**: Automatic cleanup based on message count, size, and age limits
+- **UI display**: Previous messages shown in read-only history panel above chat input
+
+### Disabling Transcripts
+
+To disable transcript persistence entirely:
+
+```json
+{
+  "AppConfig": {
+    "Transcript": {
+      "Enabled": false
+    }
+  }
+}
+```
+
+Or set environment variable:
+
+```bash
+JUNIORDEV__APPCONFIG__TRANSCRIPT__ENABLED=false
 ```
 
 ## Development Setup
@@ -425,6 +449,9 @@ var policy = appConfig.Policy.Profiles[appConfig.Policy.DefaultProfile];
 | **Policy** | DefaultProfile | `JUNIORDEV__APPCONFIG__POLICY__DEFAULTPROFILE` | Default policy profile |
 | | GlobalLimits.CallsPerMinute | `JUNIORDEV__APPCONFIG__POLICY__GLOBALLIMITS__CALLSPERMINUTE` | Global rate limit |
 | | GlobalLimits.Burst | `JUNIORDEV__APPCONFIG__POLICY__GLOBALLIMITS__BURST` | Global burst limit |
-| **Build** | Timeout | `JUNIORDEV__APPCONFIG__BUILD__TIMEOUT` | Build timeout (reserved for #32) |
-| | AllowedTargets | `JUNIORDEV__APPCONFIG__BUILD__ALLOWEDTARGETS` | Allowed build targets (reserved for #32) |
-| | MaxParallelJobs | `JUNIORDEV__APPCONFIG__BUILD__MAXPARALLELJOBS` | Max parallel build jobs (reserved for #32) |
+| **Transcript** | Enabled | `JUNIORDEV__APPCONFIG__TRANSCRIPT__ENABLED` | Enable transcript persistence |
+| | MaxMessagesPerTranscript | `JUNIORDEV__APPCONFIG__TRANSCRIPT__MAXMESSAGESPERTRANSCRIPT` | Max messages per transcript |
+| | MaxTranscriptSizeBytes | `JUNIORDEV__APPCONFIG__TRANSCRIPT__MAXTRANSCRIPTSIZEBYTES` | Max transcript file size |
+| | MaxTranscriptAge | `JUNIORDEV__APPCONFIG__TRANSCRIPT__MAXTRANSCRIPTAGE` | Max message age to keep |
+| | TranscriptContextMessages | `JUNIORDEV__APPCONFIG__TRANSCRIPT__TRANSCRIPTCONTEXTMESSAGES` | Number of recent messages for AI context |
+| | StorageDirectory | `JUNIORDEV__APPCONFIG__TRANSCRIPT__STORAGEDIRECTORY` | Custom storage directory |

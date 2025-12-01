@@ -61,6 +61,7 @@ The UI shell (`ui-shell/`) provides a DevExpress-based Windows Forms application
   - **AI Chat Panel (Center-Top)**: Interactive conversations with AI assistants for task instructions
   - **Event Stream Panel (Center-Bottom)**: Real-time system events and command results
   - **Artifacts Panel (Right)**: Build results, test outputs, diffs, and logs
+- **Transcript Persistence**: Chat conversations are automatically saved and restored between sessions
 - Session filtering with status chips (All/Running/Paused/Error)
 - Layout persistence with reset functionality (View → Reset Layout or Ctrl+R)
 

@@ -3,10 +3,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using DevExpress.AIIntegration.WinForms.Chat;
+using DevExpress.AIIntegration.Blazor.Chat.WebView;
+using DevExpress.AIIntegration.Blazor.Chat;
 using DevExpress.XtraEditors;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 
 namespace Ui.Shell;
 
@@ -87,6 +90,11 @@ public class AgentPanel : Panel
     private readonly EventRenderer _eventRenderer;
     private readonly SplitContainer _splitContainer;
     
+    // Transcript history display
+    private readonly Panel _transcriptHistoryPanel;
+    private readonly Label _transcriptHistoryLabel;
+    private readonly TextBox _transcriptHistoryText;
+    
     // Command publishing
     private ISessionManager? _sessionManager;
     private IServiceProvider? _serviceProvider;
@@ -101,16 +109,54 @@ public class AgentPanel : Panel
     private readonly System.Windows.Forms.Label _progressLabel;
     private readonly System.Windows.Forms.Label _timeLabel;
 
+    // Transcript persistence
+    private readonly TranscriptStorage _transcriptStorage;
+    private readonly TranscriptConfig _transcriptConfig;
+    private ChatTranscript? _currentTranscript;
+
     public ChatStream ChatStream => _chatStream;
     public Control ChatControl => _chatControl;
     public MemoEdit EventsMemo => _eventsMemo;
 
-    public AgentPanel(ChatStream chatStream, ISessionManager? sessionManager = null, IServiceProvider? serviceProvider = null)
+    public AgentPanel(ChatStream chatStream, ISessionManager? sessionManager = null, IServiceProvider? serviceProvider = null, IConfiguration? configuration = null)
     {
         _chatStream = chatStream;
         _sessionManager = sessionManager;
         _serviceProvider = serviceProvider;
         _chatStream.Panel = this;
+
+        // Get transcript configuration from appsettings
+        TranscriptConfig transcriptConfig;
+        if (configuration != null)
+        {
+            var appConfig = JuniorDev.Contracts.ConfigBuilder.GetAppConfig(configuration);
+            var contractsConfig = appConfig.Transcript;
+            transcriptConfig = new TranscriptConfig
+            {
+                Enabled = contractsConfig.Enabled,
+                MaxMessagesPerTranscript = contractsConfig.MaxMessagesPerTranscript,
+                MaxTranscriptSizeBytes = contractsConfig.MaxTranscriptSizeBytes,
+                MaxTranscriptAge = contractsConfig.MaxTranscriptAge,
+                TranscriptContextMessages = contractsConfig.TranscriptContextMessages,
+                StorageDirectory = contractsConfig.StorageDirectory ?? string.Empty
+            };
+        }
+        else
+        {
+            // Fallback to default config if no configuration provided
+            transcriptConfig = new TranscriptConfig();
+        }
+
+        _transcriptConfig = transcriptConfig;
+        _transcriptStorage = new TranscriptStorage(transcriptConfig);
+
+        // Try to load existing transcript for this session
+        _currentTranscript = _transcriptStorage.LoadTranscript(_chatStream.SessionId);
+        if (_currentTranscript == null)
+        {
+            // Create new transcript if none exists
+            _currentTranscript = new ChatTranscript(_chatStream.SessionId, _chatStream.AgentName);
+        }
 
         // Initialize rich preview controls
         _previewPanel = new Panel
@@ -190,22 +236,31 @@ public class AgentPanel : Panel
                     UseStreaming = DevExpress.Utils.DefaultBoolean.True
                 };
 
+                // Load existing transcript into the chat control if available
+                if (_currentTranscript != null && _currentTranscript.Messages.Any())
+                {
+                    LoadTranscriptIntoChatControl(_currentTranscript);
+                }
+
+                // Hook into message events to save new messages
+                HookIntoChatMessageEvents();
+
                 // Global DevExpress AI configuration in Program.cs should handle service provider setup
                 // No need to set per-control service providers here
-                Console.WriteLine($"AI chat control created for agent '{_chatStream.AgentName}'");
+                Console.WriteLine($"AI chat control created for agent '{_chatStream.AgentName}' with {_currentTranscript?.Messages.Count ?? 0} existing messages");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Failed to create AI chat control for agent '{_chatStream.AgentName}': {ex.Message}");
                 // Create a placeholder control when AI is not available
-                _chatControl = CreatePlaceholderChatControl();
+                _chatControl = new Label { Text = "AI Chat Unavailable", Dock = DockStyle.Fill };
             }
         }
         else
         {
             // No valid AI credentials - use placeholder control
             Console.WriteLine($"No valid AI credentials found - using placeholder for agent '{_chatStream.AgentName}'");
-            _chatControl = CreatePlaceholderChatControl();
+            _chatControl = new Label { Text = "AI Chat Unavailable", Dock = DockStyle.Fill };
         }
 
         _eventsMemo = new MemoEdit
@@ -231,7 +286,39 @@ public class AgentPanel : Panel
             Panel2MinSize = 100
         };
 
-        _splitContainer.Panel1.Controls.Add(_chatControl);
+        // Create transcript history panel (read-only)
+        _transcriptHistoryPanel = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 150,
+            BorderStyle = BorderStyle.FixedSingle
+        };
+
+        _transcriptHistoryLabel = new Label
+        {
+            Text = "Transcript History",
+            Dock = DockStyle.Top,
+            Font = new Font(this.Font, FontStyle.Bold),
+            Height = 20
+        };
+
+        _transcriptHistoryText = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Vertical,
+            BackColor = Color.WhiteSmoke,
+            Font = new Font("Consolas", 9)
+        };
+
+        _transcriptHistoryPanel.Controls.AddRange(new Control[] { _transcriptHistoryText, _transcriptHistoryLabel });
+
+        // Create chat panel that contains history + AI chat control
+        var chatPanel = new Panel { Dock = DockStyle.Fill };
+        chatPanel.Controls.AddRange(new Control[] { _transcriptHistoryPanel, _chatControl });
+
+        _splitContainer.Panel1.Controls.Add(chatPanel);
         _splitContainer.Panel2.Controls.Add(_eventsMemo);
 
         // Create main container with command toolbar on top
@@ -394,28 +481,168 @@ public class AgentPanel : Panel
     }
 
     /// <summary>
-    /// Creates a placeholder control when AI chat is not available
+    /// Loads an existing transcript into the UI (history panel and optionally chat control)
     /// </summary>
-    private Control CreatePlaceholderChatControl()
+    private void LoadTranscriptIntoChatControl(ChatTranscript transcript)
     {
-        var placeholder = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(250, 250, 250),
-            BorderStyle = BorderStyle.FixedSingle
-        };
+        // Display transcript history in the read-only text box
+        DisplayTranscriptHistory(transcript);
 
-        var label = new System.Windows.Forms.Label
-        {
-            Text = "AI Chat Not Available\r\n\r\nPlease configure OpenAI API key in appsettings.json to enable AI chat functionality.",
-            TextAlign = ContentAlignment.MiddleCenter,
-            Dock = DockStyle.Fill,
-            Font = new Font(FontFamily.GenericSansSerif, 10, FontStyle.Regular),
-            ForeColor = Color.Gray
-        };
+        if (_chatControl is not AIChatControl aiChatControl)
+            return;
 
-        placeholder.Controls.Add(label);
-        return placeholder;
+        try
+        {
+            // For the AI chat control, load the configured number of most recent messages as context
+            var contextMessageCount = _transcriptConfig.TranscriptContextMessages;
+            var recentMessages = transcript.Messages
+                .OrderByDescending(m => m.Timestamp)
+                .Take(contextMessageCount) // Use configured count for context
+                .OrderBy(m => m.Timestamp) // Re-order chronologically
+                .ToList();
+
+            // TODO: Implement summarization for messages beyond context count (issue #48)
+            // If there are more messages than the context count, create a summary message
+            // from the older messages and prepend it to the context messages.
+
+            if (recentMessages.Any())
+            {
+                // Convert our ChatMessage objects to DevExpress BlazorChatMessage objects
+                var blazorMessages = new List<DevExpress.AIIntegration.Blazor.Chat.BlazorChatMessage>();
+                foreach (var message in recentMessages)
+                {
+                    // Convert role string to ChatMessageRole enum
+                    var chatRole = message.Role.ToLower() switch
+                    {
+                        "user" => Microsoft.Extensions.AI.ChatRole.User,
+                        "assistant" => Microsoft.Extensions.AI.ChatRole.Assistant,
+                        "system" => Microsoft.Extensions.AI.ChatRole.System,
+                        _ => Microsoft.Extensions.AI.ChatRole.User // Default to User for unknown roles
+                    };
+
+                    var blazorMessage = new DevExpress.AIIntegration.Blazor.Chat.BlazorChatMessage(chatRole, message.Content)
+                    {
+                        Typing = false // Loaded messages are not typing
+                    };
+                    blazorMessages.Add(blazorMessage);
+                }
+
+                // Load context messages into the chat control
+                aiChatControl.LoadMessages(blazorMessages);
+
+                Console.WriteLine($"Loaded {blazorMessages.Count} context messages into chat control for session {_chatStream.SessionId} (configured limit: {contextMessageCount})");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load recent messages into chat control: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Displays the transcript history in the read-only text box
+    /// </summary>
+    private void DisplayTranscriptHistory(ChatTranscript transcript)
+    {
+        if (_transcriptHistoryText == null || transcript == null || !transcript.Messages.Any())
+        {
+            _transcriptHistoryText.Text = "No previous messages.";
+            _transcriptHistoryPanel.Visible = false;
+            return;
+        }
+
+        try
+        {
+            var historyText = new System.Text.StringBuilder();
+            foreach (var message in transcript.Messages.OrderBy(m => m.Timestamp))
+            {
+                var timestamp = message.Timestamp.ToString("HH:mm:ss");
+                var role = message.Role.ToUpper();
+                historyText.AppendLine($"[{timestamp}] {role}: {message.Content}");
+                historyText.AppendLine(); // Empty line between messages
+            }
+
+            _transcriptHistoryText.Text = historyText.ToString().TrimEnd();
+            _transcriptHistoryPanel.Visible = true;
+
+            // Auto-scroll to bottom
+            _transcriptHistoryText.SelectionStart = _transcriptHistoryText.Text.Length;
+            _transcriptHistoryText.ScrollToCaret();
+
+            Console.WriteLine($"Displayed {transcript.Messages.Count} messages in transcript history for session {_chatStream.SessionId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to display transcript history: {ex.Message}");
+            _transcriptHistoryText.Text = "Error loading transcript history.";
+        }
+    }
+
+    /// <summary>
+    /// Hooks into AI chat control message events to save new messages
+    /// </summary>
+    private void HookIntoChatMessageEvents()
+    {
+        if (_chatControl is not AIChatControl aiChatControl)
+            return;
+
+        try
+        {
+            // Hook into the MessageSent event
+            aiChatControl.MessageSent += OnMessageSent;
+
+            Console.WriteLine("Hooked into chat message events for transcript persistence");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to hook into chat message events: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Handles when a user sends a message
+    /// </summary>
+    private void OnMessageSent(object? sender, AIChatControlMessageSentEventArgs e)
+    {
+        if (_currentTranscript == null) return;
+
+        try
+        {
+            // The MessageSent event gives us the content of the message that was sent
+            // We assume it's from the user since this is a user-initiated send
+            _currentTranscript.AddMessage("user", e.Content);
+            _transcriptStorage.SaveTranscript(_currentTranscript);
+            
+            // Update the transcript history display
+            DisplayTranscriptHistory(_currentTranscript);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save user message to transcript: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Public method to add AI responses to the transcript (called when responses are received through other channels)
+    /// </summary>
+    public void AddAIResponseToTranscript(string content)
+    {
+        if (_currentTranscript == null) return;
+
+        try
+        {
+            _currentTranscript.AddMessage("assistant", content);
+            _transcriptStorage.SaveTranscript(_currentTranscript);
+            
+            // Update the transcript history display
+            DisplayTranscriptHistory(_currentTranscript);
+            
+            Console.WriteLine($"Added AI response to transcript for session {_chatStream.SessionId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to add AI response to transcript: {ex.Message}");
+        }
     }
 
     private void OnPreviewPanelClicked()
@@ -559,6 +786,19 @@ public class AgentPanel : Panel
     {
         if (disposing)
         {
+            // Save transcript before disposing
+            if (_currentTranscript != null)
+            {
+                try
+                {
+                    _transcriptStorage.SaveTranscript(_currentTranscript);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to save transcript during disposal: {ex.Message}");
+                }
+            }
+
             if (_chatControl is AIChatControl aiChatControl)
             {
                 aiChatControl.Dispose();
@@ -597,12 +837,12 @@ public class AccordionLayoutManager
         _container.AutoScroll = true;
     }
 
-    public void AddChatStream(ChatStream chatStream, ISessionManager? sessionManager = null, IServiceProvider? serviceProvider = null)
+    public void AddChatStream(ChatStream chatStream, ISessionManager? sessionManager = null, IServiceProvider? serviceProvider = null, IConfiguration? configuration = null)
     {
         // Create the AgentPanel for this chat stream
         if (chatStream.Panel == null)
         {
-            chatStream.Panel = new AgentPanel(chatStream, sessionManager, serviceProvider);
+            chatStream.Panel = new AgentPanel(chatStream, sessionManager, serviceProvider, configuration);
             
             // Wire up session management events
             if (chatStream.Panel is AgentPanel agentPanel)

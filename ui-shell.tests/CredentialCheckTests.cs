@@ -23,8 +23,8 @@ namespace ui_shell.tests
             var field = typeof(AgentPanel).GetField("_chatControl", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             var chatControl = field?.GetValue(agentPanel);
 
-            // Assert - Should be a placeholder control (Panel) when no service provider
-            Assert.IsType<Panel>(chatControl);
+            // Assert - Should be a placeholder control (Label) when no service provider
+            Assert.IsType<Label>(chatControl);
         }
 
         [Fact]
@@ -42,7 +42,7 @@ namespace ui_shell.tests
             var chatControl = field?.GetValue(agentPanel);
 
             // Assert - Should be a placeholder control when no factory
-            Assert.IsType<Panel>(chatControl);
+            Assert.IsType<Label>(chatControl);
         }
 
     [Fact]
@@ -62,7 +62,7 @@ namespace ui_shell.tests
         var chatControl = field?.GetValue(agentPanel);
 
         // Assert - Should be a placeholder control when factory returns null/dummy client
-        Assert.IsType<Panel>(chatControl);
+        Assert.IsType<Label>(chatControl);
     }
 
     [Fact]
@@ -89,8 +89,8 @@ namespace ui_shell.tests
         var field = typeof(AgentPanel).GetField("_chatControl", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         var chatControl = field?.GetValue(agentPanel);
 
-        // Should be a placeholder panel, not an AIChatControl that could crash
-        Assert.IsType<Panel>(chatControl);
+        // Should be a placeholder label, not an AIChatControl that could crash
+        Assert.IsType<Label>(chatControl);
     }
 }    // Mock factory that returns null (simulating no valid credentials)
     public class MockChatClientFactory : IChatClientFactory

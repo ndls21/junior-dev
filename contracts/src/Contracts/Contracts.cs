@@ -196,7 +196,8 @@ public sealed record AppConfig(
     SemanticKernelConfig? SemanticKernel = null,
     UiConfig? Ui = null,
     WorkspaceConfig? Workspace = null,
-    PolicyConfig? Policy = null);
+    PolicyConfig? Policy = null,
+    TranscriptConfig? Transcript = null);
 
 /// <summary>
 /// Authentication configuration for external services
@@ -369,6 +370,17 @@ public sealed record PolicyConfig(
     Dictionary<string, PolicyProfile> Profiles,
     string DefaultProfile,
     RateLimits GlobalLimits);
+
+/// <summary>
+/// Transcript persistence configuration
+/// </summary>
+public sealed record TranscriptConfig(
+    bool Enabled = true,
+    int MaxMessagesPerTranscript = 1000,
+    long MaxTranscriptSizeBytes = 10485760, // 10MB
+    TimeSpan MaxTranscriptAge = default,
+    string? StorageDirectory = null,
+    int TranscriptContextMessages = 10);
 
 // Configuration Builder Utility
 

@@ -853,7 +853,7 @@ public partial class MainForm : Form
 
             // Create chat stream for this session with proper SessionId mapping
             var chatStream = new ChatStream(sessionConfig.SessionId, "Agent 1");
-            _accordionManager?.AddChatStream(chatStream, _sessionManager, _serviceProvider);
+            _accordionManager?.AddChatStream(chatStream, _sessionManager, _serviceProvider, _configuration);
 
             // Set dependencies on the panel for command publishing
             if (chatStream.Panel != null)
@@ -871,7 +871,7 @@ public partial class MainForm : Form
             Console.WriteLine($"Failed to create initial session: {ex.Message}");
             // Fall back to mock mode
             var initialChatStream = new ChatStream(Guid.NewGuid(), "Agent 1");
-            _accordionManager?.AddChatStream(initialChatStream);
+            _accordionManager?.AddChatStream(initialChatStream, null, null, _configuration);
         }
     }
 
@@ -1106,7 +1106,7 @@ public partial class MainForm : Form
         
         // Add default stream
         var defaultStream = new ChatStream(Guid.NewGuid(), "Agent 1");
-        _accordionManager.AddChatStream(defaultStream);
+        _accordionManager.AddChatStream(defaultStream, null, null, _configuration);
         
         return _accordionManager.ChatStreams.ToArray();
     }
@@ -1633,7 +1633,7 @@ public partial class MainForm : Form
             chatStream.Panel = agentPanel;
         }
         
-        _accordionManager?.AddChatStream(chatStream);
+        _accordionManager?.AddChatStream(chatStream, null, null, _configuration);
 
         if (chatStream.Panel != null)
         {
@@ -1650,7 +1650,7 @@ public partial class MainForm : Form
     public void AddChatStreamForTest(ChatStream chatStream)
     {
         // For testing only
-        _accordionManager?.AddChatStream(chatStream);
+        _accordionManager?.AddChatStream(chatStream, null, null, _configuration);
     }
 
     public ChatStream[] GetChatStreamsForTest()
@@ -1759,7 +1759,7 @@ public partial class MainForm : Form
             chatStream.Panel = agentPanel;
         }
         
-        _accordionManager?.AddChatStream(chatStream);
+        _accordionManager?.AddChatStream(chatStream, null, null, _configuration);
 
         if (chatStream.Panel != null)
         {
@@ -1951,7 +1951,7 @@ public partial class MainForm : Form
 
             // Create chat stream for this session with proper SessionId mapping
             var chatStream = new ChatStream(sessionConfig.SessionId, agentName);
-            _accordionManager.AddChatStream(chatStream, _sessionManager, _serviceProvider);
+            _accordionManager?.AddChatStream(chatStream, _sessionManager, _serviceProvider, _configuration);
                 // Set dependencies on the panel for command publishing
                 if (chatStream.Panel != null)
                 {
@@ -1970,7 +1970,7 @@ public partial class MainForm : Form
                 var chatStream = new ChatStream(Guid.NewGuid(), agentName);
                 chatStream.Status = SessionStatus.Running;
                 chatStream.CurrentTask = "Ready";
-                _accordionManager.AddChatStream(chatStream);
+                _accordionManager.AddChatStream(chatStream, null, null, _configuration);
             }
         }
         else
@@ -1987,7 +1987,7 @@ public partial class MainForm : Form
             chatStream.CurrentTask = mockTasks[random.Next(mockTasks.Length)];
             chatStream.ProgressPercentage = random.Next(0, 101);
             
-            _accordionManager.AddChatStream(chatStream);
+            _accordionManager.AddChatStream(chatStream, null, null, _configuration);
             
             Console.WriteLine($"Added new chat stream: {agentName} ({chatStream.Status}) - {chatStream.CurrentTask}");
         }
@@ -2012,7 +2012,7 @@ public partial class MainForm : Form
             stream.Status = status;
             stream.CurrentTask = task;
             stream.ProgressPercentage = progress;
-            _accordionManager.AddChatStream(stream);
+            _accordionManager.AddChatStream(stream, null, null, _configuration);
 
             // Add some mock artifacts for this stream
             AddMockArtifactsForStream(stream.SessionId, name);
@@ -2396,7 +2396,7 @@ public partial class MainForm : Form
             var agentNumber = (_accordionManager?.ChatStreams.Count ?? 0) + 1;
             var agentName = $"Agent {agentNumber}";
             var chatStream = new ChatStream(sessionConfig.SessionId, agentName);
-            _accordionManager?.AddChatStream(chatStream, _sessionManager, _serviceProvider);
+            _accordionManager?.AddChatStream(chatStream, _sessionManager, _serviceProvider, _configuration);
 
             // Subscribe to session events
             SubscribeToSessionEvents(sessionConfig.SessionId);

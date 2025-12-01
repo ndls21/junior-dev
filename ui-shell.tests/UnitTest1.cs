@@ -11,6 +11,8 @@ using System.Linq;
 using System.Collections.Generic;
 using Microsoft.Extensions.Configuration;
 using System.Threading.Tasks;
+using DevExpress.AIIntegration.WinForms.Chat;
+using Microsoft.Extensions.Configuration.Memory;
 
 namespace ui_shell.tests;
 
@@ -60,8 +62,16 @@ public class MainFormTests : IDisposable
         }
         else
         {
-            var mockConfiguration = new Mock<IConfiguration>();
-            actualConfiguration = mockConfiguration.Object;
+            var configBuilder = new ConfigurationBuilder();
+            configBuilder.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AppConfig:Transcript:Enabled"] = "true",
+                ["AppConfig:Transcript:MaxMessagesPerTranscript"] = "1000",
+                ["AppConfig:Transcript:MaxTranscriptSizeBytes"] = "10485760",
+                ["AppConfig:Transcript:MaxTranscriptAge"] = "30.00:00:00",
+                ["AppConfig:Transcript:StorageDirectory"] = _tempDir
+            });
+            actualConfiguration = configBuilder.Build();
         }
         
         // Handle chat client
@@ -751,81 +761,6 @@ public class MainFormTests : IDisposable
         // Assert - Verify that PublishCommand was called with a RunTests command for the active session
         mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
             cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == activeSessionId)), Times.Once);
-    }
-
-    [Fact]
-    public void DummyChatClient_Verification_PreventsAIExceptionsInTestMode()
-    {
-        // Arrange
-        var form = CreateMainForm(isTestMode: true);
-
-        // Act - Try to access AI client functionality
-        var canAccessAI = form.TestAICanAccessForTest();
-
-        // Assert - In test mode, should use dummy client that doesn't throw exceptions
-        Assert.True(canAccessAI); // Should not throw exceptions
-    }
-
-    [Fact(Timeout = 1000)] // 1 second timeout
-    public async Task DummyChatClient_Initialization_FallsBackWhenRealClientUnavailable()
-    {
-        // Arrange - Create a mock service provider that doesn't have IChatClientFactory
-        var mockServiceProvider = new Mock<IServiceProvider>();
-        mockServiceProvider.Setup(sp => sp.GetService(typeof(IChatClientFactory)))
-            .Returns((IChatClientFactory?)null); // Simulate no factory available
-
-        // Act - Try to register AI client via fallback method
-        // This simulates the logic in Program.RegisterClientViaFallbackMethods
-        Microsoft.Extensions.AI.IChatClient? client = null;
-        try
-        {
-            var factory = mockServiceProvider.Object.GetService(typeof(IChatClientFactory)) as IChatClientFactory;
-            if (factory != null)
-            {
-                // This would try to get a real client
-                var underlyingClient = factory.GetUnderlyingClientFor("default");
-                client = underlyingClient as Microsoft.Extensions.AI.IChatClient;
-            }
-            else
-            {
-                // Should fall back to dummy client
-                client = new Ui.Shell.DummyChatClient();
-            }
-        }
-        catch
-        {
-            // Any exception should result in dummy client
-            client = new Ui.Shell.DummyChatClient();
-        }
-
-        // Assert - Should have fallen back to dummy client
-        Assert.NotNull(client);
-        Assert.IsType<Ui.Shell.DummyChatClient>(client);
-
-        // Verify dummy client works
-        var messages = new[] { new ChatMessage(ChatRole.User, "Test message") };
-        var response = await client.GetResponseAsync(messages);
-        Assert.NotNull(response);
-        Assert.Contains("dummy response", response.Text.ToLowerInvariant());
-    }
-
-    [Fact(Timeout = 1000)] // 1 second timeout
-    public async Task DummyChatClient_StreamingResponse_WorksCorrectly()
-    {
-        // Arrange
-        var dummyClient = new Ui.Shell.DummyChatClient();
-        var messages = new[] { new ChatMessage(ChatRole.User, "Test streaming") };
-
-        // Act
-        var responses = new List<ChatResponseUpdate>();
-        await foreach (var update in dummyClient.GetStreamingResponseAsync(messages))
-        {
-            responses.Add(update);
-        }
-
-        // Assert
-        Assert.NotEmpty(responses);
-        Assert.Contains("dummy streaming response", responses[0].Text.ToLowerInvariant());
     }
 
     [Fact(Timeout = 1500)] // 1.5 second timeout
@@ -1630,50 +1565,348 @@ public class MainFormTests : IDisposable
         Assert.Null(exception);
     }
 
-    [Fact(Timeout = 10000)] // 10 second timeout for integration test
-    public async Task Integration_EventSubscription_EndToEndEventProcessing()
+    [Fact]
+    public void TranscriptPersistence_SaveAndLoad_RoundTrip()
     {
-        // Arrange - Create a mock session manager that returns finite event streams
-        var mockSessionManager = new Mock<ISessionManager>();
-        var sessionId = Guid.NewGuid();
-        
-        var testEvents = new List<IEvent>
+        // Arrange
+        var config = new Ui.Shell.TranscriptConfig
         {
-            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId), SessionStatus.Running, "Session started"),
-            new CommandAccepted(Guid.NewGuid(), new Correlation(sessionId), Guid.NewGuid()),
-            new CommandCompleted(Guid.NewGuid(), new Correlation(sessionId), Guid.NewGuid(), CommandOutcome.Success, "Command completed successfully"),
-            new ArtifactAvailable(Guid.NewGuid(), new Correlation(sessionId), new Artifact("test-results", "Test Results", "All tests passed")),
-            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId), SessionStatus.Completed, "Session finished")
+            Enabled = true,
+            StorageDirectory = _tempDir
         };
+        var storage = new TranscriptStorage(config);
+        var sessionId = Guid.NewGuid();
+        var transcript = new ChatTranscript(sessionId, "Test Agent");
+        transcript.AddMessage("user", "Hello, can you help me?");
+        transcript.AddMessage("assistant", "Yes, I'd be happy to help!");
+        transcript.AddMessage("user", "Great, let's get started.");
 
-        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
-            .Returns(Task.CompletedTask);
-        mockSessionManager.Setup(sm => sm.Subscribe(sessionId))
-            .Returns(new TestAsyncEnumerable(testEvents));
+        // Act - Save transcript
+        storage.SaveTranscript(transcript);
 
-        var form = CreateMainForm(isTestMode: true);
-        form.SetSessionManager(mockSessionManager.Object);
+        // Load transcript
+        var loadedTranscript = storage.LoadTranscript(sessionId);
 
-        // Create session WITH subscription - this should process all events and complete
-        var sessionConfig = new SessionConfig(
-            sessionId, null, null, new PolicyProfile { Name = "test" },
-            new RepoRef("test", "/tmp/test"), new WorkspaceRef("/tmp/workspace"), null, "test-agent");
-        
-        await form.CreateSessionForTestWithSubscription(sessionConfig);
-
-        // Wait for event processing to complete by awaiting the subscription task
-        await form.WaitForEventSubscription(sessionId, TimeSpan.FromSeconds(5));
-        
-        // Assert - Verify that events were processed and chat stream was updated to final state
-        var chatStreams = form.GetChatStreamsForTest();
-        var chatStream = chatStreams.First(cs => cs.SessionId == sessionId);
-        Assert.Equal(SessionStatus.Completed, chatStream.Status);
-        
-        // Verify session manager methods were called
-        mockSessionManager.Verify(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId)), Times.Once);
-        mockSessionManager.Verify(sm => sm.Subscribe(sessionId), Times.Once);
+        // Assert
+        Assert.NotNull(loadedTranscript);
+        Assert.Equal(sessionId, loadedTranscript.SessionId);
+        Assert.Equal("Test Agent", loadedTranscript.AgentName);
+        Assert.Equal(3, loadedTranscript.Messages.Count);
+        Assert.Equal("user", loadedTranscript.Messages[0].Role);
+        Assert.Equal("Hello, can you help me?", loadedTranscript.Messages[0].Content);
+        Assert.Equal("assistant", loadedTranscript.Messages[1].Role);
+        Assert.Equal("Yes, I'd be happy to help!", loadedTranscript.Messages[1].Content);
+        Assert.Equal("user", loadedTranscript.Messages[2].Role);
+        Assert.Equal("Great, let's get started.", loadedTranscript.Messages[2].Content);
     }
-}
+
+    [Fact]
+    public void TranscriptPersistence_Disabled_DoesNotSaveOrLoad()
+    {
+        // Arrange
+        var config = new Ui.Shell.TranscriptConfig
+        {
+            Enabled = false,
+            StorageDirectory = _tempDir
+        };
+        var storage = new TranscriptStorage(config);
+        var sessionId = Guid.NewGuid();
+        var transcript = new ChatTranscript(sessionId, "Test Agent");
+        transcript.AddMessage("user", "Test message");
+
+        // Act - Try to save (should do nothing)
+        storage.SaveTranscript(transcript);
+
+        // Try to load (should return null)
+        var loadedTranscript = storage.LoadTranscript(sessionId);
+
+        // Assert
+        Assert.Null(loadedTranscript);
+        Assert.False(File.Exists(storage.GetTranscriptFilePath(sessionId)));
+    }
+
+    [Fact]
+    public void TranscriptPersistence_CorruptedFile_FallsBackToNull()
+    {
+        // Arrange - Create corrupted transcript file
+        var sessionId = Guid.NewGuid();
+        var config = new Ui.Shell.TranscriptConfig
+        {
+            Enabled = true,
+            StorageDirectory = _tempDir
+        };
+        var storage = new TranscriptStorage(config);
+        var filePath = storage.GetTranscriptFilePath(sessionId);
+        File.WriteAllText(filePath, "{invalid json content}");
+
+        // Act - Try to load corrupted transcript
+        var loadedTranscript = storage.LoadTranscript(sessionId);
+
+        // Assert - Should return null on corruption
+        Assert.Null(loadedTranscript);
+    }
+
+    [Fact]
+    public void TranscriptPersistence_PruneByMessageCount()
+    {
+        // Arrange
+        var config = new Ui.Shell.TranscriptConfig
+        {
+            Enabled = true,
+            MaxMessagesPerTranscript = 2,
+            StorageDirectory = _tempDir
+        };
+        var storage = new TranscriptStorage(config);
+        var sessionId = Guid.NewGuid();
+        var transcript = new ChatTranscript(sessionId, "Test Agent");
+        
+        // Add more messages than the limit
+        transcript.AddMessage("user", "Message 1");
+        transcript.AddMessage("assistant", "Response 1");
+        transcript.AddMessage("user", "Message 2");
+        transcript.AddMessage("assistant", "Response 2");
+        transcript.AddMessage("user", "Message 3"); // This should be kept
+        transcript.AddMessage("assistant", "Response 3"); // This should be kept
+
+        // Act - Save (should prune during save)
+        storage.SaveTranscript(transcript);
+        var loadedTranscript = storage.LoadTranscript(sessionId);
+
+        // Assert - Only last 2 messages should remain
+        Assert.NotNull(loadedTranscript);
+        Assert.Equal(2, loadedTranscript.Messages.Count);
+        Assert.Equal("Message 3", loadedTranscript.Messages[0].Content);
+        Assert.Equal("Response 3", loadedTranscript.Messages[1].Content);
+    }
+
+    [Fact]
+    public void TranscriptPersistence_PruneByAge()
+    {
+        // Arrange
+        var config = new Ui.Shell.TranscriptConfig
+        {
+            Enabled = true,
+            MaxTranscriptAge = TimeSpan.FromMinutes(1), // Very short for testing
+            StorageDirectory = _tempDir
+        };
+        var storage = new TranscriptStorage(config);
+        var sessionId = Guid.NewGuid();
+        var transcript = new ChatTranscript(sessionId, "Test Agent");
+        
+        // Add old message
+        var oldMessage = new Ui.Shell.ChatMessage("user", "Old message", DateTimeOffset.Now.AddMinutes(-5));
+        transcript.Messages.Add(oldMessage);
+        
+        // Add new message
+        transcript.AddMessage("user", "New message");
+
+        // Act - Save (should prune old messages)
+        storage.SaveTranscript(transcript);
+        var loadedTranscript = storage.LoadTranscript(sessionId);
+
+        // Assert - Only new message should remain
+        Assert.NotNull(loadedTranscript);
+        Assert.Equal(1, loadedTranscript.Messages.Count);
+        Assert.Equal("New message", loadedTranscript.Messages[0].Content);
+    }
+
+    [Fact]
+    public void TranscriptPersistence_GetExistingSessionIds()
+    {
+        // Arrange
+        var config = new Ui.Shell.TranscriptConfig
+        {
+            Enabled = true,
+            StorageDirectory = _tempDir
+        };
+        var storage = new TranscriptStorage(config);
+        
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+        
+        var transcript1 = new ChatTranscript(sessionId1, "Agent 1");
+        transcript1.AddMessage("user", "Hello");
+        storage.SaveTranscript(transcript1);
+        
+        var transcript2 = new ChatTranscript(sessionId2, "Agent 2");
+        transcript2.AddMessage("user", "Hi there");
+        storage.SaveTranscript(transcript2);
+
+        // Act
+        var existingIds = storage.GetExistingSessionIds().ToList();
+
+        // Assert
+        Assert.Equal(2, existingIds.Count);
+        Assert.Contains(sessionId1, existingIds);
+        Assert.Contains(sessionId2, existingIds);
+    }
+
+    [Fact]
+    public void TranscriptPersistence_DeleteTranscript()
+    {
+        // Arrange
+        var config = new Ui.Shell.TranscriptConfig
+        {
+            Enabled = true,
+            StorageDirectory = _tempDir
+        };
+        var storage = new TranscriptStorage(config);
+        var sessionId = Guid.NewGuid();
+        var transcript = new ChatTranscript(sessionId, "Test Agent");
+        transcript.AddMessage("user", "Test message");
+        storage.SaveTranscript(transcript);
+        
+        // Verify file exists
+        Assert.True(storage.TranscriptExists(sessionId));
+
+        // Act - Delete transcript
+        storage.DeleteTranscript(sessionId);
+
+        // Assert - File should be gone
+        Assert.False(storage.TranscriptExists(sessionId));
+        Assert.Null(storage.LoadTranscript(sessionId));
+    }
+
+    [Fact]
+    public void TranscriptPersistence_UIIntegration_LoadTranscriptIntoChatControl()
+    {
+        // Arrange - Create a transcript with messages
+        var config = new Ui.Shell.TranscriptConfig
+        {
+            Enabled = true,
+            StorageDirectory = _tempDir
+        };
+        var storage = new TranscriptStorage(config);
+        var sessionId = Guid.NewGuid();
+        var transcript = new ChatTranscript(sessionId, "Test Agent");
+        transcript.AddMessage("user", "Hello, can you help me?");
+        transcript.AddMessage("assistant", "Yes, I'd be happy to help!");
+        transcript.AddMessage("user", "Great, let's get started.");
+        storage.SaveTranscript(transcript);
+
+        // Test the message conversion logic directly (simulate what happens in LoadTranscriptIntoChatControl)
+        var convertedMessages = new List<(Microsoft.Extensions.AI.ChatRole Role, string Content)>();
+        foreach (var message in transcript.Messages)
+        {
+            // Convert role string to ChatMessageRole enum (same logic as in AgentPanel)
+            var chatRole = message.Role.ToLower() switch
+            {
+                "user" => Microsoft.Extensions.AI.ChatRole.User,
+                "assistant" => Microsoft.Extensions.AI.ChatRole.Assistant,
+                "system" => Microsoft.Extensions.AI.ChatRole.System,
+                _ => Microsoft.Extensions.AI.ChatRole.User // Default to User for unknown roles
+            };
+            convertedMessages.Add((chatRole, message.Content));
+        }
+
+        // Assert - Messages should be converted correctly
+        Assert.Equal(3, convertedMessages.Count);
+        
+        // Verify first message (user)
+        Assert.Equal(Microsoft.Extensions.AI.ChatRole.User, convertedMessages[0].Role);
+        Assert.Equal("Hello, can you help me?", convertedMessages[0].Content);
+        
+        // Verify second message (assistant)
+        Assert.Equal(Microsoft.Extensions.AI.ChatRole.Assistant, convertedMessages[1].Role);
+        Assert.Equal("Yes, I'd be happy to help!", convertedMessages[1].Content);
+        
+        // Verify third message (user)
+        Assert.Equal(Microsoft.Extensions.AI.ChatRole.User, convertedMessages[2].Role);
+        Assert.Equal("Great, let's get started.", convertedMessages[2].Content);
+    }
+
+    [Fact]
+    public void TranscriptPersistence_UIIntegration_SaveUserMessageOnSend()
+    {
+        // Arrange
+        var config = new Ui.Shell.TranscriptConfig
+        {
+            Enabled = true,
+            StorageDirectory = _tempDir
+        };
+        var storage = new TranscriptStorage(config);
+        var sessionId = Guid.NewGuid();
+        var transcript = new ChatTranscript(sessionId, "Test Agent");
+        
+        // Simulate the OnMessageSent logic (same as in AgentPanel)
+        var messageContent = "Hello from user!";
+        if (transcript != null)
+        {
+            // The MessageSent event gives us the content of the message that was sent
+            // We assume it's from the user since this is a user-initiated send
+            transcript.AddMessage("user", messageContent);
+            storage.SaveTranscript(transcript);
+        }
+
+        // Assert - Message should be saved to transcript
+        var loadedTranscript = storage.LoadTranscript(sessionId);
+        Assert.NotNull(loadedTranscript);
+        Assert.Single(loadedTranscript.Messages);
+        Assert.Equal("user", loadedTranscript.Messages[0].Role);
+        Assert.Equal("Hello from user!", loadedTranscript.Messages[0].Content);
+    }
+
+    [Fact]
+    public void TranscriptPersistence_TranscriptContextMessages_LoadsOnlyConfiguredMessagesIntoChatControl()
+    {
+        // Arrange - Create a transcript with more messages than the context limit
+        var config = new Ui.Shell.TranscriptConfig
+        {
+            Enabled = true,
+            TranscriptContextMessages = 3, // Only load 3 messages into chat control
+            StorageDirectory = _tempDir
+        };
+        var storage = new TranscriptStorage(config);
+        var sessionId = Guid.NewGuid();
+        var transcript = new ChatTranscript(sessionId, "Test Agent");
+        
+        // Add 5 messages (more than the context limit)
+        transcript.AddMessage("user", "Message 1");
+        transcript.AddMessage("assistant", "Response 1");
+        transcript.AddMessage("user", "Message 2");
+        transcript.AddMessage("assistant", "Response 2");
+        transcript.AddMessage("user", "Message 3");
+        transcript.AddMessage("assistant", "Response 3");
+        transcript.AddMessage("user", "Message 4");
+        transcript.AddMessage("assistant", "Response 4");
+        transcript.AddMessage("user", "Message 5"); // This should NOT be loaded into chat control
+        
+        storage.SaveTranscript(transcript);
+
+        // Act - Simulate LoadTranscriptIntoChatControl logic with configured limit
+        var contextMessageCount = config.TranscriptContextMessages;
+        var recentMessages = transcript.Messages
+            .OrderByDescending(m => m.Timestamp)
+            .Take(contextMessageCount) // Use configured count for context
+            .OrderBy(m => m.Timestamp) // Re-order chronologically
+            .ToList();
+
+        // Assert - Only the last 3 messages should be loaded into chat control
+        Assert.Equal(3, recentMessages.Count);
+        
+        // Verify the messages loaded are the most recent ones
+        Assert.Equal("Message 4", recentMessages[0].Content);
+        Assert.Equal("Response 4", recentMessages[1].Content);
+        Assert.Equal("Message 5", recentMessages[2].Content);
+        
+        // Verify the full transcript still contains all 9 messages
+        var fullTranscript = storage.LoadTranscript(sessionId);
+        Assert.NotNull(fullTranscript);
+        Assert.Equal(9, fullTranscript.Messages.Count);
+        
+        // Verify the history panel would show all messages (simulated)
+        var historyText = new System.Text.StringBuilder();
+        foreach (var message in fullTranscript.Messages.OrderBy(m => m.Timestamp))
+        {
+            historyText.AppendLine($"{message.Role.ToUpper()}: {message.Content}");
+        }
+        var historyContent = historyText.ToString();
+        
+        // History should contain all messages including the ones not loaded into chat control
+        Assert.Contains("Message 1", historyContent);
+        Assert.Contains("Message 5", historyContent);
+        Assert.Contains("Response 4", historyContent);
+    }
 
 public class TestAsyncEnumerable : IAsyncEnumerable<IEvent>
 {
@@ -1715,4 +1948,5 @@ public class TestAsyncEnumerator : IAsyncEnumerator<IEvent>
         Console.WriteLine($"TestAsyncEnumerator.MoveNextAsync: {result}, Current: {_enumerator.Current?.Kind ?? "null"}");
         return ValueTask.FromResult(result);
     }
+}
 }

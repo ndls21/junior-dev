@@ -21,17 +21,17 @@ namespace Ui.Shell;
 /// </summary>
 public class DummyChatClient : Microsoft.Extensions.AI.IChatClient
 {
-    public async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+    public async Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, Microsoft.Extensions.AI.ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         // Return a simple dummy response
-        var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "This is a dummy response for test mode. AI features are disabled."));
+        var response = new Microsoft.Extensions.AI.ChatResponse(new Microsoft.Extensions.AI.ChatMessage(Microsoft.Extensions.AI.ChatRole.Assistant, "This is a dummy response for test mode. AI features are disabled."));
         return response;
     }
 
-    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, Microsoft.Extensions.AI.ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Return a simple dummy streaming response
-        var update = new ChatResponseUpdate(ChatRole.Assistant, "This is a dummy streaming response for test mode. AI features are disabled.");
+        var update = new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, "This is a dummy streaming response for test mode. AI features are disabled.");
         yield return update;
     }
 
@@ -106,7 +106,7 @@ static class Program
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .AddJsonFile($"appsettings.{environment}.json", optional: true, reloadOnChange: true)
             .AddEnvironmentVariables()
-            .AddUserSecrets(typeof(DummyChatClient).Assembly, optional: true);
+            .AddUserSecrets(typeof(Program).Assembly, optional: true);
 
         return builder.Build();
     }
@@ -160,13 +160,13 @@ static class Program
             }
             else
             {
-                Console.WriteLine("No real AI client available, using dummy client");
+                Console.WriteLine("No real AI client available, falling back to dummy client");
                 return new DummyChatClient();
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to create AI client: {ex.Message}, using dummy client");
+            Console.WriteLine($"Failed to create AI client: {ex.Message}, falling back to dummy client");
             return new DummyChatClient();
         }
     }
