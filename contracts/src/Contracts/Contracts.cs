@@ -177,6 +177,14 @@ public sealed record SessionConfig(
     WorkItemRef? WorkItem,
     string AgentProfile);
 
+public sealed record SessionInfo(
+    Guid SessionId,
+    SessionStatus Status,
+    string AgentProfile,
+    string RepoName,
+    DateTimeOffset CreatedAt,
+    string? CurrentTask = null);
+
 // Configuration Classes
 
 /// <summary>

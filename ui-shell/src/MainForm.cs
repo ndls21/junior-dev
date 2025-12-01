@@ -812,8 +812,7 @@ public partial class MainForm : Form
         _accordionManager.CreateSessionRequested += OnCreateSessionRequested;
         _accordionManager.AttachToSessionRequested += OnAttachToSessionRequested;
 
-        // Don't auto-create initial session - let user create sessions explicitly
-        // CreateInitialSession() is removed to prevent auto-creation
+        // Don't auto-create initial session - let user create sessions explicitly via UI
 
         conversationPanel.Controls.Add(_chatContainerPanel);
     }
@@ -1165,37 +1164,90 @@ public partial class MainForm : Form
         }
     }
 
-    private void SubscribeToSessionEvents(Guid sessionId)
+    private void SubscribeToSessionEvents(Guid sessionId, CancellationToken cancellationToken = default)
     {
         if (_eventSubscriptionTasks.ContainsKey(sessionId))
         {
             return; // Already subscribed
         }
 
-        var subscriptionTask = Task.Run(async () =>
+        Task subscriptionTask;
+        if (isTestMode)
         {
-            try
+            // In test mode, run synchronously to avoid threading issues
+            subscriptionTask = SubscribeToSessionEventsSync(sessionId, cancellationToken);
+        }
+        else
+        {
+            // In production, run on background thread
+            subscriptionTask = Task.Run(async () =>
             {
-                await foreach (var @event in _sessionManager.Subscribe(sessionId))
+                try
                 {
-                    // Handle event on UI thread
-                    if (InvokeRequired)
+                    Console.WriteLine($"SubscribeToSessionEvents: Starting foreach for session {sessionId}");
+                    await foreach (var @event in _sessionManager.Subscribe(sessionId).WithCancellation(cancellationToken))
                     {
-                        Invoke(() => HandleOrchestratorEvent(@event));
+                        // Debug logging in test mode
+                        if (isTestMode)
+                        {
+                            Console.WriteLine($"SubscribeToSessionEvents: Received event {@event.Kind} for session {sessionId}");
+                        }
+
+                        // Handle event on UI thread (skip Invoke in test mode)
+                        if (isTestMode)
+                        {
+                            HandleOrchestratorEvent(@event);
+                        }
+                        else if (InvokeRequired)
+                        {
+                            Invoke(() => HandleOrchestratorEvent(@event));
+                        }
+                        else
+                        {
+                            HandleOrchestratorEvent(@event);
+                        }
                     }
-                    else
-                    {
-                        HandleOrchestratorEvent(@event);
-                    }
+                    Console.WriteLine($"SubscribeToSessionEvents: Foreach completed for session {sessionId}");
                 }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Event subscription for session {sessionId} ended: {ex.Message}");
-            }
-        });
+                catch (OperationCanceledException)
+                {
+                    Console.WriteLine($"Event subscription for session {sessionId} was cancelled");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Event subscription for session {sessionId} ended: {ex.Message}");
+                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                }
+            }, cancellationToken);
+        }
 
         _eventSubscriptionTasks[sessionId] = subscriptionTask;
+    }
+
+    private async Task SubscribeToSessionEventsSync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            Console.WriteLine($"SubscribeToSessionEvents: Starting foreach for session {sessionId}");
+            await foreach (var @event in _sessionManager.Subscribe(sessionId).WithCancellation(cancellationToken))
+            {
+                // Debug logging in test mode
+                Console.WriteLine($"SubscribeToSessionEvents: Received event {@event.Kind} for session {sessionId}");
+
+                // Handle event synchronously in test mode
+                HandleOrchestratorEvent(@event);
+            }
+            Console.WriteLine($"SubscribeToSessionEvents: Foreach completed for session {sessionId}");
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine($"Event subscription for session {sessionId} was cancelled");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Event subscription for session {sessionId} ended: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+        }
     }
 
     private void HandleOrchestratorEvent(IEvent @event)
@@ -1216,6 +1268,12 @@ public partial class MainForm : Form
         
         // Render to global events panel
         eventRenderer?.RenderEvent(@event, timestamp);
+
+        // Debug logging in test mode
+        if (isTestMode)
+        {
+            Console.WriteLine($"Handled event: {@event.Kind} for session {@event.Correlation.SessionId}");
+        }
     }
 
     private void AddMockEvent()
@@ -1582,7 +1640,11 @@ public partial class MainForm : Form
             // Dependencies are now set in the constructor
         }
 
-        SubscribeToSessionEvents(config.SessionId);
+        // Skip subscription in test mode to avoid hanging background tasks
+        if (!isTestMode)
+        {
+            SubscribeToSessionEvents(config.SessionId);
+        }
     }
 
     public void AddChatStreamForTest(ChatStream chatStream)
@@ -1626,10 +1688,10 @@ public partial class MainForm : Form
                 SubscribeToSessionEvents(sessionId);
             }
 
-            // Update the panel's dependencies
-            if (chatStream.Panel != null)
+            // Update the panel's session and command button states
+            if (chatStream.Panel is AgentPanel agentPanel)
             {
-                // Dependencies are already set in the constructor
+                agentPanel.UpdateSession(sessionId);
             }
 
             Console.WriteLine($"Attached chat stream '{chatStream.AgentName}' to session {sessionId}");
@@ -1637,6 +1699,80 @@ public partial class MainForm : Form
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to attach chat stream to session: {ex.Message}");
+        }
+    }
+
+    public async Task AttachChatStreamToSessionWithSubscriptionForTest(ChatStream chatStream, Guid sessionId)
+    {
+        // For testing only - attach with subscription (always subscribe even in test mode)
+        try
+        {
+            // Update the chat stream's SessionId to match the orchestrator session
+            var oldSessionId = chatStream.SessionId;
+            chatStream.SessionId = sessionId;
+
+            // Unsubscribe from old session events if different
+            if (oldSessionId != sessionId && _eventSubscriptionTasks.ContainsKey(oldSessionId))
+            {
+                // Cancel old subscription
+                _eventSubscriptionTasks[oldSessionId].Dispose();
+                _eventSubscriptionTasks.Remove(oldSessionId);
+            }
+
+            // ALWAYS subscribe for this test method (even in test mode)
+            SubscribeToSessionEvents(sessionId);
+
+            // In test mode, wait for the subscription to complete (it should complete when the stream ends)
+            if (isTestMode)
+            {
+                await WaitForEventSubscription(sessionId, TimeSpan.FromSeconds(5));
+            }
+
+            // Update the panel's session and command button states
+            if (chatStream.Panel is AgentPanel agentPanel)
+            {
+                agentPanel.UpdateSession(sessionId);
+            }
+
+            Console.WriteLine($"Attached chat stream '{chatStream.AgentName}' to session {sessionId} with subscription");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to attach chat stream to session: {ex.Message}");
+        }
+    }
+
+    public async Task CreateSessionForTestWithSubscription(SessionConfig config)
+    {
+        // For testing only - create session and set up chat stream WITH subscription
+        await _sessionManager.CreateSession(config);
+
+        var chatStream = new ChatStream(config.SessionId, $"Agent-{config.SessionId.ToString().Substring(0, 8)}");
+        
+        // Create AgentPanel for the chat stream (normally done by AccordionLayoutManager)
+        var agentPanel = new AgentPanel(chatStream);
+        // Add the panel to the container for proper UI hierarchy
+        if (_accordionManager != null && _accordionManager is AccordionLayoutManager manager)
+        {
+            // Access the container through reflection or add a method to get it
+            // For now, just set the panel directly
+            chatStream.Panel = agentPanel;
+        }
+        
+        _accordionManager?.AddChatStream(chatStream);
+
+        if (chatStream.Panel != null)
+        {
+            // Dependencies are now set in the constructor
+        }
+
+        // ALWAYS subscribe for this test method (even in test mode)
+        SubscribeToSessionEvents(config.SessionId);
+        
+        // In test mode, wait for the subscription to complete (it should complete when the stream ends)
+        if (isTestMode)
+        {
+            await WaitForEventSubscription(config.SessionId, TimeSpan.FromSeconds(5));
         }
     }
 
@@ -1902,10 +2038,10 @@ public partial class MainForm : Form
             // Subscribe to the new session events
             SubscribeToSessionEvents(sessionId);
 
-            // Update the panel's dependencies
-            if (chatStream.Panel != null)
+            // Update the panel's session and command button states
+            if (chatStream.Panel is AgentPanel agentPanel)
             {
-                // Dependencies are already set in the constructor
+                agentPanel.UpdateSession(sessionId);
             }
 
             Console.WriteLine($"Attached chat stream '{chatStream.AgentName}' to session {sessionId}");
@@ -2288,7 +2424,7 @@ public partial class MainForm : Form
         using var dialog = new Form
         {
             Text = "Attach Chat Stream to Session",
-            Size = new Size(400, 250),
+            Size = new Size(500, 300),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
@@ -2299,20 +2435,36 @@ public partial class MainForm : Form
         var chatCombo = new System.Windows.Forms.ComboBox
         {
             Location = new Point(10, 30),
-            Width = 360,
+            Width = 460,
             DropDownStyle = ComboBoxStyle.DropDownList
         };
 
-        var sessionLabel = new System.Windows.Forms.Label { Text = "Session ID:", Location = new Point(10, 70), AutoSize = true };
-        var sessionTextBox = new System.Windows.Forms.TextBox
+        var sessionLabel = new System.Windows.Forms.Label { Text = "Select Existing Session:", Location = new Point(10, 70), AutoSize = true };
+        var sessionCombo = new System.Windows.Forms.ComboBox
         {
             Location = new Point(10, 90),
-            Width = 360,
-            PlaceholderText = "Enter Session ID (GUID format)"
+            Width = 460,
+            DropDownStyle = ComboBoxStyle.DropDownList
         };
 
-        var attachButton = new System.Windows.Forms.Button { Text = "Attach", Location = new Point(220, 170), DialogResult = DialogResult.OK };
-        var cancelButton = new System.Windows.Forms.Button { Text = "Cancel", Location = new Point(300, 170), DialogResult = DialogResult.Cancel };
+        var manualLabel = new System.Windows.Forms.Label { Text = "Or Enter Session ID Manually:", Location = new Point(10, 130), AutoSize = true };
+        var sessionTextBox = new System.Windows.Forms.TextBox
+        {
+            Location = new Point(10, 150),
+            Width = 460,
+            PlaceholderText = "Enter Session ID (GUID format)",
+            Enabled = false
+        };
+
+        var manualCheckBox = new System.Windows.Forms.CheckBox
+        {
+            Text = "Enter Session ID manually",
+            Location = new Point(10, 180),
+            AutoSize = true
+        };
+
+        var attachButton = new System.Windows.Forms.Button { Text = "Attach", Location = new Point(320, 220), DialogResult = DialogResult.OK };
+        var cancelButton = new System.Windows.Forms.Button { Text = "Cancel", Location = new Point(400, 220), DialogResult = DialogResult.Cancel };
 
         // Populate chat streams
         foreach (var stream in _accordionManager.ChatStreams)
@@ -2321,42 +2473,94 @@ public partial class MainForm : Form
         }
         if (chatCombo.Items.Count > 0) chatCombo.SelectedIndex = 0;
 
+        // Populate existing sessions
+        try
+        {
+            var activeSessions = _sessionManager.GetActiveSessions();
+            foreach (var session in activeSessions)
+            {
+                var displayText = $"{session.RepoName} - {session.AgentProfile} ({session.Status})";
+                if (!string.IsNullOrEmpty(session.CurrentTask))
+                {
+                    displayText += $" - {session.CurrentTask}";
+                }
+                sessionCombo.Items.Add(new { DisplayText = displayText, Session = session });
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load active sessions: {ex.Message}");
+        }
+
+        // Enable/disable controls based on manual checkbox
+        manualCheckBox.CheckedChanged += (s, e) =>
+        {
+            sessionCombo.Enabled = !manualCheckBox.Checked;
+            sessionTextBox.Enabled = manualCheckBox.Checked;
+        };
+
         attachButton.Click += async (s, e) =>
         {
-            if (chatCombo.SelectedItem != null && !string.IsNullOrWhiteSpace(sessionTextBox.Text))
+            if (chatCombo.SelectedItem == null)
             {
-                // Get the selected chat stream
-                dynamic selectedItem = chatCombo.SelectedItem;
-                var stream = selectedItem.Stream as ChatStream;
+                MessageBox.Show("Please select a chat stream.", "Missing Information", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
-                if (stream != null)
+            // Get the selected chat stream
+            dynamic selectedChatItem = chatCombo.SelectedItem;
+            var stream = selectedChatItem.Stream as ChatStream;
+
+            if (stream == null)
+            {
+                MessageBox.Show("Invalid chat stream selection.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            Guid sessionId;
+            if (manualCheckBox.Checked)
+            {
+                // Manual entry mode
+                if (string.IsNullOrWhiteSpace(sessionTextBox.Text))
                 {
-                    try
-                    {
-                        // Parse the session ID
-                        if (!Guid.TryParse(sessionTextBox.Text.Trim(), out var sessionId))
-                        {
-                            MessageBox.Show("Invalid Session ID format. Please enter a valid GUID.", "Invalid Session ID", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                            return;
-                        }
+                    MessageBox.Show("Please enter a Session ID.", "Missing Information", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
 
-                        await AttachChatStreamToSession(stream, sessionId);
-                        dialog.DialogResult = DialogResult.OK;
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"Failed to attach chat stream: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
+                if (!Guid.TryParse(sessionTextBox.Text.Trim(), out sessionId))
+                {
+                    MessageBox.Show("Invalid Session ID format. Please enter a valid GUID.", "Invalid Session ID", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
                 }
             }
             else
             {
-                MessageBox.Show("Please select a chat stream and enter a Session ID.", "Missing Information", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                // Existing session mode
+                if (sessionCombo.SelectedItem == null)
+                {
+                    MessageBox.Show("Please select an existing session.", "Missing Information", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                dynamic selectedSessionItem = sessionCombo.SelectedItem;
+                var sessionInfo = selectedSessionItem.Session as SessionInfo;
+                sessionId = sessionInfo!.SessionId;
+            }
+
+            try
+            {
+                await AttachChatStreamToSession(stream, sessionId);
+                dialog.DialogResult = DialogResult.OK;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to attach chat stream: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         };
 
         dialog.Controls.AddRange(new System.Windows.Forms.Control[] {
-            chatLabel, chatCombo, sessionLabel, sessionTextBox, attachButton, cancelButton
+            chatLabel, chatCombo, sessionLabel, sessionCombo,
+            manualLabel, sessionTextBox, manualCheckBox, attachButton, cancelButton
         });
 
         dialog.AcceptButton = attachButton;
@@ -2376,10 +2580,36 @@ public partial class MainForm : Form
         ShowAttachChatToSessionDialog();
     }
 
+    public async Task WaitForEventSubscription(Guid sessionId, TimeSpan timeout)
+    {
+        // Test-only method to wait for a subscription task to complete
+        if (_eventSubscriptionTasks.TryGetValue(sessionId, out var task))
+        {
+            await Task.WhenAny(task, Task.Delay(timeout));
+        }
+    }
+
+    public void CancelEventSubscription(Guid sessionId)
+    {
+        // Test-only method to cancel a subscription
+        if (_eventSubscriptionTasks.TryGetValue(sessionId, out var task))
+        {
+            // Note: In a real implementation, we'd need to store the CancellationTokenSource
+            // For now, we'll just remove the task reference
+            _eventSubscriptionTasks.Remove(sessionId);
+        }
+    }
+
     private RepoRef GetCurrentRepo()
     {
         // For now, return a default repo based on the workspace
         // In a real implementation, this could be configurable per session
         return new RepoRef("default-repo", Environment.CurrentDirectory);
+    }
+
+    public ISessionManager GetSessionManagerForTest()
+    {
+        // For testing only - return the session manager
+        return _sessionManager;
     }
 }

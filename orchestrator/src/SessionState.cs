@@ -16,6 +16,8 @@ public class SessionState
     public SessionStatus Status { get; private set; } = SessionStatus.Running;
     public bool IsApproved { get; private set; }
     public IReadOnlyList<IEvent> Events => _eventLog;
+    public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
+    public string? CurrentTask { get; private set; }
 
     public SessionState(SessionConfig config, string workspacePath)
     {
@@ -71,5 +73,10 @@ public class SessionState
 
         command = null;
         return false;
+    }
+
+    public void SetCurrentTask(string? task)
+    {
+        CurrentTask = task;
     }
 }

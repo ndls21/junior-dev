@@ -17,7 +17,7 @@ These guidelines are reusable across projects. Project-specific guidance for thi
 
 ## Workflow & Collaboration
 - **Claiming work**: Link to or create a GitHub issue when you start. Reference the issue in TODOs (`// TODO: ... - Issue: #123`).
-- **Branching**: Prefer feature branches (`agent/<issue>-desc`). Work on `master` only for small, safe changes when approved; include issue/rationale in the commit message.
+- **Branching**: Prefer feature branches (`agent/<issue>-desc`). Always fetch from origin and branch off master to ensure you're at the tip and avoid merge conflicts. Work on `master` only for small, safe changes when approved; include issue/rationale in the commit message.
 - **Issue closure**: Don’t auto-close issues; wait for explicit go-ahead. Clean up and commit before switching issues.
 - **Commit messages**: Include issue/stage context if applicable (e.g., `Feat: implement X (#123)`).
 - **Test failures**: Investigate code vs. test assumptions; don’t just change tests to make them pass.

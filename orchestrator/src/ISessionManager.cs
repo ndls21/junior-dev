@@ -15,4 +15,7 @@ public interface ISessionManager
     Task ResumeSession(Guid sessionId);
     Task AbortSession(Guid sessionId);
     Task ApproveSession(Guid sessionId);
+    Task CompleteSession(Guid sessionId);
+    IReadOnlyList<SessionInfo> GetActiveSessions();
+    SessionConfig? GetSessionConfig(Guid sessionId);
 }

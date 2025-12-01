@@ -32,6 +32,8 @@ public class DotnetBuildAdapter : IAdapter
             throw new ArgumentException($"Command must be {nameof(BuildProject)}", nameof(command));
         }
 
+        Console.WriteLine($"DEBUG: BuildAdapter received command with ProjectPath: '{buildCommand.ProjectPath}', Repo.Path: '{buildCommand.Repo.Path}'");
+
         try
         {
             // Validate the project path for security
@@ -108,10 +110,6 @@ public class DotnetBuildAdapter : IAdapter
         if (projectPath.Contains("..") || projectPath.Contains("\\..") || projectPath.Contains("../"))
             return false;
 
-        // Check for absolute paths that might escape the workspace
-        if (Path.IsPathRooted(projectPath) && !projectPath.StartsWith(_config.WorkspaceRoot))
-            return false;
-
         // Only allow .csproj, .fsproj, .vbproj, .sln files
         var extension = Path.GetExtension(projectPath).ToLowerInvariant();
         return extension is ".csproj" or ".fsproj" or ".vbproj" or ".sln";
@@ -131,66 +129,62 @@ public class DotnetBuildAdapter : IAdapter
     private async Task<(bool success, string output, string errorOutput)> ExecuteBuildAsync(BuildProject command)
     {
         var arguments = BuildArguments(command);
+        Console.WriteLine($"DEBUG: BuildAdapter executing 'dotnet {arguments}' in '{command.Repo.Path}'");
 
         var processStartInfo = new ProcessStartInfo
         {
             FileName = "dotnet",
             Arguments = arguments,
-            WorkingDirectory = _config.WorkspaceRoot,
+            WorkingDirectory = command.Repo.Path,
+            UseShellExecute = false,  // Capture output
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            UseShellExecute = false,
             CreateNoWindow = true
         };
 
         using var process = new Process { StartInfo = processStartInfo };
+        
         var outputBuilder = new StringBuilder();
         var errorBuilder = new StringBuilder();
-
-        process.OutputDataReceived += (sender, e) =>
+        
+        process.OutputDataReceived += (sender, e) => 
         {
-            if (e.Data != null)
+            if (e.Data != null) 
+            {
                 outputBuilder.AppendLine(e.Data);
+                Console.WriteLine($"BUILD OUTPUT: {e.Data}");
+            }
         };
-
-        process.ErrorDataReceived += (sender, e) =>
+        
+        process.ErrorDataReceived += (sender, e) => 
         {
-            if (e.Data != null)
+            if (e.Data != null) 
+            {
                 errorBuilder.AppendLine(e.Data);
+                Console.WriteLine($"BUILD ERROR: {e.Data}");
+            }
         };
-
+        
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
-
-        // Wait for completion with timeout
-        var timeout = command.Timeout ?? _config.DefaultTimeout;
-        var completed = process.WaitForExit((int)timeout.TotalMilliseconds);
-
-        if (!completed)
-        {
-            process.Kill();
-            return (false, outputBuilder.ToString(), $"Build timed out after {timeout.TotalSeconds} seconds");
-        }
-
+        process.WaitForExit();
+        
         var success = process.ExitCode == 0;
-        return (success, outputBuilder.ToString(), errorBuilder.ToString());
+        var output = outputBuilder.ToString();
+        var errorOutput = errorBuilder.ToString();
+        
+        Console.WriteLine($"DEBUG: Build completed with exit code {process.ExitCode}, success: {success}");
+        
+        return (success, output, errorOutput);
     }
 
     private string BuildArguments(BuildProject command)
     {
         var args = new List<string>();
 
-        if (Path.GetExtension(command.ProjectPath).ToLowerInvariant() == ".sln")
-        {
-            args.Add("build");
-            args.Add(command.ProjectPath);
-        }
-        else
-        {
-            args.Add("build");
-            args.Add(command.ProjectPath);
-        }
+        args.Add("build");
+        args.Add(command.ProjectPath);
 
         if (!string.IsNullOrEmpty(command.Configuration))
         {

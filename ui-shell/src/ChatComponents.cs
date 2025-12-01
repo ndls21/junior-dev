@@ -18,7 +18,26 @@ public class ChatStream
     public Guid SessionId { get; set; }
     public Guid? AgentId { get; set; }
     public string AgentName { get; set; } = "Agent";
-    public JuniorDev.Contracts.SessionStatus Status { get; set; } = JuniorDev.Contracts.SessionStatus.Running;
+    private JuniorDev.Contracts.SessionStatus _status = JuniorDev.Contracts.SessionStatus.Running;
+    public JuniorDev.Contracts.SessionStatus Status 
+    { 
+        get 
+        {
+            if (AgentName.Contains("Agent-") || AgentName.StartsWith("Agent "))
+            {
+                Console.WriteLine($"ChatStream {AgentName}: Status getter returning {_status}");
+            }
+            return _status; 
+        }
+        set 
+        { 
+            if (AgentName.Contains("Agent-") || AgentName.StartsWith("Agent "))
+            {
+                Console.WriteLine($"ChatStream {AgentName}: Status changing from {_status} to {value}");
+            }
+            _status = value; 
+        } 
+    }
     public string CurrentTask { get; set; } = "";
     public int ProgressPercentage { get; set; } = 0;
     public DateTimeOffset LastActivity { get; set; } = DateTimeOffset.Now;
@@ -239,18 +258,50 @@ public class AgentPanel : Panel
 
         _commandToolbar.Items.AddRange(new ToolStripItem[] { buildButton, testButton, commentButton, transitionButton });
 
-        // Disable buttons if session manager is available (live mode) - commands need proper repo/work item config
-        // TODO: Re-enable when proper parameter input dialogs are implemented - Issue: #33
+        // Store button references for later updates
+        _buildButton = buildButton;
+        _testButton = testButton;
+        _commentButton = commentButton;
+        _transitionButton = transitionButton;
+
+        // Initially update button states
+        UpdateCommandButtonStates();
+    }
+
+    private ToolStripButton? _buildButton;
+    private ToolStripButton? _testButton;
+    private ToolStripButton? _commentButton;
+    private ToolStripButton? _transitionButton;
+
+    private void UpdateCommandButtonStates()
+    {
+        // Enable buttons if this chat stream is attached to an active session
+        // Check if session manager is available and this stream has a valid session
+        bool enableCommands = false;
         if (_sessionManager != null)
         {
-            buildButton.Enabled = false;
-            testButton.Enabled = false;
-            commentButton.Enabled = false;
-            transitionButton.Enabled = false;
-            buildButton.ToolTipText = "Disabled in live mode - needs repo configuration";
-            testButton.ToolTipText = "Disabled in live mode - needs repo configuration";
-            commentButton.ToolTipText = "Disabled in live mode - needs work item configuration";
-            transitionButton.ToolTipText = "Disabled in live mode - needs work item configuration";
+            var activeSessions = _sessionManager.GetActiveSessions();
+            enableCommands = activeSessions.Any(s => s.SessionId == _chatStream.SessionId);
+        }
+
+        _buildButton!.Enabled = enableCommands;
+        _testButton!.Enabled = enableCommands;
+        _commentButton!.Enabled = enableCommands;
+        _transitionButton!.Enabled = enableCommands;
+
+        if (!enableCommands)
+        {
+            _buildButton!.ToolTipText = "Attach to an active session to enable commands";
+            _testButton!.ToolTipText = "Attach to an active session to enable commands";
+            _commentButton!.ToolTipText = "Attach to an active session to enable commands";
+            _transitionButton!.ToolTipText = "Attach to an active session to enable commands";
+        }
+        else
+        {
+            _buildButton!.ToolTipText = "Build the project";
+            _testButton!.ToolTipText = "Run tests";
+            _commentButton!.ToolTipText = "Add a comment to work item";
+            _transitionButton!.ToolTipText = "Transition work item state";
         }
     }
 
@@ -266,7 +317,7 @@ public class AgentPanel : Panel
         this.ContextMenuStrip = _contextMenu;
     }
 
-    private void PublishCommand(string commandType)
+    private async void PublishCommand(string commandType)
     {
         if (_sessionManager == null)
         {
@@ -274,42 +325,40 @@ public class AgentPanel : Panel
             return;
         }
 
-        // TEMPORARY: Disable command execution in live mode until proper repo/work item configuration is implemented
-        // TODO: Remove this check when parameter input dialogs are added - Issue: #33
-        Console.WriteLine($"Command '{commandType}' disabled in live mode - needs proper repo/work item configuration");
-        return;
-
-        // TODO: Implement command publishing with proper parameters - Issue: #33
-        // This will need to create the appropriate command DTO and call _sessionManager.PublishCommand()
-        /*
-        Task.Run(async () =>
+        // Get the session config for this chat stream
+        var sessionConfig = _sessionManager.GetSessionConfig(_chatStream.SessionId);
+        if (sessionConfig == null)
         {
-            try
+            Console.WriteLine($"Session {_chatStream.SessionId} not found - cannot publish commands");
+            return;
+        }
+
+        try
+        {
+            var commandId = Guid.NewGuid();
+            var correlation = new Correlation(_chatStream.SessionId);
+            
+            ICommand command = commandType switch
             {
-                var commandId = Guid.NewGuid();
-                var correlation = new Correlation(_chatStream.SessionId);
-                
-                // For now, use hardcoded repo info - in future this should come from session config
-                var repo = new RepoRef("default", Path.Combine(Path.GetTempPath(), "JuniorDev", _chatStream.SessionId.ToString()));
-                
-                ICommand command = commandType switch
-                {
-                    "Build" => new RunTests(commandId, correlation, repo, "build", TimeSpan.FromMinutes(5)),
-                    "Test" => new RunTests(commandId, correlation, repo),
-                    "Comment" => new Comment(commandId, correlation, new WorkItemRef("default", "PROJ-123"), "UI-triggered comment"),
-                    "Transition" => new TransitionTicket(commandId, correlation, new WorkItemRef("default", "PROJ-123"), "In Progress"),
-                    _ => throw new ArgumentException($"Unknown command type: {commandType}")
-                };
-                
-                await _sessionManager.PublishCommand(command);
-                Console.WriteLine($"Published {commandType} command for session {_chatStream.SessionId}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to publish {commandType} command: {ex.Message}");
-            }
-        });
-        */
+                "Build" => new BuildProject(commandId, correlation, sessionConfig.Repo, ".", "Release", "net8.0", null, TimeSpan.FromMinutes(5)),
+                "Test" => new RunTests(commandId, correlation, sessionConfig.Repo, null, TimeSpan.FromMinutes(5)),
+                "Comment" => sessionConfig.WorkItem != null 
+                    ? new Comment(commandId, correlation, sessionConfig.WorkItem, "UI-triggered comment")
+                    : throw new InvalidOperationException("No work item configured for this session"),
+                "Transition" => sessionConfig.WorkItem != null
+                    ? new TransitionTicket(commandId, correlation, sessionConfig.WorkItem, "In Progress")
+                    : throw new InvalidOperationException("No work item configured for this session"),
+                _ => throw new ArgumentException($"Unknown command type: {commandType}")
+            };
+            
+            await _sessionManager.PublishCommand(command);
+            Console.WriteLine($"Published {commandType} command for session {_chatStream.SessionId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to publish {commandType} command: {ex.Message}");
+            // In a real app, this would show an error dialog
+        }
     }
 
     private bool CheckValidAICredentials()
@@ -393,6 +442,12 @@ public class AgentPanel : Panel
                     _chatStream.CurrentTask = statusChanged.Reason;
                 }
                 _chatStream.LastActivity = timestamp;
+                
+                // Debug logging in test mode
+                if (_chatStream.AgentName.Contains("Agent-") || _chatStream.AgentName.StartsWith("Agent "))
+                {
+                    Console.WriteLine($"RenderEvent: Updated chat stream {_chatStream.AgentName} status to {statusChanged.Status} (reason: {statusChanged.Reason}) - Status is now: {_chatStream.Status}");
+                }
             }
             else
             {
@@ -487,13 +542,17 @@ public class AgentPanel : Panel
         AttachToSessionRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>
-    /// Sets the dependencies for this panel (for testing purposes)
-    /// </summary>
+    public void UpdateSession(Guid newSessionId)
+    {
+        _chatStream.SessionId = newSessionId;
+        UpdateCommandButtonStates();
+    }
+
     public void SetDependencies(ISessionManager? sessionManager, IServiceProvider? serviceProvider)
     {
         _sessionManager = sessionManager;
         _serviceProvider = serviceProvider;
+        UpdateCommandButtonStates();
     }
 
     protected override void Dispose(bool disposing)

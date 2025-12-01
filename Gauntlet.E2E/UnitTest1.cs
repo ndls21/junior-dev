@@ -43,13 +43,81 @@ public class GauntletSmokeTest
     }
 
     [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task BuildProjectFailCase_InvalidProject_Rejected()
+    {
+        _output.WriteLine("=== BUILD PROJECT FAIL CASE TEST STARTED ===");
+        _output.WriteLine("Purpose: Test that BuildProject properly rejects invalid project paths");
+
+        // Setup DI container with build adapter
+        var services = new ServiceCollection();
+        services.AddOrchestrator();
+        services.AddDotnetBuildAdapter();
+        services.AddAgentSdk();
+
+        await using var provider = services.BuildServiceProvider();
+        var sessionManager = provider.GetRequiredService<ISessionManager>();
+
+        // Create session config
+        var sessionId = Guid.NewGuid();
+        var sessionConfig = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile
+            {
+                Name = "test",
+                ProtectedBranches = new HashSet<string> { "main", "master" },
+                RequireTestsBeforePush = false,
+                RequireApprovalForPush = false
+            },
+            new RepoRef("test-repo", "/tmp/test-repo"),
+            new WorkspaceRef(""),
+            null,
+            "test-agent"
+        );
+
+        await sessionManager.CreateSession(sessionConfig);
+
+        // Subscribe to events
+        var events = new List<IEvent>();
+        var subscription = sessionManager.Subscribe(sessionId);
+        var eventCollectionTask = Task.Run(async () =>
+        {
+            await foreach (var @event in subscription)
+            {
+                events.Add(@event);
+            }
+        });
+
+        // Try to build with invalid project path
+        var buildCmd = new BuildProject(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            new RepoRef("test-repo", "/tmp/test-repo"),
+            "../../../etc/passwd", // Invalid path
+            "Release",
+            "net8.0");
+
+        await sessionManager.PublishCommand(buildCmd);
+
+        // Wait for events
+        await Task.Delay(3000);
+
+        // Verify the command was rejected
+        var rejectedEvents = events.Where(e => e.Kind == nameof(CommandRejected)).ToList();
+        Assert.Single(rejectedEvents);
+
+        var rejected = (CommandRejected)rejectedEvents[0];
+        Assert.Contains("Invalid project path", rejected.Reason);
+
+        _output.WriteLine("=== BUILD PROJECT FAIL CASE TEST PASSED ===");
+    }
+
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task LiveModeSmokeTest_QueriesBacklog_ProcessesWorkItem_ExecutesVcsOperations()
     {
-        // Load configuration using ConfigBuilder (appsettings + env + user-secrets)
-        var config = ConfigBuilder.Build("Development", Path.GetFullPath("../../.."));
-        var appConfig = ConfigBuilder.GetAppConfig(config);
-
         // Check if live mode is enabled
         var runLive = Environment.GetEnvironmentVariable("RUN_LIVE") == "1";
         if (!runLive)
@@ -59,26 +127,52 @@ public class GauntletSmokeTest
             return;
         }
 
-        // Validate required configuration
-        var hasJiraConfig = appConfig.Auth?.Jira != null &&
+        // For live mode, we need configuration. Try to load it, but provide defaults if binding fails
+        AppConfig? appConfig = null;
+        try
+        {
+            var config = ConfigBuilder.Build("Development", Path.GetFullPath("../../.."));
+            appConfig = ConfigBuilder.GetAppConfig(config);
+        }
+        catch (Exception ex)
+        {
+            _output.WriteLine($"Warning: Failed to load full config: {ex.Message}");
+            _output.WriteLine("Using environment variables directly for live testing");
+            // Don't create minimal config - we'll rely on environment variables
+        }
+
+        // Validate required configuration - check both config and environment variables
+        var hasJiraConfig = (appConfig?.Auth?.Jira != null &&
                            !string.IsNullOrEmpty(appConfig.Auth.Jira.BaseUrl) &&
                            !string.IsNullOrEmpty(appConfig.Auth.Jira.Username) &&
-                           !string.IsNullOrEmpty(appConfig.Auth.Jira.ApiToken);
+                           !string.IsNullOrEmpty(appConfig.Auth.Jira.ApiToken)) ||
+                           (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JIRA_URL")) &&
+                            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JIRA_USER")) &&
+                            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JIRA_TOKEN")));
 
-        var hasGitConfig = appConfig.Auth?.Git != null &&
+        var hasGitConfig = (appConfig?.Auth?.Git != null &&
                           (!string.IsNullOrEmpty(appConfig.Auth.Git.PersonalAccessToken) ||
-                           !string.IsNullOrEmpty(appConfig.Auth.Git.SshKeyPath));
+                           !string.IsNullOrEmpty(appConfig.Auth.Git.SshKeyPath))) ||
+                          !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_TOKEN"));
 
-        var hasGitHubConfig = appConfig.Auth?.GitHub != null &&
+        var hasGitHubConfig = (appConfig?.Auth?.GitHub != null &&
                              !string.IsNullOrEmpty(appConfig.Auth.GitHub.Token) &&
                              (!string.IsNullOrEmpty(appConfig.Auth.GitHub.DefaultOrg) ||
-                              !string.IsNullOrEmpty(appConfig.Auth.GitHub.DefaultRepo));
+                              !string.IsNullOrEmpty(appConfig.Auth.GitHub.DefaultRepo))) ||
+                             (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GITHUB_TOKEN")) &&
+                              !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GITHUB_REPO")));
 
-        if (!hasJiraConfig)
+        // Debug output
+        _output.WriteLine($"DEBUG: GITHUB_TOKEN env var: {Environment.GetEnvironmentVariable("GITHUB_TOKEN")?.Substring(0, 10)}...");
+        _output.WriteLine($"DEBUG: GITHUB_REPO env var: {Environment.GetEnvironmentVariable("GITHUB_REPO")}");
+        _output.WriteLine($"DEBUG: hasGitHubConfig: {hasGitHubConfig}");
+
+        // For GitHub-only testing, we need GitHub + Git config, Jira is optional
+        if (!hasGitHubConfig)
         {
             _output.WriteLine("=== LIVE MODE SMOKE TEST SKIPPED ===");
-            _output.WriteLine("Missing required Jira configuration in appsettings.json, environment variables, or user-secrets");
-            _output.WriteLine("Required: Auth.Jira.BaseUrl, Auth.Jira.Username, Auth.Jira.ApiToken");
+            _output.WriteLine("Missing required GitHub configuration in appsettings.json, environment variables, or user-secrets");
+            _output.WriteLine("Required: Auth.GitHub.Token and (Auth.GitHub.DefaultOrg or Auth.GitHub.DefaultRepo)");
             return;
         }
 
@@ -90,27 +184,38 @@ public class GauntletSmokeTest
             return;
         }
 
-        if (!hasGitHubConfig)
+        if (!hasJiraConfig)
         {
-            _output.WriteLine("=== LIVE MODE SMOKE TEST SKIPPED ===");
-            _output.WriteLine("Missing required GitHub configuration in appsettings.json, environment variables, or user-secrets");
-            _output.WriteLine("Required: Auth.GitHub.Token and (Auth.GitHub.DefaultOrg or Auth.GitHub.DefaultRepo)");
-            return;
+            _output.WriteLine("=== LIVE MODE SMOKE TEST (GITHUB-ONLY) STARTED ===");
+            _output.WriteLine("Purpose: Test full pipeline with real GitHub and Git adapters (Jira not configured)");
+            _output.WriteLine("WARNING: This test interacts with real external services!");
+            _output.WriteLine($"GitHub: Configured with token and repo");
+            _output.WriteLine($"Git: Configured with PAT");
+        }
+        else
+        {
+            _output.WriteLine("=== GAUNTLET E2E SMOKE TEST (LIVE MODE) STARTED ===");
+            _output.WriteLine("Purpose: Test full pipeline with real Jira/Git adapters");
+            _output.WriteLine("WARNING: This test interacts with real external services!");
+            _output.WriteLine($"Jira: Configured");
+            _output.WriteLine($"GitHub: Configured with token and repo");
+            _output.WriteLine($"Git: Configured with PAT");
         }
 
-        _output.WriteLine("=== GAUNTLET E2E SMOKE TEST (LIVE MODE) STARTED ===");
-        _output.WriteLine("Purpose: Test full pipeline with real Jira/Git adapters");
-        _output.WriteLine("WARNING: This test interacts with real external services!");
-        _output.WriteLine($"Jira: {appConfig.Auth!.Jira!.BaseUrl}");
-        _output.WriteLine($"Git: Configured with {(appConfig.Auth!.Git!.PersonalAccessToken != null ? "PAT" : "SSH key")}");
-
-        await RunSmokeTest(useLiveAdapters: true, appConfig: appConfig);
+        await RunSmokeTest(useLiveAdapters: true, appConfig: appConfig, hasJiraConfig: hasJiraConfig);
     }
 
-    private async Task RunSmokeTest(bool useLiveAdapters, AppConfig? appConfig = null)
+    private async Task RunSmokeTest(bool useLiveAdapters, AppConfig? appConfig = null, bool hasJiraConfig = false)
     {
         // Setup DI container with all services
         var services = new ServiceCollection();
+        
+        // Register AppConfig if provided (needed for agents in live mode)
+        if (appConfig != null)
+        {
+            services.AddSingleton(appConfig);
+        }
+        
         services.AddOrchestrator();           // Core orchestrator with fake adapters
         services.AddDotnetBuildAdapter();     // Optional: adds real build functionality
         services.AddAgentSdk();
@@ -142,7 +247,16 @@ public class GauntletSmokeTest
             }
 
             // Override with real adapters for live mode
-            services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter());
+            if (hasJiraConfig)
+            {
+                services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter());
+                _output.WriteLine("Using real Jira adapter");
+            }
+            else
+            {
+                _output.WriteLine("Jira adapter not configured - skipping");
+            }
+            
             services.AddSingleton<IAdapter>(new JuniorDev.VcsGit.VcsGitAdapter(new JuniorDev.VcsGit.VcsConfig
             {
                 RepoPath = "/tmp/live-test-repo",
@@ -150,7 +264,47 @@ public class GauntletSmokeTest
                 IsIntegrationTest = true
             }, isFake: false));
             services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.GitHub.GitHubAdapter());
-            _output.WriteLine("Using real Jira, Git, and GitHub adapters");
+            _output.WriteLine("Using real Git and GitHub adapters");
+        }
+        else if (useLiveAdapters && appConfig == null)
+        {
+            // Config failed to load, but we have environment variables - set them up manually
+            _output.WriteLine("Config failed to load, using environment variables directly");
+            
+            // Ensure environment variables are set for adapters
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GITHUB_TOKEN")))
+            {
+                Environment.SetEnvironmentVariable("GITHUB_TOKEN", Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__GITHUB__TOKEN"));
+            }
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GITHUB_REPO")))
+            {
+                var repo = Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__GITHUB__DEFAULTREPO") ?? "owner/repo";
+                Environment.SetEnvironmentVariable("GITHUB_REPO", repo);
+            }
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_TOKEN")))
+            {
+                Environment.SetEnvironmentVariable("GIT_TOKEN", Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__GIT__PERSONALACCESSTOKEN"));
+            }
+
+            // Register adapters
+            if (hasJiraConfig)
+            {
+                services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter());
+                _output.WriteLine("Using real Jira adapter");
+            }
+            else
+            {
+                _output.WriteLine("Jira adapter not configured - skipping");
+            }
+            
+            services.AddSingleton<IAdapter>(new JuniorDev.VcsGit.VcsGitAdapter(new JuniorDev.VcsGit.VcsConfig
+            {
+                RepoPath = "/tmp/live-test-repo",
+                AllowPush = Environment.GetEnvironmentVariable("RUN_LIVE_PUSH") == "1",
+                IsIntegrationTest = true
+            }, isFake: false));
+            services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.GitHub.GitHubAdapter());
+            _output.WriteLine("Using real Git and GitHub adapters (from env vars)");
         }
         else
         {
@@ -211,6 +365,33 @@ public class GauntletSmokeTest
         // Execute all commands
         _output.WriteLine("--- Executing commands ---");
 
+        // Create a simple .NET project in the temp workspace for build testing
+        var tempWorkspacePath = Path.Combine(Path.GetTempPath(), $"junior-dev-workspace-{sessionId}");
+        Directory.CreateDirectory(tempWorkspacePath);
+        _output.WriteLine($"Created temp workspace: {tempWorkspacePath}");
+
+        // Create a simple console app project
+        var projectPath = Path.Combine(tempWorkspacePath, "TestProject.csproj");
+        var programPath = Path.Combine(tempWorkspacePath, "Class1.cs");
+        
+        await File.WriteAllTextAsync(projectPath, @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>");
+
+        await File.WriteAllTextAsync(programPath, @"namespace TestProject
+{
+    public class Class1
+    {
+        public string GetMessage() => ""Hello from smoke test!"";
+    }
+}");
+
+        _output.WriteLine("Created test .NET project for build verification");
+
         // Query backlog
         var queryBacklogCmd = new QueryBacklog(Guid.NewGuid(), new Correlation(sessionId), null);
         await sessionManager.PublishCommand(queryBacklogCmd);
@@ -236,10 +417,10 @@ public class GauntletSmokeTest
         await sessionManager.PublishCommand(testCmd);
         _output.WriteLine("Run tests published");
 
-        // Build project (demonstrates build adapter integration)
-        var buildCmd = new BuildProject(Guid.NewGuid(), new Correlation(sessionId), new RepoRef("test-repo", "/tmp/test-repo"), "src/TestProject.csproj", "Release", "net8.0", new[] { "Build" }, TimeSpan.FromMinutes(5));
+        // Build project (now points to real project in temp workspace)
+        var buildCmd = new BuildProject(Guid.NewGuid(), new Correlation(sessionId), new RepoRef("test-repo", tempWorkspacePath), "TestProject.csproj", "Release", "net8.0", null, TimeSpan.FromMinutes(5));
         await sessionManager.PublishCommand(buildCmd);
-        _output.WriteLine("Build project published");
+        _output.WriteLine("Build project published (using real .NET project)");
 
         // Push - only in fake mode by default for safety
         if (!useLiveAdapters)
@@ -254,7 +435,7 @@ public class GauntletSmokeTest
         }
 
         // Complete the session
-        ((SessionManager)sessionManager).CompleteSession(sessionId);
+        await ((SessionManager)sessionManager).CompleteSession(sessionId);
         _output.WriteLine("Session completed");
 
         // Wait for all events (longer for live services)
@@ -275,7 +456,7 @@ public class GauntletSmokeTest
         // Assertions - allow for concurrent execution and session completion timing
         Assert.True(acceptedCommands >= 6, $"Expected at least 6 accepted commands, got {acceptedCommands}");
         Assert.True(completedCommands >= 6, $"Expected at least 6 completed commands, got {completedCommands}");
-        Assert.True(successfulCommands >= 5, $"Expected at least 5 successful commands (build may fail in test env), got {successfulCommands}");
+        Assert.True(successfulCommands >= 6, $"Expected at least 6 successful commands (all should succeed with real project), got {successfulCommands}");
         Assert.True(artifactEvents > 0);
 
         _output.WriteLine($"=== GAUNTLET E2E SMOKE TEST ({(useLiveAdapters ? "LIVE" : "FAKE")}) PASSED ===");
@@ -286,6 +467,8 @@ public class GauntletSmokeTest
 
     private async Task GenerateSmokeTestReport(Guid sessionId, List<IEvent> events, bool useLiveAdapters, SessionConfig sessionConfig)
     {
+        _output.WriteLine("=== GENERATING SMOKE TEST REPORT ===");
+        
         // Create output directory
         var outputDir = Path.Combine(Path.GetTempPath(), $"junior-dev-smoke-{sessionId}");
         Directory.CreateDirectory(outputDir);
@@ -410,16 +593,31 @@ public class GauntletSmokeTest
         {
             try
             {
-                // Note: In a real implementation, you'd need to access the actual artifact content
-                // For now, we'll just log the artifact metadata
-                var artifactPath = Path.Combine(outputDir, $"artifact-{artifact.Id}.json");
-                await File.WriteAllTextAsync(artifactPath, JsonSerializer.Serialize(new
+                var artifactPath = Path.Combine(outputDir, $"{artifact.Artifact.Name}");
+                
+                // Always save metadata
+                await File.WriteAllTextAsync(artifactPath + ".metadata.json", JsonSerializer.Serialize(new
                 {
                     artifact.Id,
                     artifact.Artifact.Kind,
                     artifact.Artifact.Name,
-                    artifact.Correlation
+                    HasInlineText = !string.IsNullOrEmpty(artifact.Artifact.InlineText),
+                    InlineTextLength = artifact.Artifact.InlineText?.Length ?? 0,
+                    artifact.Artifact.PathHint,
+                    artifact.Artifact.DownloadUri,
+                    artifact.Artifact.ContentType
                 }, new JsonSerializerOptions { WriteIndented = true }));
+                
+                if (!string.IsNullOrEmpty(artifact.Artifact.InlineText))
+                {
+                    // Save inline text content
+                    await File.WriteAllTextAsync(artifactPath, artifact.Artifact.InlineText);
+                    _output.WriteLine($"Saved inline text content to {artifactPath} ({artifact.Artifact.InlineText.Length} chars)");
+                }
+                else
+                {
+                    _output.WriteLine($"Artifact {artifact.Artifact.Name} has no inline text (PathHint: {artifact.Artifact.PathHint})");
+                }
             }
             catch (Exception ex)
             {

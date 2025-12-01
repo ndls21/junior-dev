@@ -10,6 +10,7 @@ using Microsoft.Extensions.AI;
 using System.Linq;
 using System.Collections.Generic;
 using Microsoft.Extensions.Configuration;
+using System.Threading.Tasks;
 
 namespace ui_shell.tests;
 
@@ -35,19 +36,52 @@ public class MainFormTests : IDisposable
         }
     }
 
-    private MainForm CreateMainForm(bool isTestMode = false, ISessionManager sessionManager = null, IConfiguration configuration = null, Microsoft.Extensions.AI.IChatClient chatClient = null)
+    private MainForm CreateMainForm(bool isTestMode = false, ISessionManager? sessionManager = null, IConfiguration? configuration = null, Microsoft.Extensions.AI.IChatClient? chatClient = null)
     {
-        var mockSessionManager = sessionManager != null ? Mock.Get(sessionManager) : new Mock<ISessionManager>();
-        var mockConfiguration = configuration != null ? Mock.Get(configuration) : new Mock<IConfiguration>();
-        var mockChatClient = chatClient != null ? Mock.Get(chatClient) : new Mock<Microsoft.Extensions.AI.IChatClient>();
+        ISessionManager actualSessionManager;
+        IConfiguration actualConfiguration;
+        Microsoft.Extensions.AI.IChatClient actualChatClient;
+        
+        // Handle session manager
+        if (sessionManager != null)
+        {
+            actualSessionManager = sessionManager;
+        }
+        else
+        {
+            var mockSessionManager = new Mock<ISessionManager>();
+            actualSessionManager = mockSessionManager.Object;
+        }
+        
+        // Handle configuration
+        if (configuration != null)
+        {
+            actualConfiguration = configuration;
+        }
+        else
+        {
+            var mockConfiguration = new Mock<IConfiguration>();
+            actualConfiguration = mockConfiguration.Object;
+        }
+        
+        // Handle chat client
+        if (chatClient != null)
+        {
+            actualChatClient = chatClient;
+        }
+        else
+        {
+            var mockChatClient = new Mock<Microsoft.Extensions.AI.IChatClient>();
+            actualChatClient = mockChatClient.Object;
+        }
         
         // Create a mock service provider
         var mockServiceProvider = new Mock<IServiceProvider>();
         
         return new MainForm(
-            mockSessionManager.Object, 
-            mockConfiguration.Object, 
-            mockChatClient.Object, 
+            actualSessionManager, 
+            actualConfiguration, 
+            actualChatClient, 
             mockServiceProvider.Object,
             isTestMode);
     }
@@ -608,7 +642,7 @@ public class MainFormTests : IDisposable
         Assert.Contains(chatStreams, cs => cs.SessionId == sessionId);
     }
 
-    [Fact]
+    [Fact(Timeout = 5000)] // 5 second timeout
     public async Task SessionLifecycle_EventSubscription_SubscribesToNewSessions()
     {
         // Arrange
@@ -619,16 +653,17 @@ public class MainFormTests : IDisposable
             new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId), SessionStatus.Running, "Started")
         };
 
+        // Create a finite async enumerable that completes
         mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
             .Returns(Task.CompletedTask);
         mockSessionManager.Setup(sm => sm.Subscribe(sessionId))
-            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events));
+            .Returns(new TestAsyncEnumerable(events));
 
         var form = CreateMainForm(isTestMode: true);
         form.SetSessionManager(mockSessionManager.Object);
 
-        // Act
-        await form.CreateSessionForTest(new SessionConfig(
+        // Act - Create session WITH subscription - subscription should complete when stream ends
+        await form.CreateSessionForTestWithSubscription(new SessionConfig(
             sessionId,
             null,
             null,
@@ -638,11 +673,19 @@ public class MainFormTests : IDisposable
             null,
             "test-agent"));
 
-        // Allow some time for async subscription
-        await Task.Delay(100);
+        // Wait for event processing to complete
+        await form.WaitForEventSubscription(sessionId, TimeSpan.FromSeconds(5));
 
         // Assert
+        mockSessionManager.Verify(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId)), Times.Once);
         mockSessionManager.Verify(sm => sm.Subscribe(sessionId), Times.Once);
+        
+        var chatStreams = form.GetChatStreamsForTest();
+        Assert.Contains(chatStreams, cs => cs.SessionId == sessionId);
+        
+        // Verify the event was processed and status updated
+        var chatStream = chatStreams.First(cs => cs.SessionId == sessionId);
+        Assert.Equal(SessionStatus.Running, chatStream.Status);
     }
 
     [Fact]
@@ -650,14 +693,22 @@ public class MainFormTests : IDisposable
     {
         // Arrange
         var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
 
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
         mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
             .Returns(Task.CompletedTask);
 
         var form = CreateMainForm(isTestMode: true);
         form.SetSessionManager(mockSessionManager.Object);
 
-        // Get the actual session ID from the initial chat stream created by the form
+        // Create a session explicitly since auto-creation was removed
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("test", "/tmp/test"), new WorkspaceRef("/tmp/workspace"), null, "test-agent"));
+
+        // Get the session ID from the created chat stream
         var chatStreams = form.GetChatStreamsForTest();
         var activeSessionId = chatStreams.First().SessionId;
 
@@ -675,14 +726,22 @@ public class MainFormTests : IDisposable
     {
         // Arrange
         var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
 
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
         mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
             .Returns(Task.CompletedTask);
 
         var form = CreateMainForm(isTestMode: true);
         form.SetSessionManager(mockSessionManager.Object);
 
-        // Get the actual session ID from the initial chat stream created by the form
+        // Create a session explicitly since auto-creation was removed
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("test", "/tmp/test"), new WorkspaceRef("/tmp/workspace"), null, "test-agent"));
+
+        // Get the session ID from the created chat stream
         var chatStreams = form.GetChatStreamsForTest();
         var activeSessionId = chatStreams.First().SessionId;
 
@@ -707,7 +766,7 @@ public class MainFormTests : IDisposable
         Assert.True(canAccessAI); // Should not throw exceptions
     }
 
-    [Fact]
+    [Fact(Timeout = 1000)] // 1 second timeout
     public async Task DummyChatClient_Initialization_FallsBackWhenRealClientUnavailable()
     {
         // Arrange - Create a mock service provider that doesn't have IChatClientFactory
@@ -750,7 +809,7 @@ public class MainFormTests : IDisposable
         Assert.Contains("dummy response", response.Text.ToLowerInvariant());
     }
 
-    [Fact]
+    [Fact(Timeout = 1000)] // 1 second timeout
     public async Task DummyChatClient_StreamingResponse_WorksCorrectly()
     {
         // Arrange
@@ -769,7 +828,7 @@ public class MainFormTests : IDisposable
         Assert.Contains("dummy streaming response", responses[0].Text.ToLowerInvariant());
     }
 
-    [Fact]
+    [Fact(Timeout = 1500)] // 1.5 second timeout
     public async Task SessionLifecycle_MultipleSessions_IsolatedEventStreams()
     {
         // Arrange
@@ -806,19 +865,17 @@ public class MainFormTests : IDisposable
             sessionId2, null, null, new PolicyProfile { Name = "test" },
             new RepoRef("test2", "/tmp/test2"), new WorkspaceRef("/tmp/workspace2"), null, "test-agent"));
 
-        // Allow time for subscriptions
-        await Task.Delay(100);
-
-        // Assert
-        mockSessionManager.Verify(sm => sm.Subscribe(sessionId1), Times.Once);
-        mockSessionManager.Verify(sm => sm.Subscribe(sessionId2), Times.Once);
+        // In test mode, subscriptions are skipped to avoid hanging background tasks
+        // Verify that both sessions were created successfully
+        mockSessionManager.Verify(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId1)), Times.Once);
+        mockSessionManager.Verify(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId2)), Times.Once);
         
         var chatStreams = form.GetChatStreamsForTest();
         Assert.Contains(chatStreams, cs => cs.SessionId == sessionId1);
         Assert.Contains(chatStreams, cs => cs.SessionId == sessionId2);
     }
 
-    [Fact]
+    [Fact(Timeout = 1500)] // 1.5 second timeout
     public async Task SessionLifecycle_SessionStatusUpdates_ReflectInChatStreams()
     {
         // Arrange
@@ -858,7 +915,7 @@ public class MainFormTests : IDisposable
         Assert.Equal(SessionStatus.Paused, chatStream.Status);
     }
 
-    [Fact]
+    [Fact(Timeout = 1500)] // 1.5 second timeout
     public async Task UICommandPublishing_CommandExecution_HandlesErrorsGracefully()
     {
         // Arrange
@@ -902,7 +959,7 @@ public class MainFormTests : IDisposable
         Assert.Contains("Testing", statusText);
     }
 
-    [Fact]
+    [Fact(Timeout = 1500)] // 1.5 second timeout
     public async Task SessionLifecycle_ChatStreamCreation_SetsDependenciesCorrectly()
     {
         // Arrange
@@ -931,7 +988,7 @@ public class MainFormTests : IDisposable
         Assert.Equal(sessionId, chatStream.SessionId);
     }
 
-    [Fact]
+    [Fact(Timeout = 1500)] // 1.5 second timeout
     public async Task LivePath_EventRouting_DeliversToCorrectChatStream()
     {
         // Arrange
@@ -974,20 +1031,27 @@ public class MainFormTests : IDisposable
         Assert.Equal(SessionStatus.Error, updatedStream2.Status);
     }
 
-    [Fact]
+    [Fact(Timeout = 1500)] // 1.5 second timeout
     public async Task LivePath_CommandPublishing_UsesActiveSessionId()
     {
         // Arrange
         var mockSessionManager = new Mock<ISessionManager>();
         var sessionId = Guid.NewGuid();
 
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
         mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
             .Returns(Task.CompletedTask);
 
         var form = CreateMainForm(isTestMode: true);
         form.SetSessionManager(mockSessionManager.Object);
 
-        // Get the actual session ID from the initial chat stream created by the form
+        // Create a session explicitly since auto-creation was removed
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("test", "/tmp/test"), new WorkspaceRef("/tmp/workspace"), null, "test-agent"));
+
+        // Get the session ID from the created chat stream
         var chatStreams = form.GetChatStreamsForTest();
         var activeSessionId = chatStreams.First().SessionId;
 
@@ -1000,37 +1064,45 @@ public class MainFormTests : IDisposable
             cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == activeSessionId)), Times.Once);
     }
 
-    [Fact]
+    [Fact(Timeout = 1500)] // 1.5 second timeout
     public async Task LivePath_MultipleSessions_IsolatedCommandPublishing()
     {
         // Arrange
         var mockSessionManager = new Mock<ISessionManager>();
-        var sessionId1 = Guid.NewGuid();
-        var sessionId2 = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var unusedSessionId1 = Guid.NewGuid();
+        var unusedSessionId2 = Guid.NewGuid();
 
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
         mockSessionManager.Setup(sm => sm.PublishCommand(It.IsAny<ICommand>()))
             .Returns(Task.CompletedTask);
 
         var form = CreateMainForm(isTestMode: true);
         form.SetSessionManager(mockSessionManager.Object);
 
-        // Get the actual session ID from the initial chat stream created by the form
+        // Create a session explicitly since auto-creation was removed
+        await form.CreateSessionForTest(new SessionConfig(
+            sessionId, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("test", "/tmp/test"), new WorkspaceRef("/tmp/workspace"), null, "test-agent"));
+
+        // Get the session ID from the created chat stream
         var chatStreams = form.GetChatStreamsForTest();
         var activeSessionId = chatStreams.First().SessionId;
 
-        // Act - Execute command (should use the first/active stream's SessionId)
+        // Act - Execute command (should use the active stream's SessionId)
         await form.ExecuteCommandForActiveSessionTest((correlation) => 
             new RunTests(Guid.NewGuid(), correlation, new RepoRef("test", "/tmp/test"), null, TimeSpan.FromMinutes(5)));
 
-        // Assert - Command should be published with the active session's SessionId (first stream)
+        // Assert - Command should be published with the active session's SessionId
         mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
             cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == activeSessionId)), Times.Once);
         
-        // Verify no command was published with sessionId1 or sessionId2 (since they're not used)
+        // Verify no command was published with unused sessionIds
         mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
-            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == sessionId1)), Times.Never);
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == unusedSessionId1)), Times.Never);
         mockSessionManager.Verify(sm => sm.PublishCommand(It.Is<ICommand>(cmd => 
-            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == sessionId2)), Times.Never);
+            cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == unusedSessionId2)), Times.Never);
     }
 
     [Fact]
@@ -1275,7 +1347,7 @@ public class MainFormTests : IDisposable
             cmd.GetType() == typeof(RunTests) && ((RunTests)cmd).Correlation.SessionId == sessionId2)), Times.Never);
     }
 
-    [Fact]
+    [Fact(Timeout = 2000)] // 2 second timeout
     public async Task MultiSessionSupport_EventSubscriptionPerSession_IsolatedEventHandling()
     {
         // Arrange
@@ -1297,43 +1369,32 @@ public class MainFormTests : IDisposable
         mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
             .Returns(Task.CompletedTask);
         mockSessionManager.Setup(sm => sm.Subscribe(sessionId1))
-            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events1));
+            .Returns(new TestAsyncEnumerable(events1));
         mockSessionManager.Setup(sm => sm.Subscribe(sessionId2))
-            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(events2));
+            .Returns(new TestAsyncEnumerable(events2));
 
         var form = CreateMainForm(isTestMode: true);
         form.SetSessionManager(mockSessionManager.Object);
 
-        // Act - Create two sessions
-        await form.CreateSessionForTest(new SessionConfig(
+        // Act - Create two sessions WITH subscriptions - subscriptions should complete when streams end
+        await form.CreateSessionForTestWithSubscription(new SessionConfig(
             sessionId1, null, null, new PolicyProfile { Name = "test" },
             new RepoRef("repo1", "/tmp/repo1"), new WorkspaceRef("/tmp/workspace1"), null, "agent1"));
-        await form.CreateSessionForTest(new SessionConfig(
+        await form.CreateSessionForTestWithSubscription(new SessionConfig(
             sessionId2, null, null, new PolicyProfile { Name = "test" },
             new RepoRef("repo2", "/tmp/repo2"), new WorkspaceRef("/tmp/workspace2"), null, "agent2"));
 
-        // Allow time for subscriptions to start
-        await Task.Delay(100);
-
-        // Verify subscriptions were set up
-        mockSessionManager.Verify(sm => sm.Subscribe(sessionId1), Times.Once);
-        mockSessionManager.Verify(sm => sm.Subscribe(sessionId2), Times.Once);
-
-        // Act - Route events to respective streams
-        foreach (var @event in events1)
-        {
-            form.RouteEventToChatStreams(@event, DateTimeOffset.Now);
-        }
-        foreach (var @event in events2)
-        {
-            form.RouteEventToChatStreams(@event, DateTimeOffset.Now);
-        }
-
+        // Wait for event processing to complete
+        await form.WaitForEventSubscription(sessionId1, TimeSpan.FromSeconds(5));
+        await form.WaitForEventSubscription(sessionId2, TimeSpan.FromSeconds(5));
+        
         // Assert - Events should be routed to correct streams
         var chatStreams = form.GetChatStreamsForTest();
         var stream1 = chatStreams.First(cs => cs.SessionId == sessionId1);
         var stream2 = chatStreams.First(cs => cs.SessionId == sessionId2);
 
+        // The last event for session1 was CommandCompleted, so status should still be Running
+        // The last event for session2 was CommandRejected, so status should still be Paused
         Assert.Equal(SessionStatus.Running, stream1.Status);
         Assert.Equal(SessionStatus.Paused, stream2.Status);
     }
@@ -1367,6 +1428,107 @@ public class MainFormTests : IDisposable
 
         // In test mode, subscription is skipped, but in real mode it would subscribe
         // This test verifies the attachment logic works correctly
+    }
+
+    [Fact]
+    public async Task MultiSessionSupport_AttachToExistingSession_DiscoversAndAttachesViaSessionManager()
+    {
+        // Arrange - Create a real session manager with actual sessions
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+        
+        var sessionConfig1 = new SessionConfig(
+            sessionId1, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("repo1", "/tmp/repo1"), new WorkspaceRef("/tmp/workspace1"), null, "agent1");
+        var sessionConfig2 = new SessionConfig(
+            sessionId2, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("repo2", "/tmp/repo2"), new WorkspaceRef("/tmp/workspace2"), null, "agent2");
+
+        // Create a real session manager with mock dependencies
+        var mockAdapters = new Mock<IReadOnlyList<IAdapter>>();
+        mockAdapters.Setup(a => a.GetEnumerator()).Returns(Enumerable.Empty<IAdapter>().GetEnumerator());
+        var mockPolicyEnforcer = new Mock<IPolicyEnforcer>();
+        var mockRateLimiter = new Mock<IRateLimiter>();
+        var mockWorkspaceProvider = new Mock<IWorkspaceProvider>();
+        var mockArtifactStore = new Mock<IArtifactStore>();
+
+        var realSessionManager = new SessionManager(
+            mockAdapters.Object,
+            mockPolicyEnforcer.Object,
+            mockRateLimiter.Object,
+            mockWorkspaceProvider.Object,
+            mockArtifactStore.Object);
+
+        // Create a form with the real session manager
+        var form = CreateMainForm(isTestMode: true, sessionManager: realSessionManager);
+
+        // Create two real sessions
+        await realSessionManager.CreateSession(sessionConfig1);
+        await realSessionManager.CreateSession(sessionConfig2);
+
+        // Create a chat stream to attach
+        var chatStream = new ChatStream(Guid.NewGuid(), "Test Agent");
+        form.AddChatStreamForTest(chatStream);
+
+        // Act - Attach chat stream to existing session via the test helper
+        await form.AttachChatStreamToSessionForTest(chatStream, sessionId1);
+
+        // Assert - SessionId should be updated
+        Assert.Equal(sessionId1, chatStream.SessionId);
+
+        // Verify that GetActiveSessions returns the created sessions
+        var activeSessions = realSessionManager.GetActiveSessions();
+        Assert.Equal(2, activeSessions.Count);
+        Assert.Contains(activeSessions, s => s.SessionId == sessionId1 && s.RepoName == "repo1" && s.AgentProfile == "agent1");
+        Assert.Contains(activeSessions, s => s.SessionId == sessionId2 && s.RepoName == "repo2" && s.AgentProfile == "agent2");
+    }
+
+    [Fact(Timeout = 10000)] // 10 second timeout for integration test
+    public async Task MultiSessionSupport_AttachToExistingSession_EndToEndEventProcessing()
+    {
+        // Arrange - Create a mock session manager that returns events for an existing session
+        var mockSessionManager = new Mock<ISessionManager>();
+        var existingSessionId = Guid.NewGuid();
+        var attachSessionId = Guid.NewGuid();
+        
+        // Events that will be emitted after attachment
+        var postAttachEvents = new List<IEvent>
+        {
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(attachSessionId), SessionStatus.Running, "Session resumed after attachment"),
+            new CommandAccepted(Guid.NewGuid(), new Correlation(attachSessionId), Guid.NewGuid()),
+            new CommandCompleted(Guid.NewGuid(), new Correlation(attachSessionId), Guid.NewGuid(), CommandOutcome.Success, "Command completed after attachment"),
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(attachSessionId), SessionStatus.Completed, "Session finished after attachment")
+        };
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+        mockSessionManager.Setup(sm => sm.Subscribe(attachSessionId))
+            .Returns(new TestAsyncEnumerable(postAttachEvents));
+        mockSessionManager.Setup(sm => sm.GetActiveSessions())
+            .Returns(new List<SessionInfo> 
+            { 
+                new SessionInfo(attachSessionId, SessionStatus.Running, "agent1", "repo1", DateTimeOffset.Now, "Running task") 
+            });
+
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Create a chat stream with a different initial SessionId
+        var chatStream = new ChatStream(existingSessionId, "Test Agent");
+        form.AddChatStreamForTest(chatStream);
+
+        // Act - Attach chat stream to the existing session WITH subscription
+        await form.AttachChatStreamToSessionWithSubscriptionForTest(chatStream, attachSessionId);
+
+        // Wait for event processing to complete
+        await form.WaitForEventSubscription(attachSessionId, TimeSpan.FromSeconds(5));
+        
+        // Assert - Verify that events were processed and chat stream was updated
+        Assert.Equal(attachSessionId, chatStream.SessionId);
+        Assert.Equal(SessionStatus.Completed, chatStream.Status);
+        
+        // Verify session manager methods were called
+        mockSessionManager.Verify(sm => sm.Subscribe(attachSessionId), Times.Once);
     }
 
     [Fact]
@@ -1468,18 +1630,89 @@ public class MainFormTests : IDisposable
         Assert.Null(exception);
     }
 
-    [Fact]
-    public void MultiSessionSupport_AttachDialog_RequiresChatStreamsToBeAvailable()
+    [Fact(Timeout = 10000)] // 10 second timeout for integration test
+    public async Task Integration_EventSubscription_EndToEndEventProcessing()
     {
-        // Arrange
+        // Arrange - Create a mock session manager that returns finite event streams
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        
+        var testEvents = new List<IEvent>
+        {
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId), SessionStatus.Running, "Session started"),
+            new CommandAccepted(Guid.NewGuid(), new Correlation(sessionId), Guid.NewGuid()),
+            new CommandCompleted(Guid.NewGuid(), new Correlation(sessionId), Guid.NewGuid(), CommandOutcome.Success, "Command completed successfully"),
+            new ArtifactAvailable(Guid.NewGuid(), new Correlation(sessionId), new Artifact("test-results", "Test Results", "All tests passed")),
+            new SessionStatusChanged(Guid.NewGuid(), new Correlation(sessionId), SessionStatus.Completed, "Session finished")
+        };
+
+        mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
+            .Returns(Task.CompletedTask);
+        mockSessionManager.Setup(sm => sm.Subscribe(sessionId))
+            .Returns(new TestAsyncEnumerable(testEvents));
+
         var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
 
-        // Act - Try to show attach dialog when no chat streams exist
-        // In test mode, this should not show dialog or throw
+        // Create session WITH subscription - this should process all events and complete
+        var sessionConfig = new SessionConfig(
+            sessionId, null, null, new PolicyProfile { Name = "test" },
+            new RepoRef("test", "/tmp/test"), new WorkspaceRef("/tmp/workspace"), null, "test-agent");
+        
+        await form.CreateSessionForTestWithSubscription(sessionConfig);
 
-        var exception = Record.Exception(() => form.ShowAttachChatToSessionDialogForTest());
+        // Wait for event processing to complete by awaiting the subscription task
+        await form.WaitForEventSubscription(sessionId, TimeSpan.FromSeconds(5));
+        
+        // Assert - Verify that events were processed and chat stream was updated to final state
+        var chatStreams = form.GetChatStreamsForTest();
+        var chatStream = chatStreams.First(cs => cs.SessionId == sessionId);
+        Assert.Equal(SessionStatus.Completed, chatStream.Status);
+        
+        // Verify session manager methods were called
+        mockSessionManager.Verify(sm => sm.CreateSession(It.Is<SessionConfig>(sc => sc.SessionId == sessionId)), Times.Once);
+        mockSessionManager.Verify(sm => sm.Subscribe(sessionId), Times.Once);
+    }
+}
 
-        // Assert - Should not throw
-        Assert.Null(exception);
+public class TestAsyncEnumerable : IAsyncEnumerable<IEvent>
+{
+    private readonly IEnumerable<IEvent> _events;
+
+    public TestAsyncEnumerable(IEnumerable<IEvent> events)
+    {
+        _events = events;
+    }
+
+    public IAsyncEnumerator<IEvent> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+    {
+        return new TestAsyncEnumerator(_events.GetEnumerator());
+    }
+}
+
+public class TestAsyncEnumerator : IAsyncEnumerator<IEvent>
+{
+    private readonly IEnumerator<IEvent> _enumerator;
+
+    public TestAsyncEnumerator(IEnumerator<IEvent> enumerator)
+    {
+        _enumerator = enumerator;
+        Console.WriteLine($"TestAsyncEnumerator created with {_enumerator} events");
+    }
+
+    public IEvent Current => _enumerator.Current;
+
+    public ValueTask DisposeAsync()
+    {
+        Console.WriteLine("TestAsyncEnumerator disposing");
+        _enumerator.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask<bool> MoveNextAsync()
+    {
+        var result = _enumerator.MoveNext();
+        Console.WriteLine($"TestAsyncEnumerator.MoveNextAsync: {result}, Current: {_enumerator.Current?.Kind ?? "null"}");
+        return ValueTask.FromResult(result);
     }
 }

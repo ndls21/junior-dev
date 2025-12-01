@@ -8,11 +8,11 @@ using Xunit;
 
 namespace JuniorDev.Orchestrator.Tests;
 
-public class OrchestratorTests
+public class OrchestratorTests : TimeoutTestBase
 {
     private readonly ISessionManager _sessionManager;
 
-    public OrchestratorTests()
+    public OrchestratorTests(TestTimeoutFixture fixture) : base(fixture)
     {
         var adapters = new IAdapter[]
         {
@@ -63,7 +63,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Subscribing to events and verifying the sequence.");
-        var events = await _sessionManager.Subscribe(sessionId).Take(3).ToListAsync();
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Take(3).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} events.");
 
         Assert.Equal(3, events.Count);
@@ -118,7 +118,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Checking that all events preserve the correlation IDs.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync();
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} events after skipping initial status.");
 
         foreach (var @event in events)
@@ -185,8 +185,8 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying that each session's event stream contains only its own events.");
-        var events1 = await _sessionManager.Subscribe(sessionId1).Take(3).ToListAsync();
-        var events2 = await _sessionManager.Subscribe(sessionId2).Take(3).ToListAsync();
+        var events1 = await RunWithTimeout(_sessionManager.Subscribe(sessionId1).Take(3).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+        var events2 = await RunWithTimeout(_sessionManager.Subscribe(sessionId2).Take(3).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Session 1 has {events1.Count} events, Session 2 has {events2.Count} events.");
 
         // Session 1 should have its own events
@@ -238,7 +238,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying that a CommandRejected event is emitted with the policy rule.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(1).ToListAsync(); // Skip status, take rejection
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(1).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} event(s) after initial status.");
 
         Assert.Single(events);
@@ -285,7 +285,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying that CommandAccepted and CommandCompleted events are emitted.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync(); // Skip status, take accepted + completed
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} events after initial status.");
 
         Assert.Equal(2, events.Count);
@@ -337,7 +337,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying the sequence of events includes throttling.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(3).ToListAsync(); // Skip status, take the 3 events
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(3).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} events after initial status.");
 
         Assert.Equal(3, events.Count); // accepted+completed for first, throttled for second
@@ -390,8 +390,8 @@ public class OrchestratorTests
         // Get workspace paths (would need to expose or test differently, but for now assume internal)
         // Since we can't access internal, this test is more about ensuring no exceptions and sessions created
         Console.WriteLine("Assert: Verifying that both sessions emit their initial status events with correct session IDs.");
-        var events1 = await _sessionManager.Subscribe(sessionId1).Take(1).ToListAsync();
-        var events2 = await _sessionManager.Subscribe(sessionId2).Take(1).ToListAsync();
+        var events1 = await RunWithTimeout(_sessionManager.Subscribe(sessionId1).Take(1).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+        var events2 = await RunWithTimeout(_sessionManager.Subscribe(sessionId2).Take(1).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Session 1 has {events1.Count} initial event(s), Session 2 has {events2.Count} initial event(s).");
 
         // Assert
@@ -438,7 +438,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying that the command completes successfully through all layers.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync(); // Skip status, take accepted + completed
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} events after initial status.");
 
         Assert.Equal(2, events.Count);
@@ -510,7 +510,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying the sequence of events matches expected lifecycle behavior.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(6).ToListAsync(); // Skip initial status, take the 6 events before abort
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(6).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} events in the sequence.");
 
         // Should have: accepted+completed for cmd1, status paused, rejected for cmd2, status running, accepted+completed for cmd3
@@ -578,14 +578,14 @@ public class OrchestratorTests
         Console.WriteLine("Session approved.");
 
         // Complete the session to end the event stream
-        sessionManager.CompleteSession(sessionId);
+        await sessionManager.CompleteSession(sessionId);
 
         // Assert
         Console.WriteLine("Assert: Verifying the sequence shows NeedsApproval then success after approval.");
-        var events = await sessionManager.Subscribe(sessionId).Take(10).ToListAsync(); // status + needsApproval + approved + accepted + completed
+        var events = await RunWithTimeout(sessionManager.Subscribe(sessionId).Take(6).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} events.");
 
-        Assert.True(events.Count >= 4);
+        Assert.True(events.Count >= 5);
         Assert.IsType<SessionStatusChanged>(events[1]); // NeedsApproval status
         Assert.Equal(SessionStatus.NeedsApproval, ((SessionStatusChanged)events[1]).Status);
         Assert.Contains(events, e => e is CommandAccepted);
@@ -628,7 +628,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying BacklogQueried event is emitted with expected items.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync(); // Skip status, take accepted + query result
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} event(s) after initial status.");
 
         Assert.Equal(2, events.Count);
@@ -675,7 +675,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying WorkItemQueried event is emitted with expected details.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync(); // Skip status, take accepted + query result
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(2).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} event(s) after initial status.");
 
         Assert.Equal(2, events.Count);
@@ -727,7 +727,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying the command completes successfully through the build adapter.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(3).ToListAsync(); // Skip status, take accepted + artifact + completed
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(3).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} events after initial status.");
 
         Assert.Equal(3, events.Count);
@@ -781,7 +781,7 @@ public class OrchestratorTests
 
         // Assert
         Console.WriteLine("Assert: Verifying the command is rejected due to invalid path.");
-        var events = await _sessionManager.Subscribe(sessionId).Skip(1).Take(1).ToListAsync(); // Skip status, take rejection
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(1).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} event(s) after initial status.");
 
         Assert.Single(events);

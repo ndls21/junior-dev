@@ -28,7 +28,18 @@ jobs:
       run: dotnet build --no-restore
 
     - name: Run unit tests
-      run: dotnet test --no-build --filter "TestCategory!=Integration"
+      run: dotnet test --no-build --filter "Category!=Integration&Category!=Smoke"
+
+    - name: Run smoke tests
+      run: dotnet test --no-build --filter "Category=Smoke"
+
+    - name: Upload smoke test artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: smoke-test-artifacts
+        path: |
+          /tmp/junior-dev-smoke-*
+          ${{ runner.temp }}/junior-dev-smoke-*
 
     - name: Run AI integration tests
       run: dotnet test --no-build --filter "Category=AI"
@@ -49,18 +60,24 @@ jobs:
         JIRA_PROJECT: ${{ secrets.JIRA_PROJECT }}
         GIT_USER: ${{ secrets.GIT_USER }}
         GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_REPO: ${{ secrets.GITHUB_REPO }}
         # ConfigBuilder environment variables (for AppConfig.Auth)
         JUNIORDEV__APPCONFIG__AUTH__JIRA__BASEURL: ${{ secrets.JIRA_URL }}
         JUNIORDEV__APPCONFIG__AUTH__JIRA__USERNAME: ${{ secrets.JIRA_USER }}
         JUNIORDEV__APPCONFIG__AUTH__JIRA__APITOKEN: ${{ secrets.JIRA_TOKEN }}
         JUNIORDEV__APPCONFIG__AUTH__GIT__PERSONALACCESSTOKEN: ${{ secrets.GIT_TOKEN }}
+        JUNIORDEV__APPCONFIG__AUTH__GITHUB__TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        JUNIORDEV__APPCONFIG__AUTH__GITHUB__DEFAULTREPO: ${{ secrets.GITHUB_REPO }}
       if: ${{ github.event_name == 'schedule' || contains(github.event.head_commit.message, '[run-live]') }}
 
-    - name: Upload smoke test artifacts
+    - name: Upload live smoke test artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: smoke-test-artifacts
-        path: /tmp/junior-dev-smoke-*
+        name: live-smoke-test-artifacts
+        path: |
+          /tmp/junior-dev-smoke-*
+          ${{ runner.temp }}/junior-dev-smoke-*
       if: ${{ github.event_name == 'schedule' || contains(github.event.head_commit.message, '[run-live]') }}
 
     - name: Check contracts

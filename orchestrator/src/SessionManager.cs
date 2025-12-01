@@ -227,6 +227,21 @@ public class SessionManager : ISessionManager
         return Task.CompletedTask;
     }
 
+    public async Task CompleteSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+        {
+            throw new InvalidOperationException($"Session {sessionId} not found");
+        }
+
+        if (session.Status == SessionStatus.Completed || session.Status == SessionStatus.Error)
+        {
+            throw new InvalidOperationException($"Session {sessionId} is already in terminal state");
+        }
+
+        await session.SetStatus(SessionStatus.Completed, "Session completed");
+    }
+
     private async Task ProcessPending(SessionState session)
     {
         await session.SetStatus(SessionStatus.Running, "Session approved");
@@ -247,12 +262,24 @@ public class SessionManager : ISessionManager
         return session.GetEvents();
     }
 
-    // For testing: complete the event channel for a session
-    public void CompleteSession(Guid sessionId)
+    public IReadOnlyList<SessionInfo> GetActiveSessions()
+    {
+        return _sessions.Values.Select(s => new SessionInfo(
+            s.Config.SessionId,
+            s.Status,
+            s.Config.AgentProfile,
+            s.Config.Repo.Name,
+            s.CreatedAt,
+            s.CurrentTask
+        )).ToList();
+    }
+
+    public SessionConfig? GetSessionConfig(Guid sessionId)
     {
         if (_sessions.TryGetValue(sessionId, out var session))
         {
-            session.Complete();
+            return session.Config;
         }
+        return null;
     }
 }

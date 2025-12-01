@@ -16,6 +16,25 @@ A .NET-based platform for AI-assisted software development.
 - Unit tests: `dotnet test --filter "TestCategory!=Integration"`
 - Contract guard: `pwsh scripts/check-contracts.ps1`
 
+## Smoke Tests
+
+End-to-end smoke tests validate the complete development pipeline:
+
+- **Fake mode** (default): `dotnet test --filter "Category=Smoke"` - tests with mock adapters
+- **Live mode**: `dotnet test --filter "Category=Integration"` with `RUN_LIVE=1` - tests with real GitHub/Jira APIs
+
+### Smoke Test Artifacts
+
+Smoke tests generate comprehensive artifact bundles containing:
+- `README.md`: Executive summary with test results and metrics
+- `smoke-test-report.json`: Detailed JSON report with full execution data
+- `event-log.json`: Complete event stream for debugging
+- Artifact files: Build logs, test results, and generated content
+- Metadata files: JSON descriptions for each artifact
+
+**Local runs**: Artifacts saved to `%TEMP%\junior-dev-smoke-*`  
+**CI runs**: Available as "smoke-test-artifacts" in GitHub Actions artifacts
+
 ## Project Structure
 
 - `contracts/`: Shared DTOs and interfaces.
