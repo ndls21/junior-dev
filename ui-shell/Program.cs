@@ -13,6 +13,7 @@ using JuniorDev.Orchestrator;
 using JuniorDev.WorkItems.GitHub;
 using JuniorDev.WorkItems.Jira;
 using JuniorDev.VcsGit;
+using JuniorDev.Build.Dotnet;
 
 namespace Ui.Shell;
 
@@ -206,6 +207,17 @@ static class Program
         {
             // Default to fake VCS adapter
             services.AddSingleton<IAdapter, FakeVcsAdapter>();
+        }
+
+        // Register build adapter
+        if (adapters.BuildAdapter?.ToLower() == "dotnet")
+        {
+            services.AddDotnetBuildAdapter();
+        }
+        else
+        {
+            // Default to fake build adapter
+            services.AddSingleton<IAdapter, FakeBuildAdapter>();
         }
 
         // Terminal adapter is always fake for now
