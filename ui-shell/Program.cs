@@ -173,19 +173,40 @@ static class Program
 
     private static void RegisterAdapters(IServiceCollection services, IConfiguration configuration)
     {
-        var useLiveAdapters = configuration.GetValue<bool>("UseLiveAdapters", false);
+        // Get the unified AppConfig
+        var appConfig = ConfigBuilder.GetAppConfig(configuration);
 
-        if (useLiveAdapters)
+        // Register adapters based on the Adapters configuration
+        var adapters = appConfig.Adapters ?? new AdaptersConfig("fake", "fake", "powershell");
+
+        // Register work items adapter
+        if (adapters.WorkItemsAdapter?.ToLower() == "jira")
         {
-            // Register live adapters
-            services.AddGitHubWorkItemAdapter();
-            services.AddWorkItemAdapters(useReal: true);
-            services.AddVcsGitAdapter(new VcsConfig(), isFake: false);
+            services.AddWorkItemAdapters(appConfig);
+        }
+        else if (adapters.WorkItemsAdapter?.ToLower() == "github")
+        {
+            services.AddGitHubWorkItemAdapter(appConfig);
         }
         else
         {
-            // Register mock adapters for testing (already registered by orchestrator)
+            // Default to fake adapters
+            services.AddSingleton<IAdapter, FakeWorkItemsAdapter>();
         }
+
+        // Register VCS adapter
+        if (adapters.VcsAdapter?.ToLower() == "git")
+        {
+            services.AddVcsGitAdapter(appConfig);
+        }
+        else
+        {
+            // Default to fake VCS adapter
+            services.AddSingleton<IAdapter, FakeVcsAdapter>();
+        }
+
+        // Terminal adapter is always fake for now
+        // Could be extended to support different terminal types
     }
 
     private static string FindWorkspaceRoot()

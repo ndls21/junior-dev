@@ -197,6 +197,7 @@ public sealed record AppConfig(
     UiConfig? Ui = null,
     WorkspaceConfig? Workspace = null,
     PolicyConfig? Policy = null,
+    LivePolicyConfig? LivePolicy = null,
     TranscriptConfig? Transcript = null);
 
 /// <summary>
@@ -370,6 +371,14 @@ public sealed record PolicyConfig(
     Dictionary<string, PolicyProfile> Profiles,
     string DefaultProfile,
     RateLimits GlobalLimits);
+
+/// <summary>
+/// Live policy configuration for safety controls
+/// </summary>
+public sealed record LivePolicyConfig(
+    bool PushEnabled = false,
+    bool DryRun = true,
+    bool RequireCredentialsValidation = true);
 
 /// <summary>
 /// Transcript persistence configuration
