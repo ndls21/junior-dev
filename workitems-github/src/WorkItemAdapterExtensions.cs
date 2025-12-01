@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
+using JuniorDev.Contracts;
 
 namespace JuniorDev.WorkItems.GitHub;
 
@@ -8,11 +9,13 @@ public static class WorkItemAdapterExtensions
 {
     public static IServiceCollection AddGitHubWorkItemAdapter(this IServiceCollection services, AppConfig appConfig)
     {
-        // Check if GitHub credentials are available in configuration
+        // Check if GitHub credentials are configured and valid
         var gitHubAuth = appConfig.Auth?.GitHub;
-        var hasGitHubConfig = gitHubAuth != null && !string.IsNullOrEmpty(gitHubAuth.Token);
+        var hasValidCredentials = gitHubAuth != null && 
+                                 !string.IsNullOrWhiteSpace(gitHubAuth.Token) && 
+                                 !gitHubAuth.Token.Contains("your-");
 
-        if (hasGitHubConfig)
+        if (hasValidCredentials)
         {
             services.AddSingleton<IAdapter>(sp => new GitHubAdapter(appConfig));
         }

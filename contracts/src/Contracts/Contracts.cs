@@ -373,12 +373,12 @@ public sealed record PolicyConfig(
     RateLimits GlobalLimits);
 
 /// <summary>
-/// Live adapter policy configuration for safety defaults
+/// Live policy configuration for safety controls
 /// </summary>
 public sealed record LivePolicyConfig(
-    bool PushEnabled = false, // Default to false for safety - require explicit opt-in for push operations
-    bool DryRun = true, // Default to true for safety - require explicit opt-in for live operations
-    bool RequireCredentialsValidation = true); // Whether to validate credentials before allowing live adapters
+    bool PushEnabled = false,
+    bool DryRun = true,
+    bool RequireCredentialsValidation = true);
 
 /// <summary>
 /// Transcript persistence configuration

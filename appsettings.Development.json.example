@@ -2,30 +2,30 @@
   "AppConfig": {
     "Auth": {
       "Jira": {
-        "BaseUrl": "https://yourcompany.atlassian.net", // Replace with your Jira instance URL
-        "Username": "your.email@company.com", // Replace with your Jira username/email
-        "ApiToken": "your-jira-api-token" // Replace with your Jira API token - DO NOT COMMIT TO REPO
+        "BaseUrl": "https://yourcompany.atlassian.net",
+        "Username": "your.email@company.com",
+        "ApiToken": "your-jira-api-token"
       },
       "GitHub": {
-        "Token": "ghp_your-github-personal-access-token", // Replace with your GitHub PAT - DO NOT COMMIT TO REPO
-        "DefaultOrg": "your-org", // Replace with your default organization (optional)
-        "DefaultRepo": "your-repo" // Replace with your default repository (optional)
+        "Token": "ghp_your-github-personal-access-token",
+        "DefaultOrg": "your-org",
+        "DefaultRepo": "your-repo"
       },
       "Git": {
-        "SshKeyPath": "~/.ssh/id_rsa", // Path to SSH key (recommended for production)
-        "PersonalAccessToken": "your-git-pat", // Git PAT (alternative to SSH) - DO NOT COMMIT TO REPO
-        "UserName": "Your Name", // Your Git username (optional, for commits)
-        "UserEmail": "your.email@company.com", // Your Git email (optional, for commits)
-        "DefaultRemote": "origin" // Default remote name (optional)
+        "SshKeyPath": "~/.ssh/id_rsa",
+        "PersonalAccessToken": "your-git-pat",
+        "UserName": "Your Name",
+        "UserEmail": "your.email@company.com",
+        "DefaultRemote": "origin"
       },
       "OpenAI": {
-        "ApiKey": "sk-your-openai-api-key", // Replace with your OpenAI API key - DO NOT COMMIT TO REPO
-        "OrganizationId": "org-your-org-id" // Your OpenAI organization ID (optional)
+        "ApiKey": "sk-your-openai-api-key",
+        "OrganizationId": "org-your-org-id"
       },
       "AzureOpenAI": {
-        "Endpoint": "https://your-resource.openai.azure.com/", // Replace with your Azure endpoint - DO NOT COMMIT TO REPO
-        "ApiKey": "your-azure-api-key", // Replace with your Azure API key - DO NOT COMMIT TO REPO
-        "DeploymentName": "your-deployment-name" // Replace with your deployment name - DO NOT COMMIT TO REPO
+        "Endpoint": "https://your-resource.openai.azure.com/",
+        "ApiKey": "your-azure-api-key",
+        "DeploymentName": "your-deployment-name"
       }
     },
     "Adapters": {
@@ -39,11 +39,51 @@
       "RequireCredentialsValidation": true // Whether to validate credentials before allowing live adapters
     },
     "SemanticKernel": {
-      "Provider": "openai",
-      "Model": "gpt-3.5-turbo",
+      "DefaultProvider": "openai",
+      "DefaultModel": "gpt-3.5-turbo",
       "MaxTokens": 2048,
       "Temperature": 0.3,
-      "Timeout": "00:02:00"
+      "Timeout": "00:02:00",
+      "AgentServiceProviders": {
+        "planner": {
+          "Provider": "openai",
+          "Model": "gpt-4",
+          "MaxTokens": 8192,
+          "Temperature": 0.3
+        },
+        "executor": {
+          "Provider": "openai",
+          "Model": "gpt-3.5-turbo",
+          "MaxTokens": 4096,
+          "Temperature": 0.7
+        },
+        "reviewer": {
+          "Provider": "azure-openai",
+          "Model": "gpt-4",
+          "DeploymentName": "reviewer-gpt4",
+          "MaxTokens": 8192,
+          "Temperature": 0.1
+        }
+      },
+      "AgentProfiles": {
+        "default": {
+          "Name": "Default Agent",
+          "Description": "General purpose development assistant",
+          "Capabilities": ["coding", "testing", "documentation"],
+          "Settings": {
+            "max_iterations": "10",
+            "verbose_logging": "false"
+          }
+        },
+        "reviewer": {
+          "Name": "Code Reviewer",
+          "Description": "Specialized in code review and quality assurance",
+          "Capabilities": ["code-review", "testing", "security"],
+          "Settings": {
+            "focus_areas": "security,performance,maintainability"
+          }
+        }
+      }
     },
     "Ui": {
       "Settings": {
@@ -58,10 +98,64 @@
     "Workspace": {
       "BasePath": "./dev-workspaces",
       "BaselineMirrorPath": "./baseline-repos",
-      "AutoCreateDirectories": true
+      "AutoCreateDirectories": true,
+      "KnownRepos": {
+        "junior-dev": {
+          "Path": "./dev-workspaces/junior-dev",
+          "DefaultBranch": "master"
+        }
+      }
     },
     "Policy": {
-      "DefaultProfile": "default"
+      "Profiles": {
+        "default": {
+          "Name": "Default Policy",
+          "ProtectedBranches": ["master", "main", "develop"],
+          "MaxFilesPerCommit": 50,
+          "RequireTestsBeforePush": true,
+          "RequireApprovalForPush": false,
+          "Limits": {
+            "CallsPerMinute": 60,
+            "Burst": 10,
+            "PerCommandCaps": {
+              "RunTests": 5,
+              "Push": 3
+            }
+          }
+        },
+        "strict": {
+          "Name": "Strict Policy",
+          "ProtectedBranches": ["master", "main", "develop", "release/*"],
+          "MaxFilesPerCommit": 20,
+          "RequireTestsBeforePush": true,
+          "RequireApprovalForPush": true,
+          "Limits": {
+            "CallsPerMinute": 30,
+            "Burst": 5,
+            "PerCommandCaps": {
+              "Push": 1,
+              "RunTests": 3
+            }
+          }
+        }
+      },
+      "DefaultProfile": "default",
+      "GlobalLimits": {
+        "CallsPerMinute": 120,
+        "Burst": 20
+      }
+    },
+    "LivePolicy": {
+      "PushEnabled": false,
+      "DryRun": true,
+      "RequireCredentialsValidation": true
+    },
+    "Transcript": {
+      "Enabled": true,
+      "MaxMessagesPerTranscript": 1000,
+      "MaxTranscriptSizeBytes": 10485760,
+      "MaxTranscriptAge": "30.00:00:00",
+      "MaxTranscriptContextMessages": 10
     }
   }
 }

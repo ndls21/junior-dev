@@ -173,29 +173,43 @@ static class Program
 
     private static void RegisterAdapters(IServiceCollection services, IConfiguration configuration)
     {
-        var appConfig = JuniorDev.Contracts.ConfigBuilder.GetAppConfig(configuration);
-        var adapters = appConfig.Adapters ?? new AdaptersConfig("fake", "fake", "powershell");
+        // Get the unified AppConfig
+        var appConfig = ConfigBuilder.GetAppConfig(configuration);
 
         // Validate live adapter configuration if any live adapters are selected
         ConfigBuilder.ValidateLiveAdapters(appConfig);
 
-        // Register work items adapter based on configuration
-        if (adapters.WorkItemsAdapter?.ToLower() == "github")
+        // Register adapters based on the Adapters configuration
+        var adapters = appConfig.Adapters ?? new AdaptersConfig("fake", "fake", "powershell");
+
+        // Register work items adapter
+        if (adapters.WorkItemsAdapter?.ToLower() == "jira")
+        {
+            services.AddWorkItemAdapters(appConfig);
+        }
+        else if (adapters.WorkItemsAdapter?.ToLower() == "github")
         {
             services.AddGitHubWorkItemAdapter(appConfig);
         }
-        else if (adapters.WorkItemsAdapter?.ToLower() == "jira")
+        else
         {
-            services.AddWorkItemAdapters(appConfig, useReal: true);
+            // Default to fake adapters
+            services.AddSingleton<IAdapter, FakeWorkItemsAdapter>();
         }
-        // Default to fake adapters if not specified or set to "fake"
 
-        // Register VCS adapter based on configuration
+        // Register VCS adapter
         if (adapters.VcsAdapter?.ToLower() == "git")
         {
-            services.AddVcsGitAdapter(new VcsConfig(), isFake: false, appConfig);
+            services.AddVcsGitAdapter(appConfig);
         }
-        // Default to fake VCS adapter if not specified or set to "fake"
+        else
+        {
+            // Default to fake VCS adapter
+            services.AddSingleton<IAdapter, FakeVcsAdapter>();
+        }
+
+        // Terminal adapter is always fake for now
+        // Could be extended to support different terminal types
     }
 
     private static string FindWorkspaceRoot()
