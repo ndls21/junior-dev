@@ -121,6 +121,18 @@ public class EventRenderer
             case SessionStatusChanged status:
                 return $"{baseText}🔄 Session {status.Status}{(string.IsNullOrEmpty(status.Reason) ? "" : $" - {status.Reason}")}";
             
+            case WorkItemClaimed claimed:
+                return $"{baseText}🔒 Work item {claimed.Item.Id} claimed by {claimed.Assignee} (expires: {claimed.ExpiresAt:HH:mm:ss})";
+            
+            case WorkItemClaimReleased released:
+                return $"{baseText}🔓 Work item {released.Item.Id} released by {released.Assignee}{(string.IsNullOrEmpty(released.Reason) ? "" : $" - {released.Reason}")}";
+            
+            case ClaimRenewed renewed:
+                return $"{baseText}🔄 Work item {renewed.Item.Id} claim renewed (expires: {renewed.NewExpiresAt:HH:mm:ss})";
+            
+            case ClaimExpired expired:
+                return $"{baseText}⏰ Work item {expired.Item.Id} claim expired (was held by {expired.PreviousAssignee})";
+            
             default:
                 return $"{baseText}📝 {@event.Kind}: {System.Text.Json.JsonSerializer.Serialize(@event)}";
         }

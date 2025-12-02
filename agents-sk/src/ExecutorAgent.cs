@@ -199,7 +199,7 @@ public class ExecutorAgent : AgentBase
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error claiming work item {WorkItemId}", workItem.Id);
-            return ClaimResult.NetworkError;
+            return ClaimResult.UnknownError;
         }
     }
 

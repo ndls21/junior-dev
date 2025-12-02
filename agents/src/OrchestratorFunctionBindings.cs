@@ -281,7 +281,6 @@ public class OrchestratorFunctionBindings
             ClaimResult.Success => $"Successfully claimed work item {itemId}",
             ClaimResult.AlreadyClaimed => $"Work item {itemId} is already claimed by another agent",
             ClaimResult.Rejected => $"Claim rejected for work item {itemId}",
-            ClaimResult.NetworkError => $"Network error while claiming work item {itemId}",
             _ => $"Failed to claim work item {itemId}"
         };
     }

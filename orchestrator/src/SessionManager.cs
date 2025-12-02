@@ -8,7 +8,7 @@ using JuniorDev.Contracts;
 
 namespace JuniorDev.Orchestrator;
 
-public class SessionManager : ISessionManager
+public class SessionManager : ISessionManager, IDisposable
 {
     private readonly ConcurrentDictionary<Guid, SessionState> _sessions = new();
     private readonly IReadOnlyList<IAdapter> _adapters;
@@ -16,19 +16,33 @@ public class SessionManager : ISessionManager
     private readonly IRateLimiter _rateLimiter;
     private readonly IWorkspaceProvider _workspaceProvider;
     private readonly IArtifactStore _artifactStore;
+    private readonly ClaimManager _claimManager;
+    private readonly WorkItemConfig _workItemConfig;
+    private readonly System.Threading.Timer _cleanupTimer;
+    private bool _disposed;
 
     public SessionManager(
         IEnumerable<IAdapter> adapters,
         IPolicyEnforcer policyEnforcer,
         IRateLimiter rateLimiter,
         IWorkspaceProvider workspaceProvider,
-        IArtifactStore artifactStore)
+        IArtifactStore artifactStore,
+        WorkItemConfig? workItemConfig = null)
     {
         _adapters = adapters.ToList();
         _policyEnforcer = policyEnforcer;
         _rateLimiter = rateLimiter;
         _workspaceProvider = workspaceProvider;
         _artifactStore = artifactStore;
+        _workItemConfig = workItemConfig ?? new WorkItemConfig();
+        _claimManager = new ClaimManager(_workItemConfig);
+
+        // Start background cleanup timer
+        _cleanupTimer = new System.Threading.Timer(
+            CleanupExpiredClaimsCallback,
+            null,
+            _workItemConfig.CleanupInterval,
+            _workItemConfig.CleanupInterval);
     }
 
     public async Task CreateSession(SessionConfig config)
@@ -138,6 +152,14 @@ public class SessionManager : ISessionManager
             return;
         }
 
+        // Handle claim commands directly
+        var claimResult = await HandleClaimCommand(command, session);
+        if (claimResult != null)
+        {
+            await session.AddEvent(claimResult);
+            return;
+        }
+
         // Find adapter that can handle this command
         // Prefer real adapters over fake ones
         var adapter = _adapters.Where(a => a.CanHandle(command))
@@ -157,6 +179,110 @@ public class SessionManager : ISessionManager
 
         // Publish to adapter
         await adapter.HandleCommand(command, session);
+    }
+
+    private async Task<IEvent?> HandleClaimCommand(ICommand command, SessionState session)
+    {
+        switch (command)
+        {
+            case ClaimWorkItem claimCmd:
+                return await HandleClaimWorkItem(claimCmd, session);
+            case ReleaseWorkItem releaseCmd:
+                return await HandleReleaseWorkItem(releaseCmd, session);
+            case RenewClaim renewCmd:
+                return await HandleRenewClaim(renewCmd, session);
+            default:
+                return null;
+        }
+    }
+
+    private Task<IEvent> HandleClaimWorkItem(ClaimWorkItem command, SessionState session)
+    {
+        var result = _claimManager.TryClaimWorkItem(
+            command.Item,
+            command.Assignee,
+            command.Correlation.SessionId,
+            out var claim,
+            command.ClaimTimeout);
+
+        if (result == ClaimResult.Success && claim != null)
+        {
+            return Task.FromResult<IEvent>(new WorkItemClaimed(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Item,
+                command.Assignee,
+                claim.ExpiresAt));
+        }
+        else
+        {
+            return Task.FromResult<IEvent>(new CommandRejected(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Id,
+                $"Claim failed: {result}",
+                "ClaimPolicy"));
+        }
+    }
+
+    private Task<IEvent> HandleReleaseWorkItem(ReleaseWorkItem command, SessionState session)
+    {
+        // Get assignee from correlation's issuer agent ID
+        var assignee = command.Correlation.IssuerAgentId ?? "unknown";
+        
+        var result = _claimManager.ReleaseWorkItem(command.Item.Id, assignee);
+
+        if (result == ClaimResult.Success)
+        {
+            return Task.FromResult<IEvent>(new WorkItemClaimReleased(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Item,
+                command.Reason));
+        }
+        else
+        {
+            return Task.FromResult<IEvent>(new CommandRejected(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Id,
+                $"Release failed: {result}",
+                "ClaimPolicy"));
+        }
+    }
+
+    private Task<IEvent> HandleRenewClaim(RenewClaim command, SessionState session)
+    {
+        // Get assignee from correlation's issuer agent ID
+        var assignee = command.Correlation.IssuerAgentId ?? "unknown";
+        
+        var result = _claimManager.RenewClaim(
+            command.Item.Id,
+            assignee,
+            command.Extension);
+
+        if (result == ClaimResult.Success)
+        {
+            // Get the updated claim to get the new expiration time
+            var claims = _claimManager.GetClaimsForAssignee(assignee);
+            var claim = claims.FirstOrDefault(c => c.WorkItem.Id == command.Item.Id);
+
+            if (claim != null)
+            {
+                return Task.FromResult<IEvent>(new ClaimRenewed(
+                    Guid.NewGuid(),
+                    command.Correlation,
+                    command.Item,
+                    claim.ExpiresAt));
+            }
+        }
+
+        return Task.FromResult<IEvent>(new CommandRejected(
+            Guid.NewGuid(),
+            command.Correlation,
+            command.Id,
+            $"Renewal failed: {result}",
+            "ClaimPolicy"));
     }
 
     private bool RequiresApproval(ICommand command, SessionConfig config)
@@ -281,5 +407,53 @@ public class SessionManager : ISessionManager
             return session.Config;
         }
         return null;
+    }
+
+    private void CleanupExpiredClaimsCallback(object? state)
+    {
+        try
+        {
+            var expiredClaims = _claimManager.CleanupExpiredClaims();
+
+            // Publish expiration events for each expired claim
+            foreach (var expiredClaim in expiredClaims)
+            {
+                var correlation = new Correlation(expiredClaim.SessionId);
+                var expiredEvent = new ClaimExpired(
+                    Guid.NewGuid(),
+                    correlation,
+                    expiredClaim.WorkItem,
+                    expiredClaim.Assignee);
+
+                // Try to publish to the session if it still exists
+                if (_sessions.TryGetValue(expiredClaim.SessionId, out var session))
+                {
+                    _ = session.AddEvent(expiredEvent);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log error but continue the loop
+            Console.Error.WriteLine($"Error in claim cleanup: {ex.Message}");
+        }
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!_disposed)
+        {
+            if (disposing)
+            {
+                _cleanupTimer?.Dispose();
+            }
+            _disposed = true;
+        }
     }
 }

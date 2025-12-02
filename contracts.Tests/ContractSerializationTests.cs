@@ -410,6 +410,76 @@ public class ContractSerializationTests
         var json = JsonSerializer.Serialize(@event, Options);
         var expected = File.ReadAllText("Fixtures/WorkItemQueried.json");
         Assert.Equal(expected.Trim(), json.Trim());
+    }
+
+    [Fact]
+    public void ClaimWorkItemCommand_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var command = new ClaimWorkItem(TestCommandId, correlation, new WorkItemRef("JIRA-123"), "agent-1", TimeSpan.FromHours(2));
+        var json = JsonSerializer.Serialize(command, Options);
+        var expected = File.ReadAllText("Fixtures/ClaimWorkItem.json");
+        Assert.Equal(expected.Trim(), json.Trim());
+    }
+
+    [Fact]
+    public void ReleaseWorkItemCommand_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var command = new ReleaseWorkItem(TestCommandId, correlation, new WorkItemRef("JIRA-123"), "Completed task");
+        var json = JsonSerializer.Serialize(command, Options);
+        var expected = File.ReadAllText("Fixtures/ReleaseWorkItem.json");
+        Assert.Equal(expected.Trim(), json.Trim());
+    }
+
+    [Fact]
+    public void RenewClaimCommand_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var command = new RenewClaim(TestCommandId, correlation, new WorkItemRef("JIRA-123"), TimeSpan.FromHours(4));
+        var json = JsonSerializer.Serialize(command, Options);
+        var expected = File.ReadAllText("Fixtures/RenewClaim.json");
+        Assert.Equal(expected.Trim(), json.Trim());
+    }
+
+    [Fact]
+    public void WorkItemClaimedEvent_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var @event = new WorkItemClaimed(TestCommandId, correlation, new WorkItemRef("JIRA-123"), "agent-1", DateTimeOffset.Parse("2025-12-02T10:00:00Z"));
+        var json = JsonSerializer.Serialize(@event, Options);
+        var expected = File.ReadAllText("Fixtures/WorkItemClaimed.json");
+        Assert.Equal(expected.Trim(), json.Trim());
+    }
+
+    [Fact]
+    public void WorkItemClaimReleasedEvent_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var @event = new WorkItemClaimReleased(TestCommandId, correlation, new WorkItemRef("JIRA-123"), "Task completed");
+        var json = JsonSerializer.Serialize(@event, Options);
+        var expected = File.ReadAllText("Fixtures/WorkItemClaimReleased.json");
+        Assert.Equal(expected.Trim(), json.Trim());
+    }
+
+    [Fact]
+    public void ClaimRenewedEvent_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var @event = new ClaimRenewed(TestCommandId, correlation, new WorkItemRef("JIRA-123"), DateTimeOffset.Parse("2025-12-02T14:00:00Z"));
+        var json = JsonSerializer.Serialize(@event, Options);
+        var expected = File.ReadAllText("Fixtures/ClaimRenewed.json");
+        Assert.Equal(expected.Trim(), json.Trim());
+    }
+
+    [Fact]
+    public void ClaimExpiredEvent_SerializesCorrectly()
+    {
+        var correlation = new Correlation(TestSessionId);
+        var @event = new ClaimExpired(TestCommandId, correlation, new WorkItemRef("JIRA-123"), "agent-1");
+        var json = JsonSerializer.Serialize(@event, Options);
+        var expected = File.ReadAllText("Fixtures/ClaimExpired.json");
+        Assert.Equal(expected.Trim(), json.Trim());
     }    // Round-trip tests
 // Round-trip tests
 [Fact]

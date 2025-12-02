@@ -6,18 +6,6 @@ using Microsoft.Extensions.Logging;
 namespace JuniorDev.Agents;
 
 /// <summary>
-/// Result of a work item claim attempt.
-/// </summary>
-public enum ClaimResult
-{
-    Success,
-    AlreadyClaimed,
-    Rejected,
-    NetworkError,
-    UnknownError
-}
-
-/// <summary>
 /// Utilities for claiming work items and managing related operations.
 /// </summary>
 public class ClaimUtilities
@@ -32,17 +20,17 @@ public class ClaimUtilities
     /// <summary>
     /// Attempts to claim a work item with retry logic and collision handling.
     /// </summary>
-    public async Task<ClaimResult> TryClaimWorkItemAsync(WorkItemRef workItem, string assignee)
+    public async Task<ClaimResult> TryClaimWorkItemAsync(WorkItemRef workItem, string assignee, TimeSpan? timeout = null)
     {
         var maxRetries = _context.AgentConfig.MaxRetryAttempts;
         var baseDelay = _context.AgentConfig.RetryBaseDelayMs;
 
         for (var attempt = 1; attempt <= maxRetries + 1; attempt++)
         {
-            var result = await TryClaimWorkItemOnceAsync(workItem, assignee);
+            var result = await TryClaimWorkItemOnceAsync(workItem, assignee, timeout);
 
             // Don't retry for permanent failures
-            if (result == ClaimResult.AlreadyClaimed || result == ClaimResult.Rejected || result == ClaimResult.NetworkError)
+            if (result == ClaimResult.AlreadyClaimed || result == ClaimResult.Rejected)
             {
                 return result;
             }
@@ -66,36 +54,18 @@ public class ClaimUtilities
         return ClaimResult.UnknownError;
     }
 
-    private async Task<ClaimResult> TryClaimWorkItemOnceAsync(WorkItemRef workItem, string assignee)
+    private async Task<ClaimResult> TryClaimWorkItemOnceAsync(WorkItemRef workItem, string assignee, TimeSpan? timeout = null)
     {
         try
         {
-            // First, try to set assignee
-            var assignCommand = new SetAssignee(
+            var claimCommand = new ClaimWorkItem(
                 Guid.NewGuid(),
                 _context.CreateCorrelation(),
                 workItem,
-                assignee);
+                assignee,
+                timeout);
 
-            await _context.SessionManager.PublishCommand(assignCommand);
-
-            // Then transition to In Progress
-            var transitionCommand = new TransitionTicket(
-                Guid.NewGuid(),
-                _context.CreateCorrelation(),
-                workItem,
-                "In Progress");
-
-            await _context.SessionManager.PublishCommand(transitionCommand);
-
-            // Add a comment indicating the claim
-            var commentCommand = new Comment(
-                Guid.NewGuid(),
-                _context.CreateCorrelation(),
-                workItem,
-                $"Claimed by {assignee}");
-
-            await _context.SessionManager.PublishCommand(commentCommand);
+            await _context.SessionManager.PublishCommand(claimCommand);
 
             return ClaimResult.Success;
         }
@@ -113,11 +83,6 @@ public class ClaimUtilities
                 _context.Logger.LogWarning(ex, "Claim rejected for work item {WorkItemId}", workItem.Id);
                 return ClaimResult.Rejected;
             }
-            else if (message.Contains("network") || message.Contains("timeout") || message.Contains("connection") || message.Contains("unreachable") || message.Contains("Network"))
-            {
-                _context.Logger.LogWarning(ex, "Network error during claim of work item {WorkItemId}", workItem.Id);
-                return ClaimResult.NetworkError;
-            }
             else
             {
                 _context.Logger.LogWarning(ex, "Unknown error during claim of work item {WorkItemId}: {Message}", workItem.Id, ex.Message);
@@ -127,9 +92,52 @@ public class ClaimUtilities
     }
 
     /// <summary>
-    /// Generates a branch name for a work item, respecting protected branches.
-    /// Uses work item ID and title for better readability.
+    /// Releases a work item claim.
     /// </summary>
+    public async Task<ClaimResult> ReleaseWorkItemAsync(WorkItemRef workItem, string assignee, string reason = "Released by user")
+    {
+        try
+        {
+            var releaseCommand = new ReleaseWorkItem(
+                Guid.NewGuid(),
+                _context.CreateCorrelation(),
+                workItem,
+                reason);
+
+            await _context.SessionManager.PublishCommand(releaseCommand);
+
+            return ClaimResult.Success;
+        }
+        catch (Exception ex)
+        {
+            _context.Logger.LogWarning(ex, "Failed to release work item {WorkItemId}: {Message}", workItem.Id, ex.Message);
+            return ClaimResult.UnknownError;
+        }
+    }
+
+    /// <summary>
+    /// Renews a work item claim.
+    /// </summary>
+    public async Task<ClaimResult> RenewClaimAsync(WorkItemRef workItem, string assignee, TimeSpan? extension = null)
+    {
+        try
+        {
+            var renewCommand = new RenewClaim(
+                Guid.NewGuid(),
+                _context.CreateCorrelation(),
+                workItem,
+                extension);
+
+            await _context.SessionManager.PublishCommand(renewCommand);
+
+            return ClaimResult.Success;
+        }
+        catch (Exception ex)
+        {
+            _context.Logger.LogWarning(ex, "Failed to renew claim for work item {WorkItemId}: {Message}", workItem.Id, ex.Message);
+            return ClaimResult.UnknownError;
+        }
+    }
     public string GenerateBranchName(WorkItemRef workItem, IEnumerable<string> protectedBranches, string? title = null)
     {
         // Create a more descriptive branch name using ID and title

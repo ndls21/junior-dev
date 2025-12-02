@@ -72,9 +72,7 @@ public class OrchestratorFunctionBindingsTests
 
         // Assert
         Assert.Contains("Successfully claimed", result);
-        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<SetAssignee>()), Times.Once);
-        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<TransitionTicket>()), Times.Once);
-        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<Comment>()), Times.Once);
+        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<ClaimWorkItem>()), Times.Once);
     }
 
     [Fact]

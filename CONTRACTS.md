@@ -1,4 +1,4 @@
-# Contracts (v1.3)
+# Contracts (v1.4)
 
 Versioning rule: bump contract version when changing shapes; update docs with date/reason. Contracts changes must ship with serialization tests and CI checks.
 
@@ -30,6 +30,9 @@ Contracts are serialized using System.Text.Json with the following options:
 - `TransitionTicket { WorkItemRef Item, string State }`
 - `Comment { WorkItemRef Item, string Body }`
 - `SetAssignee { WorkItemRef Item, string Assignee }`
+- `ClaimWorkItem { WorkItemRef Item, string Assignee, TimeSpan? ClaimTimeout }`
+- `ReleaseWorkItem { WorkItemRef Item, string Reason }`
+- `RenewClaim { WorkItemRef Item, TimeSpan? Extension }`
 - `UploadArtifact { string Name, string ContentType, byte[]/Stream Content }`
 - `RequestApproval { string Reason, string[] RequiredActions }`
 - `QueryBacklog { string? Filter }`
@@ -47,6 +50,15 @@ Contracts are serialized using System.Text.Json with the following options:
 - `PlanUpdated { SessionId, Plan }`
 - `BacklogQueried { WorkItemSummary[] Items }`
 - `WorkItemQueried { WorkItemDetails Details }`
+- `WorkItemClaimed { WorkItemRef Item, string Assignee, DateTimeOffset ExpiresAt }`
+- `WorkItemClaimReleased { WorkItemRef Item, string Reason }`
+- `ClaimRenewed { WorkItemRef Item, DateTimeOffset NewExpiresAt }`
+- `ClaimExpired { WorkItemRef Item, string PreviousAssignee }`
+
+## Enums
+- `CommandOutcome { Success, Failure }`
+- `SessionStatus { Unknown, Running, Paused, NeedsApproval, Error, Completed }`
+- `ClaimResult { Success, AlreadyClaimed, Rejected, UnknownError }`
 
 ## Artifacts (by Kind)
 - `Diff`, `Patch`, `TestResults`, `Log`, `Plan`, `ErrorReport`, `Conflict`.
@@ -68,6 +80,7 @@ Contracts are serialized using System.Text.Json with the following options:
 ## Configuration
 - `AdaptersConfig { string WorkItemsAdapter, string VcsAdapter, string TerminalAdapter, string? BuildAdapter }` - Adapter selection (build adapter is opt-in)
 - `PolicyConfig { Dictionary<string,PolicyProfile> Profiles, string DefaultProfile, RateLimits GlobalLimits }` - Policy profiles and global limits
+- `WorkItemConfig { TimeSpan DefaultClaimTimeout, int MaxConcurrentClaimsPerAgent, int MaxConcurrentClaimsPerSession, TimeSpan ClaimRenewalWindow, bool AutoReleaseOnInactivity, TimeSpan CleanupInterval }` - Work item claim management settings
 
 ## Serialization & Compatibility
 - Contracts are plain DTOs; serialization stable (JSON camelCase).
@@ -77,6 +90,7 @@ Contracts are serialized using System.Text.Json with the following options:
 - Any contract/schema change must update this file (with date/rationale) and ARCHITECTURE.md; add/adjust serialization tests; CI should enforce the rule.
 
 ## Change Log
+- **2025-12-02**: Added work item claim protocol with ClaimWorkItem/ReleaseWorkItem/RenewClaim commands, WorkItemClaimed/WorkItemClaimReleased/ClaimRenewed/ClaimExpired events, ClaimResult enum, and WorkItemConfig for claim management. Bumped version to v1.4. Implements exclusive claim locking with configurable timeouts and concurrency limits.
 - **2025-11-30**: Added BuildProject command for typed build operations with optional Configuration and Target parameters. Bumped version to v1.3. Build adapter is opt-in via AdaptersConfig.BuildAdapter setting.
 - **2025-11-28**: Added IssuerAgentId to Correlation record for proper command response routing. Bumped version to v1.2. Response events (CommandCompleted, CommandRejected, etc.) now only route to the originating agent instead of broadcasting to all agents in the session.
 - **2025-11-28**: Added QueryBacklog/QueryWorkItem commands and BacklogQueried/WorkItemQueried events to support work item queries via unified IAdapter model. Bumped version to v1.1. Removed legacy IVcsAdapter interface placeholder.

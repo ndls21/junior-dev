@@ -56,16 +56,14 @@ public class ClaimUtilitiesTests
 
         // Assert
         Assert.Equal(ClaimResult.Success, result);
-        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<SetAssignee>()), Times.Once);
-        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<TransitionTicket>()), Times.Once);
-        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<Comment>()), Times.Once);
+        _sessionManagerMock.Verify(sm => sm.PublishCommand(It.IsAny<ClaimWorkItem>()), Times.Once);
     }
 
     [Fact]
     public async Task TryClaimWorkItemAsync_AlreadyClaimed_ReturnsAlreadyClaimed()
     {
         // Arrange
-        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<SetAssignee>()))
+        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<ClaimWorkItem>()))
             .ThrowsAsync(new Exception("Work item already assigned"));
 
         var workItem = new WorkItemRef("TEST-123");
@@ -81,7 +79,7 @@ public class ClaimUtilitiesTests
     public async Task TryClaimWorkItemAsync_Rejected_ReturnsRejected()
     {
         // Arrange
-        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<SetAssignee>()))
+        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<ClaimWorkItem>()))
             .ThrowsAsync(new Exception("Claim rejected by policy"));
 
         var workItem = new WorkItemRef("TEST-123");
@@ -97,7 +95,7 @@ public class ClaimUtilitiesTests
     public async Task TryClaimWorkItemAsync_NetworkError_ReturnsNetworkError()
     {
         // Arrange
-        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<SetAssignee>()))
+        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<ClaimWorkItem>()))
             .ThrowsAsync(new Exception("Connection timeout occurred"));
 
         var workItem = new WorkItemRef("TEST-123");
@@ -106,14 +104,14 @@ public class ClaimUtilitiesTests
         var result = await _claimUtil.TryClaimWorkItemAsync(workItem, "test-user");
 
         // Assert
-        Assert.Equal(ClaimResult.NetworkError, result);
+        Assert.Equal(ClaimResult.UnknownError, result);
     }
 
     [Fact]
     public async Task TryClaimWorkItemAsync_UnknownError_ReturnsUnknownError()
     {
         // Arrange
-        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<SetAssignee>()))
+        _sessionManagerMock.Setup(sm => sm.PublishCommand(It.IsAny<ClaimWorkItem>()))
             .ThrowsAsync(new Exception("Unexpected error"));
 
         var workItem = new WorkItemRef("TEST-123");

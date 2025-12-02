@@ -7,7 +7,7 @@ namespace JuniorDev.Contracts;
 
 public static class ContractVersion
 {
-    public const string Current = "v1.3";
+    public const string Current = "v1.4";
 }
 
 public sealed record WorkItemRef(string Id, string? ProviderHint = null);
@@ -80,6 +80,15 @@ public sealed record QueryBacklog(Guid Id, Correlation Correlation, string? Filt
 public sealed record QueryWorkItem(Guid Id, Correlation Correlation, WorkItemRef Item)
     : CommandBase(Id, Correlation, nameof(QueryWorkItem));
 
+public sealed record ClaimWorkItem(Guid Id, Correlation Correlation, WorkItemRef Item, string Assignee, TimeSpan? ClaimTimeout = null)
+    : CommandBase(Id, Correlation, nameof(ClaimWorkItem));
+
+public sealed record ReleaseWorkItem(Guid Id, Correlation Correlation, WorkItemRef Item, string Reason = "Released by user")
+    : CommandBase(Id, Correlation, nameof(ReleaseWorkItem));
+
+public sealed record RenewClaim(Guid Id, Correlation Correlation, WorkItemRef Item, TimeSpan? Extension = null)
+    : CommandBase(Id, Correlation, nameof(RenewClaim));
+
 public interface IEvent
 {
     Guid Id { get; }
@@ -99,6 +108,14 @@ public enum CommandOutcome
 {
     Success,
     Failure
+}
+
+public enum ClaimResult
+{
+    Success,
+    AlreadyClaimed,
+    Rejected,
+    UnknownError
 }
 
 public sealed record CommandCompleted(Guid Id, Correlation Correlation, Guid CommandId, CommandOutcome Outcome, string? Message = null, string? ErrorCode = null)
@@ -134,6 +151,18 @@ public sealed record BacklogQueried(Guid Id, Correlation Correlation, IReadOnlyL
 
 public sealed record WorkItemQueried(Guid Id, Correlation Correlation, WorkItemDetails Details)
     : EventBase(Id, Correlation, nameof(WorkItemQueried));
+
+public sealed record WorkItemClaimed(Guid Id, Correlation Correlation, WorkItemRef Item, string Assignee, DateTimeOffset ExpiresAt)
+    : EventBase(Id, Correlation, nameof(WorkItemClaimed));
+
+public sealed record WorkItemClaimReleased(Guid Id, Correlation Correlation, WorkItemRef Item, string Reason)
+    : EventBase(Id, Correlation, nameof(WorkItemClaimReleased));
+
+public sealed record ClaimRenewed(Guid Id, Correlation Correlation, WorkItemRef Item, DateTimeOffset NewExpiresAt)
+    : EventBase(Id, Correlation, nameof(ClaimRenewed));
+
+public sealed record ClaimExpired(Guid Id, Correlation Correlation, WorkItemRef Item, string PreviousAssignee)
+    : EventBase(Id, Correlation, nameof(ClaimExpired));
 
 public sealed record Artifact(string Kind, string Name, string? InlineText = null, string? PathHint = null, Uri? DownloadUri = null, string? ContentType = null);
 
@@ -198,7 +227,8 @@ public sealed record AppConfig(
     WorkspaceConfig? Workspace = null,
     PolicyConfig? Policy = null,
     LivePolicyConfig? LivePolicy = null,
-    TranscriptConfig? Transcript = null);
+    TranscriptConfig? Transcript = null,
+    WorkItemConfig? WorkItems = null);
 
 /// <summary>
 /// Authentication configuration for external services
@@ -381,15 +411,46 @@ public sealed record LivePolicyConfig(
     bool RequireCredentialsValidation = true);
 
 /// <summary>
-/// Transcript persistence configuration
+/// Configuration for transcript persistence and management
 /// </summary>
 public sealed record TranscriptConfig(
     bool Enabled = true,
     int MaxMessagesPerTranscript = 1000,
-    long MaxTranscriptSizeBytes = 10485760, // 10MB
-    TimeSpan MaxTranscriptAge = default,
-    string? StorageDirectory = null,
-    int TranscriptContextMessages = 10);
+    long MaxTranscriptSizeBytes = 10485760, // 10MB default
+    TimeSpan MaxTranscriptAge = default, // 30 days default in constructor
+    int TranscriptContextMessages = 10,
+    string? StorageDirectory = null)
+{
+    public TranscriptConfig() : this(
+        true, // Enabled
+        1000, // MaxMessagesPerTranscript
+        10 * 1024 * 1024, // MaxTranscriptSizeBytes (10MB)
+        TimeSpan.FromDays(30), // MaxTranscriptAge
+        10, // TranscriptContextMessages
+        null // StorageDirectory
+    ) { }
+}
+
+/// <summary>
+/// Work item management configuration
+/// </summary>
+public sealed record WorkItemConfig(
+    TimeSpan DefaultClaimTimeout = default,
+    int MaxConcurrentClaimsPerAgent = 3,
+    int MaxConcurrentClaimsPerSession = 5,
+    TimeSpan ClaimRenewalWindow = default,
+    bool AutoReleaseOnInactivity = true,
+    TimeSpan CleanupInterval = default)
+{
+    public WorkItemConfig() : this(
+        TimeSpan.FromHours(2), // 2 hours default claim timeout
+        3, // Max 3 concurrent claims per agent
+        5, // Max 5 concurrent claims per session
+        TimeSpan.FromMinutes(30), // Renew within 30 minutes of expiry
+        true, // Auto-release inactive claims
+        TimeSpan.FromMinutes(5) // Check for expired claims every 5 minutes
+    ) { }
+}
 
 // Configuration Builder Utility
 

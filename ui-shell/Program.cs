@@ -89,6 +89,9 @@ static class Program
             // Run the application
             var mainForm = new MainForm(sessionManager, config, chatClient, serviceProvider, isTestMode);
             Application.Run(mainForm);
+            
+            // Dispose the service provider when the application exits
+            (serviceProvider as IDisposable)?.Dispose();
         }
         catch (Exception ex)
         {
