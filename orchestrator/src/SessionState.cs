@@ -51,6 +51,12 @@ public class SessionState
             reason);
 
         await AddEvent(statusEvent);
+
+        // Complete the event channel when the session ends
+        if (newStatus == SessionStatus.Completed || newStatus == SessionStatus.Error)
+        {
+            Complete();
+        }
     }
 
     public void SetApproved(bool approved)

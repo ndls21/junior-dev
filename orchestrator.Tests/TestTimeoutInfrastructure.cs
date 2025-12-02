@@ -84,4 +84,33 @@ public abstract class TimeoutTestBase : IClassFixture<TestTimeoutFixture>
             throw new TestTimeoutException((int)actualTimeout.TotalMilliseconds);
         }
     }
+
+    /// <summary>
+    /// Helper method to collect events from an async enumerable with multiple timeout strategies.
+    /// Uses a combination of time-based timeout and event count limits for robustness.
+    /// </summary>
+    protected async Task<List<T>> CollectEventsWithTimeout<T>(
+        IAsyncEnumerable<T> events,
+        TimeSpan? timeout = null,
+        int? maxEvents = null,
+        CancellationToken cancellationToken = default)
+    {
+        var actualTimeout = timeout ?? TimeSpan.FromSeconds(10);
+        var actualMaxEvents = maxEvents ?? 100; // Reasonable default
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(GlobalTimeoutToken, cancellationToken);
+        cts.CancelAfter(actualTimeout);
+
+        var result = new List<T>();
+        await foreach (var @event in events.WithCancellation(cts.Token))
+        {
+            result.Add(@event);
+            if (result.Count >= actualMaxEvents)
+            {
+                break; // Safety limit reached
+            }
+        }
+
+        return result;
+    }
 }

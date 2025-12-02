@@ -21,7 +21,7 @@ public class OrchestratorTests : TimeoutTestBase
             new FakeBuildAdapter()
         };
         var policyEnforcer = new StubPolicyEnforcer();
-        var rateLimiter = new StubRateLimiter();
+        var rateLimiter = new TokenBucketRateLimiter();
         var workspaceProvider = new StubWorkspaceProvider();
         var artifactStore = new StubArtifactStore();
         _sessionManager = new SessionManager(adapters, policyEnforcer, rateLimiter, workspaceProvider, artifactStore);
@@ -540,7 +540,7 @@ public class OrchestratorTests : TimeoutTestBase
             new FakeVcsAdapter()
         };
         var policyEnforcer = new StubPolicyEnforcer();
-        var rateLimiter = new StubRateLimiter();
+        var rateLimiter = new TokenBucketRateLimiter();
         var workspaceProvider = new StubWorkspaceProvider();
         var artifactStore = new StubArtifactStore();
         var sessionManager = new SessionManager(adapters, policyEnforcer, rateLimiter, workspaceProvider, artifactStore);
@@ -857,5 +857,249 @@ public class FakeBuildAdapter : IAdapter
         // Only allow .csproj, .fsproj, .vbproj, .sln files
         var extension = Path.GetExtension(projectPath).ToLowerInvariant();
         return extension is ".csproj" or ".fsproj" or ".vbproj" or ".sln";
+    }
+}
+
+public class RateLimitingIntegrationTests : TimeoutTestBase
+{
+    private readonly ISessionManager _sessionManager;
+
+    public RateLimitingIntegrationTests(TestTimeoutFixture fixture) : base(fixture)
+    {
+        var adapters = new IAdapter[]
+        {
+            new FakeWorkItemsAdapter(),
+            new FakeVcsAdapter(),
+            new FakeBuildAdapter()
+        };
+        var policyEnforcer = new StubPolicyEnforcer();
+        var rateLimiter = new TokenBucketRateLimiter();
+        var workspaceProvider = new StubWorkspaceProvider();
+        var artifactStore = new StubArtifactStore();
+        _sessionManager = new SessionManager(adapters, policyEnforcer, rateLimiter, workspaceProvider, artifactStore);
+    }
+
+    [Fact]
+    public async Task EndToEnd_RateLimiting_ThrottlesCommandsAndEmitsEvents()
+    {
+        // Arrange
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile
+            {
+                Name = "rate-limited",
+                Limits = new RateLimits
+                {
+                    CallsPerMinute = 2,  // Very restrictive for testing
+                    Burst = 1
+                }
+            },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+
+        var command1 = new Comment(Guid.NewGuid(), new Correlation(sessionId), new WorkItemRef("test", "1"), "Comment 1");
+        var command2 = new Comment(Guid.NewGuid(), new Correlation(sessionId), new WorkItemRef("test", "2"), "Comment 2");
+        var command3 = new Comment(Guid.NewGuid(), new Correlation(sessionId), new WorkItemRef("test", "3"), "Comment 3");
+
+        // Act
+        await _sessionManager.PublishCommand(command1);
+        await _sessionManager.PublishCommand(command2);
+        await _sessionManager.PublishCommand(command3);
+
+        // Complete the session to finish the event stream
+        await _sessionManager.CompleteSession(sessionId);
+
+        // Collect all events with robust timeout - session completion should make this finite
+        var events = await CollectEventsWithTimeout(_sessionManager.Subscribe(sessionId), TimeSpan.FromSeconds(5), maxEvents: 10);
+
+        // Assert
+        var throttledEvents = events.OfType<Throttled>().ToList();
+        var acceptedEvents = events.OfType<CommandAccepted>().ToList();
+        var completedEvents = events.OfType<CommandCompleted>().ToList();
+        var statusEvents = events.OfType<SessionStatusChanged>().ToList();
+
+        // Should have 1 accepted/completed and 2 throttled, plus status changes
+        Assert.Single(completedEvents);
+        Assert.Equal(2, throttledEvents.Count);
+        Assert.Single(acceptedEvents); // Only the first command is accepted
+        Assert.Equal(2, statusEvents.Count); // Initial + completed status
+
+        // Verify throttling details
+        foreach (var throttled in throttledEvents)
+        {
+            Assert.NotNull(throttled.RetryAfter);
+            Assert.True(throttled.RetryAfter > DateTimeOffset.UtcNow);
+        }
+
+        // Verify final status is completed
+        Assert.Contains(statusEvents, e => e.Status == SessionStatus.Completed);
+    }
+
+    [Fact]
+    public async Task EndToEnd_PerCommandCaps_EnforcedAcrossSessions()
+    {
+        // Arrange - Two sessions competing for the same global limits
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+
+        var config = new SessionConfig(
+            sessionId1,
+            null,
+            null,
+            new PolicyProfile
+            {
+                Name = "shared-limits",
+                Limits = new RateLimits
+                {
+                    CallsPerMinute = 5,
+                    Burst = 2,
+                    PerCommandCaps = new Dictionary<string, int>
+                    {
+                        { "Comment", 1 }  // Only 1 comment total
+                    }
+                }
+            },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+
+        var config2 = new SessionConfig(
+            sessionId2,
+            null,
+            null,
+            new PolicyProfile
+            {
+                Name = "shared-limits",
+                Limits = new RateLimits
+                {
+                    CallsPerMinute = 5,
+                    Burst = 2,
+                    PerCommandCaps = new Dictionary<string, int>
+                    {
+                        { "Comment", 1 }  // Same limit
+                    }
+                }
+            },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config2);
+
+        var command1 = new Comment(Guid.NewGuid(), new Correlation(sessionId1), new WorkItemRef("test", "1"), "Comment 1");
+        var command2 = new Comment(Guid.NewGuid(), new Correlation(sessionId2), new WorkItemRef("test", "2"), "Comment 2");
+
+        // Act
+        await _sessionManager.PublishCommand(command1);
+        await _sessionManager.PublishCommand(command2);
+
+        // Complete both sessions to finish event streams
+        await _sessionManager.CompleteSession(sessionId1);
+        await _sessionManager.CompleteSession(sessionId2);
+
+        // Collect events from both sessions with timeout
+        var events1 = await RunWithTimeout(_sessionManager.Subscribe(sessionId1).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+        var events2 = await RunWithTimeout(_sessionManager.Subscribe(sessionId2).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+
+        // Assert
+        var completed1 = events1.OfType<CommandCompleted>().ToList();
+        var completed2 = events2.OfType<CommandCompleted>().ToList();
+        var throttled1 = events1.OfType<Throttled>().ToList();
+        var throttled2 = events2.OfType<Throttled>().ToList();
+
+        // Per-command caps are global, so first command succeeds, second is throttled
+        var totalCompleted = completed1.Count + completed2.Count;
+        var totalThrottled = throttled1.Count + throttled2.Count;
+
+        Assert.Equal(1, totalCompleted);
+        Assert.Equal(1, totalThrottled);
+    }
+
+    [Fact]
+    public async Task EndToEnd_MultipleSessions_IndependentRateLimits()
+    {
+        // Arrange - Two sessions with independent limits
+        var sessionId1 = Guid.NewGuid();
+        var sessionId2 = Guid.NewGuid();
+
+        var config1 = new SessionConfig(
+            sessionId1,
+            null,
+            null,
+            new PolicyProfile
+            {
+                Name = "session-limits",
+                Limits = new RateLimits
+                {
+                    CallsPerMinute = 2,
+                    Burst = 1
+                }
+            },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        var config2 = new SessionConfig(
+            sessionId2,
+            null,
+            null,
+            new PolicyProfile
+            {
+                Name = "session-limits",
+                Limits = new RateLimits
+                {
+                    CallsPerMinute = 2,
+                    Burst = 1
+                }
+            },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config1);
+        await _sessionManager.CreateSession(config2);
+
+        // Act - Both sessions use their full burst
+        var command1 = new Comment(Guid.NewGuid(), new Correlation(sessionId1), new WorkItemRef("test", "1"), "Comment 1");
+        var command2 = new Comment(Guid.NewGuid(), new Correlation(sessionId1), new WorkItemRef("test", "2"), "Comment 2"); // Should be throttled
+        var command3 = new Comment(Guid.NewGuid(), new Correlation(sessionId2), new WorkItemRef("test", "3"), "Comment 3");
+        var command4 = new Comment(Guid.NewGuid(), new Correlation(sessionId2), new WorkItemRef("test", "4"), "Comment 4"); // Should be throttled
+
+        await _sessionManager.PublishCommand(command1);
+        await _sessionManager.PublishCommand(command2);
+        await _sessionManager.PublishCommand(command3);
+        await _sessionManager.PublishCommand(command4);
+
+        // Complete both sessions to finish event streams
+        await _sessionManager.CompleteSession(sessionId1);
+        await _sessionManager.CompleteSession(sessionId2);
+
+        // Collect events with timeout
+        var events1 = await RunWithTimeout(_sessionManager.Subscribe(sessionId1).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+        var events2 = await RunWithTimeout(_sessionManager.Subscribe(sessionId2).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+
+        // Assert - Each session should have 1 completed and 1 throttled
+        var completed1 = events1.OfType<CommandCompleted>().Count();
+        var throttled1 = events1.OfType<Throttled>().Count();
+        var completed2 = events2.OfType<CommandCompleted>().Count();
+        var throttled2 = events2.OfType<Throttled>().Count();
+
+        Assert.Equal(1, completed1);
+        Assert.Equal(1, throttled1);
+        Assert.Equal(1, completed2);
+        Assert.Equal(1, throttled2);
     }
 }

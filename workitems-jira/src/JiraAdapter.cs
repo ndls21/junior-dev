@@ -20,6 +20,7 @@ public class JiraAdapter : IAdapter
     private readonly string _projectKey;
     private readonly string _authHeader;
     private readonly bool _dryRun;
+    private readonly CircuitBreaker _circuitBreaker;
 
     public JiraAdapter(AppConfig appConfig)
     {
@@ -40,6 +41,8 @@ public class JiraAdapter : IAdapter
         _authHeader = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{token}"));
         _httpClient = new HttpClient();
         _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", _authHeader);
+
+        _circuitBreaker = new CircuitBreaker();
     }
 
     public bool CanHandle(ICommand command)
@@ -105,6 +108,18 @@ public class JiraAdapter : IAdapter
                 CommandOutcome.Success);
 
             await session.AddEvent(completedEvent);
+        }
+        catch (CircuitBreakerOpenException ex)
+        {
+            Console.WriteLine($"[JIRA CIRCUIT] Circuit breaker open for command {command.GetType().Name}: {ex.Message}");
+            var rejectedEvent = new CommandRejected(
+                Guid.NewGuid(),
+                command.Correlation,
+                command.Id,
+                $"Circuit breaker open: {ex.Message}",
+                "CIRCUIT_BREAKER");
+
+            await session.AddEvent(rejectedEvent);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
         {
@@ -281,29 +296,71 @@ public class JiraAdapter : IAdapter
 
     private async Task<HttpResponseMessage> ExecuteWithRetry(Func<Task<HttpResponseMessage>> operation)
     {
-        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        return await _circuitBreaker.ExecuteAsync(async () =>
         {
-            try
+            for (int attempt = 0; attempt < MaxRetries; attempt++)
             {
-                var response = await operation();
-                if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
-                    response.StatusCode == System.Net.HttpStatusCode.Forbidden || response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                try
                 {
+                    var response = await operation();
+                    if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                        response.StatusCode == System.Net.HttpStatusCode.Forbidden || response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    {
+                        return response;
+                    }
+                    // For other errors, check if retryable
+                    if (IsRetryableError(response.StatusCode) && attempt < MaxRetries - 1)
+                    {
+                        var delay = CalculateDelayWithJitter(attempt);
+                        Console.WriteLine($"[JIRA RETRY] Retryable error ({response.StatusCode}), attempt {attempt + 1}/{MaxRetries}, delaying {delay}ms");
+                        await Task.Delay(delay);
+                        continue;
+                    }
                     return response;
                 }
-                // For other errors, retry
+                catch (HttpRequestException ex) when (IsTransientNetworkError(ex))
+                {
+                    if (attempt < MaxRetries - 1)
+                    {
+                        var delay = CalculateDelayWithJitter(attempt);
+                        Console.WriteLine($"[JIRA RETRY] Network error, attempt {attempt + 1}/{MaxRetries}, delaying {delay}ms");
+                        await Task.Delay(delay);
+                        continue;
+                    }
+                    throw;
+                }
             }
-            catch (HttpRequestException)
-            {
-                if (attempt == MaxRetries - 1) throw;
-            }
+            throw new InvalidOperationException("Max retries exceeded");
+        });
+    }
 
-            if (attempt < MaxRetries - 1)
-            {
-                await Task.Delay(BaseDelayMs * (int)Math.Pow(2, attempt));
-            }
-        }
-        throw new InvalidOperationException("Max retries exceeded");
+    private static bool IsRetryableError(System.Net.HttpStatusCode? statusCode)
+    {
+        return statusCode == System.Net.HttpStatusCode.TooManyRequests ||
+               statusCode == System.Net.HttpStatusCode.RequestTimeout ||
+               statusCode == System.Net.HttpStatusCode.InternalServerError ||
+               statusCode == System.Net.HttpStatusCode.BadGateway ||
+               statusCode == System.Net.HttpStatusCode.ServiceUnavailable ||
+               statusCode == System.Net.HttpStatusCode.GatewayTimeout;
+    }
+
+    private static bool IsTransientNetworkError(HttpRequestException ex)
+    {
+        // Network errors that should be retried
+        return ex.InnerException is System.Net.Sockets.SocketException ||
+               ex.InnerException is System.IO.IOException ||
+               ex.StatusCode == null; // Connection failures
+    }
+
+    private static int CalculateDelayWithJitter(int attempt)
+    {
+        // Exponential backoff: baseDelay * 2^attempt
+        var exponentialDelay = BaseDelayMs * Math.Pow(2, attempt);
+        // Add jitter: random value between 0 and exponentialDelay/2
+        var jitter = Random.Shared.Next(0, (int)(exponentialDelay / 2));
+        var totalDelay = (int)exponentialDelay + jitter;
+        // Cap at max delay (30 seconds)
+        return Math.Min(totalDelay, 30000);
     }
 
     private class JiraCommentResponse

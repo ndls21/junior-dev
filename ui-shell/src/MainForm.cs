@@ -125,7 +125,7 @@ public class EventRenderer
                 return $"{baseText}🔒 Work item {claimed.Item.Id} claimed by {claimed.Assignee} (expires: {claimed.ExpiresAt:HH:mm:ss})";
             
             case WorkItemClaimReleased released:
-                return $"{baseText}🔓 Work item {released.Item.Id} released by {released.Assignee}{(string.IsNullOrEmpty(released.Reason) ? "" : $" - {released.Reason}")}";
+                return $"{baseText}🔓 Work item {released.Item.Id} released{(string.IsNullOrEmpty(released.Reason) ? "" : $" - {released.Reason}")}";
             
             case ClaimRenewed renewed:
                 return $"{baseText}🔄 Work item {renewed.Item.Id} claim renewed (expires: {renewed.NewExpiresAt:HH:mm:ss})";

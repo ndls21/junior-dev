@@ -148,6 +148,9 @@ public class SessionManager : ISessionManager, IDisposable
                 "Rate limit exceeded",
                 rateResult.RetryAfter ?? DateTimeOffset.UtcNow.AddMinutes(1));
 
+            // Log throttling event
+            Console.WriteLine($"[RATE LIMIT] Command {command.Kind} throttled for session {command.Correlation.SessionId}, retry after: {throttledEvent.RetryAfter}");
+
             await session.AddEvent(throttledEvent);
             return;
         }

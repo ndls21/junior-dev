@@ -89,6 +89,36 @@ Contracts are serialized using System.Text.Json with the following options:
 ## Documentation Discipline
 - Any contract/schema change must update this file (with date/rationale) and ARCHITECTURE.md; add/adjust serialization tests; CI should enforce the rule.
 
+## Circuit Breaker Pattern
+Circuit breakers are used in adapters to handle external service failures gracefully. They prevent cascading failures by temporarily stopping calls to failing services.
+
+### States
+- **Closed**: Normal operation, calls pass through
+- **Open**: Service considered down, calls fail fast with `CircuitBreakerOpenException`
+- **HalfOpen**: Testing if service has recovered, allows limited calls
+
+### Configuration
+- `FailureThreshold`: Number of consecutive failures before opening (default: 5)
+- `TimeoutPeriod`: How long to wait in Open state before trying HalfOpen (default: 1 minute)
+- `MonitoringPeriod`: Time window for counting failures (default: 5 minutes)
+
+### Metrics
+- `circuit_breaker_trips`: Counter of how many times the circuit breaker has opened
+
+### Usage
+```csharp
+var circuitBreaker = new CircuitBreaker(failureThreshold: 3, timeoutPeriod: TimeSpan.FromSeconds(30));
+
+try
+{
+    var result = await circuitBreaker.ExecuteAsync(() => CallExternalService());
+}
+catch (CircuitBreakerOpenException)
+{
+    // Handle fast-fail scenario
+}
+```
+
 ## Change Log
 - **2025-12-02**: Added work item claim protocol with ClaimWorkItem/ReleaseWorkItem/RenewClaim commands, WorkItemClaimed/WorkItemClaimReleased/ClaimRenewed/ClaimExpired events, ClaimResult enum, and WorkItemConfig for claim management. Bumped version to v1.4. Implements exclusive claim locking with configurable timeouts and concurrency limits.
 - **2025-11-30**: Added BuildProject command for typed build operations with optional Configuration and Target parameters. Bumped version to v1.3. Build adapter is opt-in via AdaptersConfig.BuildAdapter setting.

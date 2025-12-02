@@ -10,7 +10,7 @@ public static class OrchestratorServiceCollectionExtensions
         // Register core orchestrator services
         services.AddSingleton<ISessionManager, SessionManager>();
         services.AddSingleton<IPolicyEnforcer, StubPolicyEnforcer>();
-        services.AddSingleton<IRateLimiter, StubRateLimiter>();
+        services.AddSingleton<IRateLimiter, TokenBucketRateLimiter>();
         services.AddSingleton<IWorkspaceProvider, StubWorkspaceProvider>();
         services.AddSingleton<IArtifactStore, StubArtifactStore>();
 
