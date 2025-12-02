@@ -560,3 +560,283 @@ var policy = appConfig.Policy.Profiles[appConfig.Policy.DefaultProfile];
 | | MaxTranscriptAge | `JUNIORDEV__APPCONFIG__TRANSCRIPT__MAXTRANSCRIPTAGE` | Max message age to keep |
 | | TranscriptContextMessages | `JUNIORDEV__APPCONFIG__TRANSCRIPT__TRANSCRIPTCONTEXTMESSAGES` | Number of recent messages for AI context |
 | | StorageDirectory | `JUNIORDEV__APPCONFIG__TRANSCRIPT__STORAGEDIRECTORY` | Custom storage directory |
+
+## Observability & Monitoring
+
+Junior Dev includes comprehensive observability features for monitoring adapter performance, rate limits, errors, and command execution. All metrics are exposed via .NET System.Diagnostics.Metrics and can be collected by monitoring systems like Application Insights, Prometheus, or OpenTelemetry.
+
+### Enabling Metrics
+
+Metrics are enabled by default in development but can be controlled via configuration:
+
+```json
+{
+  "AgentConfig": {
+    "EnableMetrics": true,
+    "EnableDetailedLogging": true
+  }
+}
+```
+
+Or via environment variables:
+```bash
+JUNIORDEV__AGENTCONFIG__ENABLEMETRICS=true
+JUNIORDEV__AGENTCONFIG__ENABLEDETAILEDLOGGING=true
+```
+
+### Available Metrics
+
+#### Agent Metrics (JuniorDev.Agents)
+- `command_latency_ms` (Histogram): Time taken to execute commands
+- `commands_issued` (Counter): Number of commands issued by agents
+- `commands_succeeded` (Counter): Number of commands that succeeded
+- `commands_failed` (Counter): Number of commands that failed
+- `events_processed` (Counter): Number of events processed by agents
+
+#### GitHub Adapter Metrics (JuniorDev.WorkItems.GitHub)
+- `commands_processed` (Counter): Number of commands processed
+- `commands_succeeded` (Counter): Number of commands that succeeded
+- `commands_failed` (Counter): Number of commands that failed
+- `api_calls` (Counter): Number of API calls made to GitHub
+- `api_errors` (Counter): Number of API errors encountered
+- `circuit_breaker_trips` (Counter): Number of times circuit breaker opened
+
+#### VCS Git Adapter Metrics (JuniorDev.VcsGit)
+- `commands_processed` (Counter): Number of commands processed
+- `commands_succeeded` (Counter): Number of commands that succeeded
+- `commands_failed` (Counter): Number of commands that failed
+- `git_operations` (Counter): Number of git operations performed
+- `git_errors` (Counter): Number of git operation errors
+
+#### Build Adapter Metrics (JuniorDev.Build.Dotnet)
+- `builds_started` (Counter): Number of builds started
+- `builds_succeeded` (Counter): Number of builds that succeeded
+- `builds_failed` (Counter): Number of builds that failed
+- `build_duration_ms` (Histogram): Time taken to complete builds
+
+#### Rate Limiter Metrics (JuniorDev.Orchestrator.TokenBucketRateLimiter)
+- `rate_limit_throttles` (Counter): Number of requests throttled by rate limiter
+
+### Logging
+
+Junior Dev uses structured logging with Microsoft.Extensions.Logging. Log levels can be controlled per category:
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "JuniorDev": "Debug",
+      "JuniorDev.WorkItems.GitHub": "Warning",
+      "JuniorDev.VcsGit": "Warning",
+      "JuniorDev.Build.Dotnet": "Warning"
+    }
+  }
+}
+```
+
+### Viewing Metrics
+
+#### Console Output
+Metrics are automatically written to console in development. Look for lines like:
+```
+[Metrics] JuniorDev.WorkItems.GitHub.commands_processed{command_type="Comment"} 5
+[Metrics] JuniorDev.Agents.command_latency_ms{command_type="BuildProject"} 1250.5
+```
+
+#### Application Insights
+Configure Application Insights in `appsettings.json`:
+```json
+{
+  "ApplicationInsights": {
+    "ConnectionString": "your-connection-string"
+  }
+}
+```
+
+#### Prometheus
+Use the `prometheus-net` package and expose metrics on a `/metrics` endpoint.
+
+## Operations & Rollback Procedures
+
+### Live Readiness Checklist
+
+Before enabling live adapters, verify:
+
+1. **Credentials Configured**: Run `ConfigBuilder.ValidateLiveAdapters()` to ensure all required credentials are present
+2. **Dry-Run Testing**: Test all adapters with `DryRun = true` to verify functionality
+3. **Rate Limits**: Configure appropriate rate limits for your environment
+4. **Monitoring**: Enable metrics and logging to monitor adapter performance
+5. **Backup**: Ensure you have backups of any repositories that will be modified
+
+### Enabling Live Features
+
+#### Safe Rollout Process
+
+1. **Internal Testing** (Development Environment)
+   ```json
+   {
+     "LivePolicy": {
+       "PushEnabled": false,
+       "DryRun": true,
+       "RequireCredentialsValidation": true
+     },
+     "Adapters": {
+       "WorkItemsAdapter": "fake",
+       "VcsAdapter": "fake"
+     }
+   }
+   ```
+
+2. **Beta Testing** (Staging Environment)
+   ```json
+   {
+     "LivePolicy": {
+       "PushEnabled": false,
+       "DryRun": true,
+       "RequireCredentialsValidation": true
+     },
+     "Adapters": {
+       "WorkItemsAdapter": "github",
+       "VcsAdapter": "git"
+     }
+   }
+   ```
+
+3. **Limited Production** (Production with Restrictions)
+   ```json
+   {
+     "LivePolicy": {
+       "PushEnabled": false,
+       "DryRun": false,
+       "RequireCredentialsValidation": true
+     },
+     "Adapters": {
+       "WorkItemsAdapter": "github",
+       "VcsAdapter": "git"
+     }
+   }
+   ```
+
+4. **Full Production** (Complete Live Operation)
+   ```json
+   {
+     "LivePolicy": {
+       "PushEnabled": true,
+       "DryRun": false,
+       "RequireCredentialsValidation": true
+     }
+   }
+   ```
+
+### Emergency Rollback Procedures
+
+#### Immediate Shutdown (Circuit Breaker Pattern)
+If adapters are misbehaving, the circuit breaker will automatically open after consecutive failures. Monitor the `circuit_breaker_trips` metric.
+
+#### Manual Adapter Disabling
+To immediately disable live adapters:
+
+1. **Disable Push Operations**:
+   ```json
+   {
+     "LivePolicy": {
+       "PushEnabled": false
+     }
+   }
+   ```
+
+2. **Enable Dry-Run Mode**:
+   ```json
+   {
+     "LivePolicy": {
+       "DryRun": true
+     }
+   }
+   ```
+
+3. **Switch to Fake Adapters**:
+   ```json
+   {
+     "Adapters": {
+       "WorkItemsAdapter": "fake",
+       "VcsAdapter": "fake"
+     }
+   }
+   ```
+
+#### Session-Level Controls
+Individual sessions can be controlled via the UI or API:
+- Pause session processing
+- Cancel active commands
+- Reset session state
+
+#### Configuration Rollback
+To revert to a safe configuration:
+
+1. **Restore from Backup**: Keep backups of working `appsettings.json` files
+2. **Environment Variables**: Override dangerous settings with safe environment variables
+3. **Feature Flags**: Use environment variables to override config values:
+   ```bash
+   JUNIORDEV__APPCONFIG__LIVEPOLICY__PUSHENABLED=false
+   JUNIORDEV__APPCONFIG__LIVEPOLICY__DRYRUN=true
+   JUNIORDEV__APPCONFIG__ADAPTERS__WORKITEMSADAPTER=fake
+   JUNIORDEV__APPCONFIG__ADAPTERS__VCSADAPTER=fake
+   ```
+
+### Monitoring During Rollout
+
+#### Key Metrics to Monitor
+- `commands_failed` / `commands_processed` ratio (>5% may indicate issues)
+- `circuit_breaker_trips` (should be 0 in normal operation)
+- `rate_limit_throttles` (monitor for API limit issues)
+- `api_errors` (GitHub/Jira API failures)
+- `git_errors` (Git operation failures)
+
+#### Alert Conditions
+- Circuit breaker trips > 0
+- Command failure rate > 10%
+- API error rate > 5%
+- Rate limit throttling > 50 requests/minute
+
+#### Log Patterns to Monitor
+```
+ERROR: Failed to process command Comment
+WARN: Circuit breaker open for command CreateBranch
+WARN: Rate limited (429), attempt 2/3
+ERROR: Git command failed with exit code 128
+```
+
+### Recovery Procedures
+
+#### After Circuit Breaker Activation
+1. Check adapter logs for root cause
+2. Verify external service status (GitHub/Jira API)
+3. Fix configuration or credentials if needed
+4. Manually reset circuit breaker or restart service
+
+#### After Rate Limit Issues
+1. Increase rate limit buffers in configuration
+2. Implement exponential backoff (already built-in)
+3. Consider upgrading API plans if consistently hitting limits
+
+#### After Git Operation Failures
+1. Check repository permissions
+2. Verify git configuration
+3. Check for concurrent modifications
+4. Manually resolve conflicts if needed
+
+### Staged Rollout Gates
+
+Use Gauntlet E2E tests to gate progression between stages:
+
+1. **Gate 1 (Internal)**: All unit tests pass + basic E2E with fakes
+2. **Gate 2 (Beta)**: E2E tests pass with live adapters in dry-run mode
+3. **Gate 3 (Limited Production)**: 24-hour soak test with live adapters, no push
+4. **Gate 4 (Full Production)**: 7-day monitoring period with full live operation
+
+Each gate requires:
+- 100% test pass rate
+- <1% error rate in metrics
+- Manual review of generated artifacts
+- Stakeholder approval

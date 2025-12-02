@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics.Metrics;
 
 namespace JuniorDev.WorkItems.GitHub;
 
@@ -12,13 +14,21 @@ public class GitHubAdapter : IAdapter
     private readonly string _repo;
     private readonly bool _dryRun;
     private readonly CircuitBreaker _circuitBreaker;
+    private readonly ILogger<GitHubAdapter> _logger;
+    private readonly Meter _meter;
+    private readonly Counter<long> _commandsProcessed;
+    private readonly Counter<long> _commandsSucceeded;
+    private readonly Counter<long> _commandsFailed;
+    private readonly Counter<long> _apiCalls;
+    private readonly Counter<long> _apiErrors;
     private const int MaxRetries = 3;
     private const int BaseDelayMs = 1000;
     private const int MaxDelayMs = 30000;
     private static readonly Random _random = new();
 
-    public GitHubAdapter(AppConfig appConfig)
+    public GitHubAdapter(AppConfig appConfig, ILogger<GitHubAdapter>? logger = null)
     {
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<GitHubAdapter>.Instance;
         _dryRun = appConfig.LivePolicy?.DryRun ?? true;
 
         var gitHubAuth = appConfig.Auth?.GitHub;
@@ -39,6 +49,14 @@ public class GitHubAdapter : IAdapter
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("JuniorDev", "1.0"));
 
         _circuitBreaker = new CircuitBreaker();
+
+        // Initialize metrics
+        _meter = new Meter("JuniorDev.WorkItems.GitHub", "1.0.0");
+        _commandsProcessed = _meter.CreateCounter<long>("commands_processed", "commands", "Number of commands processed");
+        _commandsSucceeded = _meter.CreateCounter<long>("commands_succeeded", "commands", "Number of commands that succeeded");
+        _commandsFailed = _meter.CreateCounter<long>("commands_failed", "commands", "Number of commands that failed");
+        _apiCalls = _meter.CreateCounter<long>("api_calls", "calls", "Number of API calls made");
+        _apiErrors = _meter.CreateCounter<long>("api_errors", "errors", "Number of API errors encountered");
     }
 
     public bool CanHandle(ICommand command) => command is Comment or TransitionTicket or SetAssignee;
@@ -55,18 +73,24 @@ public class GitHubAdapter : IAdapter
 
         await session.AddEvent(new CommandAccepted(Guid.NewGuid(), correlation, command.Id));
 
+        // Record command processed metric
+        _commandsProcessed.Add(1, new KeyValuePair<string, object?>("command_type", command.Kind));
+
         // Check for dry-run mode
         if (_dryRun)
         {
+            _logger.LogInformation("Processing command {CommandType} in dry-run mode", command.Kind);
             await session.AddEvent(new CommandCompleted(Guid.NewGuid(), correlation, command.Id, CommandOutcome.Success));
 
             var artifact = new Artifact("text", "GitHub Issue Updated (Dry Run)", InlineText: "Command would be executed (dry-run mode)", ContentType: "text/plain");
             await session.AddEvent(new ArtifactAvailable(Guid.NewGuid(), correlation, artifact));
+            _commandsSucceeded.Add(1, new KeyValuePair<string, object?>("command_type", command.Kind));
             return;
         }
 
         try
         {
+            _logger.LogInformation("Processing command {CommandType} for issue", command.Kind);
             switch (command)
             {
                 case Comment c:
@@ -83,15 +107,19 @@ public class GitHubAdapter : IAdapter
             var artifact = new Artifact("text", "GitHub Issue Updated", InlineText: "Issue updated successfully", ContentType: "text/plain");
             await session.AddEvent(new ArtifactAvailable(Guid.NewGuid(), correlation, artifact));
             await session.AddEvent(new CommandCompleted(Guid.NewGuid(), correlation, command.Id, CommandOutcome.Success));
+            _commandsSucceeded.Add(1, new KeyValuePair<string, object?>("command_type", command.Kind));
         }
         catch (CircuitBreakerOpenException ex)
         {
-            Console.WriteLine($"[GITHUB CIRCUIT] Circuit breaker open for command {command.Kind}: {ex.Message}");
+            _logger.LogWarning(ex, "Circuit breaker open for command {CommandType}: {Message}", command.Kind, ex.Message);
             await session.AddEvent(new CommandRejected(Guid.NewGuid(), correlation, command.Id, $"Circuit breaker open: {ex.Message}", "CIRCUIT_BREAKER"));
+            _commandsFailed.Add(1, new KeyValuePair<string, object?>("command_type", command.Kind), new KeyValuePair<string, object?>("failure_reason", "circuit_breaker"));
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to process command {CommandType}", command.Kind);
             await session.AddEvent(new CommandRejected(Guid.NewGuid(), correlation, command.Id, ex.Message, "API_ERROR"));
+            _commandsFailed.Add(1, new KeyValuePair<string, object?>("command_type", command.Kind), new KeyValuePair<string, object?>("failure_reason", "api_error"));
         }
     }
 
@@ -131,6 +159,7 @@ public class GitHubAdapter : IAdapter
             {
                 try
                 {
+                    _apiCalls.Add(1);
                     var response = await operation();
                     response.EnsureSuccessStatusCode();
                     return response;
@@ -138,10 +167,11 @@ public class GitHubAdapter : IAdapter
                 catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                 {
                     // Rate limited - use exponential backoff with jitter
+                    _apiErrors.Add(1, new KeyValuePair<string, object?>("error_type", "rate_limit"));
                     if (attempt < MaxRetries - 1)
                     {
                         var delay = CalculateDelayWithJitter(attempt);
-                        Console.WriteLine($"[GITHUB RETRY] Rate limited (429), attempt {attempt + 1}/{MaxRetries}, delaying {delay}ms");
+                        _logger.LogWarning("Rate limited (429), attempt {Attempt}/{MaxRetries}, delaying {Delay}ms", attempt + 1, MaxRetries, delay);
                         await Task.Delay(delay);
                         continue;
                     }
@@ -150,10 +180,11 @@ public class GitHubAdapter : IAdapter
                 catch (HttpRequestException ex) when (IsTransientError(ex.StatusCode))
                 {
                     // Transient error - retry with backoff
+                    _apiErrors.Add(1, new KeyValuePair<string, object?>("error_type", "transient"));
                     if (attempt < MaxRetries - 1)
                     {
                         var delay = CalculateDelayWithJitter(attempt);
-                        Console.WriteLine($"[GITHUB RETRY] Transient error ({ex.StatusCode}), attempt {attempt + 1}/{MaxRetries}, delaying {delay}ms");
+                        _logger.LogWarning("Transient error ({StatusCode}), attempt {Attempt}/{MaxRetries}, delaying {Delay}ms", ex.StatusCode, attempt + 1, MaxRetries, delay);
                         await Task.Delay(delay);
                         continue;
                     }
@@ -164,15 +195,17 @@ public class GitHubAdapter : IAdapter
                                                       ex.StatusCode == System.Net.HttpStatusCode.NotFound)
                 {
                     // Non-retryable errors
+                    _apiErrors.Add(1, new KeyValuePair<string, object?>("error_type", "auth"));
                     throw;
                 }
                 catch (HttpRequestException)
                 {
                     // Network errors - retry with backoff
+                    _apiErrors.Add(1, new KeyValuePair<string, object?>("error_type", "network"));
                     if (attempt < MaxRetries - 1)
                     {
                         var delay = CalculateDelayWithJitter(attempt);
-                        Console.WriteLine($"[GITHUB RETRY] Network error, attempt {attempt + 1}/{MaxRetries}, delaying {delay}ms");
+                        _logger.LogWarning("Network error, attempt {Attempt}/{MaxRetries}, delaying {Delay}ms", attempt + 1, MaxRetries, delay);
                         await Task.Delay(delay);
                         continue;
                     }

@@ -8,6 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics.Metrics;
 
 namespace JuniorDev.Build.Dotnet;
 
@@ -17,10 +19,24 @@ namespace JuniorDev.Build.Dotnet;
 public class DotnetBuildAdapter : IAdapter
 {
     private readonly BuildConfig _config;
+    private readonly ILogger<DotnetBuildAdapter> _logger;
+    private readonly Meter _meter;
+    private readonly Counter<long> _buildsStarted;
+    private readonly Counter<long> _buildsSucceeded;
+    private readonly Counter<long> _buildsFailed;
+    private readonly Histogram<double> _buildDuration;
 
-    public DotnetBuildAdapter(BuildConfig config)
+    public DotnetBuildAdapter(BuildConfig config, ILogger<DotnetBuildAdapter>? logger = null)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DotnetBuildAdapter>.Instance;
+
+        // Initialize metrics
+        _meter = new Meter("JuniorDev.Build.Dotnet", "1.0.0");
+        _buildsStarted = _meter.CreateCounter<long>("builds_started", "builds", "Number of builds started");
+        _buildsSucceeded = _meter.CreateCounter<long>("builds_succeeded", "builds", "Number of builds that succeeded");
+        _buildsFailed = _meter.CreateCounter<long>("builds_failed", "builds", "Number of builds that failed");
+        _buildDuration = _meter.CreateHistogram<double>("build_duration_ms", "ms", "Time taken to complete builds");
     }
 
     public bool CanHandle(ICommand command) => command is BuildProject;
@@ -32,31 +48,38 @@ public class DotnetBuildAdapter : IAdapter
             throw new ArgumentException($"Command must be {nameof(BuildProject)}", nameof(command));
         }
 
-        Console.WriteLine($"DEBUG: BuildAdapter received command with ProjectPath: '{buildCommand.ProjectPath}', Repo.Path: '{buildCommand.Repo.Path}'");
+        _logger.LogInformation("Starting build for project: {ProjectPath}", buildCommand.ProjectPath);
+        _buildsStarted.Add(1);
+
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
             // Validate the project path for security
             if (!IsValidProjectPath(buildCommand.ProjectPath))
             {
+                _logger.LogWarning("Invalid project path rejected: {ProjectPath}", buildCommand.ProjectPath);
                 await session.AddEvent(new CommandRejected(
                     Guid.NewGuid(),
                     command.Correlation,
                     command.Id,
                     "Invalid project path",
                     "Path validation"));
+                _buildsFailed.Add(1);
                 return;
             }
 
             // Validate targets if specified
             if (buildCommand.Targets != null && buildCommand.Targets.Any(target => !IsValidTarget(target)))
             {
+                _logger.LogWarning("Invalid build target rejected: {Targets}", string.Join(", ", buildCommand.Targets));
                 await session.AddEvent(new CommandRejected(
                     Guid.NewGuid(),
                     command.Correlation,
                     command.Id,
                     "Invalid build target",
                     "Target validation"));
+                _buildsFailed.Add(1);
                 return;
             }
 
@@ -88,15 +111,33 @@ public class DotnetBuildAdapter : IAdapter
                 command.Id,
                 success ? CommandOutcome.Success : CommandOutcome.Failure,
                 success ? "Build completed successfully" : "Build failed"));
+
+            if (success)
+            {
+                _logger.LogInformation("Build completed successfully for project: {ProjectPath}", buildCommand.ProjectPath);
+                _buildsSucceeded.Add(1);
+            }
+            else
+            {
+                _logger.LogError("Build failed for project: {ProjectPath}", buildCommand.ProjectPath);
+                _buildsFailed.Add(1);
+            }
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Build execution failed for project: {ProjectPath}", buildCommand.ProjectPath);
             await session.AddEvent(new CommandCompleted(
                 Guid.NewGuid(),
                 command.Correlation,
                 command.Id,
                 CommandOutcome.Failure,
                 $"Build execution failed: {ex.Message}"));
+            _buildsFailed.Add(1);
+        }
+        finally
+        {
+            stopwatch.Stop();
+            _buildDuration.Record(stopwatch.ElapsedMilliseconds);
         }
     }
 

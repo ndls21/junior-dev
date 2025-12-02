@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics.Metrics;
 
 namespace JuniorDev.VcsGit;
 
@@ -13,12 +15,28 @@ public class VcsGitAdapter : IAdapter
     private readonly AppConfig _appConfig;
     private readonly Dictionary<string, List<string>> _fakeBranches = new();
     private readonly Dictionary<string, List<string>> _fakeCommits = new();
+    private readonly ILogger<VcsGitAdapter> _logger;
+    private readonly Meter _meter;
+    private readonly Counter<long> _commandsProcessed;
+    private readonly Counter<long> _commandsSucceeded;
+    private readonly Counter<long> _commandsFailed;
+    private readonly Counter<long> _gitOperations;
+    private readonly Counter<long> _gitErrors;
 
-    public VcsGitAdapter(VcsConfig config, bool isFake = false, AppConfig? appConfig = null)
+    public VcsGitAdapter(VcsConfig config, bool isFake = false, AppConfig? appConfig = null, ILogger<VcsGitAdapter>? logger = null)
     {
         _config = config;
         _isFake = isFake;
         _appConfig = appConfig ?? new AppConfig();
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<VcsGitAdapter>.Instance;
+
+        // Initialize metrics
+        _meter = new Meter("JuniorDev.VcsGit", "1.0.0");
+        _commandsProcessed = _meter.CreateCounter<long>("commands_processed", "commands", "Number of commands processed");
+        _commandsSucceeded = _meter.CreateCounter<long>("commands_succeeded", "commands", "Number of commands that succeeded");
+        _commandsFailed = _meter.CreateCounter<long>("commands_failed", "commands", "Number of commands that failed");
+        _gitOperations = _meter.CreateCounter<long>("git_operations", "operations", "Number of git operations performed");
+        _gitErrors = _meter.CreateCounter<long>("git_errors", "errors", "Number of git operation errors");
     }
 
     public bool CanHandle(ICommand command)
@@ -35,6 +53,9 @@ public class VcsGitAdapter : IAdapter
             command.Id);
 
         await session.AddEvent(acceptedEvent);
+
+        // Record command processed metric
+        _commandsProcessed.Add(1, new KeyValuePair<string, object?>("command_type", command.Kind));
 
         try
         {
@@ -55,9 +76,11 @@ public class VcsGitAdapter : IAdapter
                 CommandOutcome.Success);
 
             await session.AddEvent(completedEvent);
+            _commandsSucceeded.Add(1, new KeyValuePair<string, object?>("command_type", command.Kind));
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to execute command {CommandType}", command.Kind);
             var completedEvent = new CommandCompleted(
                 Guid.NewGuid(),
                 command.Correlation,
@@ -66,6 +89,7 @@ public class VcsGitAdapter : IAdapter
                 ex.Message);
 
             await session.AddEvent(completedEvent);
+            _commandsFailed.Add(1, new KeyValuePair<string, object?>("command_type", command.Kind));
         }
     }
 
@@ -274,6 +298,9 @@ public class VcsGitAdapter : IAdapter
 
     private async Task<(string output, int exitCode)> RunGitCommand(string args, string workingDirectory, string? input = null)
     {
+        _logger.LogDebug("Executing git command: git {Args} in {WorkingDirectory}", args, workingDirectory);
+        _gitOperations.Add(1);
+
         var process = new System.Diagnostics.Process
         {
             StartInfo = new System.Diagnostics.ProcessStartInfo
@@ -299,6 +326,16 @@ public class VcsGitAdapter : IAdapter
         var output = await process.StandardOutput.ReadToEndAsync();
         var error = await process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
+
+        if (process.ExitCode != 0)
+        {
+            _logger.LogWarning("Git command failed with exit code {ExitCode}: git {Args}", process.ExitCode, args);
+            _gitErrors.Add(1);
+        }
+        else
+        {
+            _logger.LogDebug("Git command succeeded: git {Args}", args);
+        }
 
         return (output + error, process.ExitCode);
     }
