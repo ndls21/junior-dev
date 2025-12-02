@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using DotNetEnv;
 
 namespace JuniorDev.Contracts;
 
@@ -461,15 +462,25 @@ public static class ConfigBuilder
 {
     /// <summary>
     /// Builds configuration with standard layered sources:
-    /// 1. appsettings.json (checked in) - unless skipDefaults is true
-    /// 2. appsettings.{Environment}.json (checked in)
-    /// 3. Environment variables
-    /// 4. User secrets (development only)
+    /// 1. .env.local (ignored by git, highest priority)
+    /// 2. appsettings.json (checked in) - unless skipDefaults is true
+    /// 3. appsettings.{Environment}.json (checked in)
+    /// 4. Environment variables
+    /// 5. User secrets (development only)
     /// </summary>
     public static IConfiguration Build(string? environment = null, string? basePath = null, bool skipDefaults = false)
     {
+        var basePathValue = basePath ?? AppContext.BaseDirectory;
+        
+        // Load .env.local if it exists (highest priority, ignored by git)
+        var envFilePath = Path.Combine(basePathValue, ".env.local");
+        if (File.Exists(envFilePath))
+        {
+            Env.Load(envFilePath);
+        }
+
         var builder = new ConfigurationBuilder()
-            .SetBasePath(basePath ?? AppContext.BaseDirectory);
+            .SetBasePath(basePathValue);
 
         if (!skipDefaults)
         {

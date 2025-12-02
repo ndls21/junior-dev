@@ -14,6 +14,7 @@ using JuniorDev.WorkItems.GitHub;
 using JuniorDev.WorkItems.Jira;
 using JuniorDev.VcsGit;
 using JuniorDev.Build.Dotnet;
+using DotNetEnv;
 
 namespace Ui.Shell;
 
@@ -105,11 +106,28 @@ static class Program
         var workspaceRoot = FindWorkspaceRoot();
         var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development";
 
+        // Load .env.local if it exists (highest priority, ignored by git)
+        var envFilePath = Path.Combine(workspaceRoot, ".env.local");
+        if (File.Exists(envFilePath))
+        {
+            Console.WriteLine($"Loading .env.local from: {envFilePath}");
+            Env.Load(envFilePath);
+            Console.WriteLine("Loaded .env.local file");
+            
+            // Debug: Check if our environment variable was loaded
+            var apiKey = Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__OPENAI__APIKEY");
+            Console.WriteLine($"JUNIORDEV__APPCONFIG__AUTH__OPENAI__APIKEY loaded: {!string.IsNullOrEmpty(apiKey)}");
+        }
+        else
+        {
+            Console.WriteLine($".env.local not found at: {envFilePath}");
+        }
+
         var builder = new ConfigurationBuilder()
             .SetBasePath(workspaceRoot)
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .AddJsonFile($"appsettings.{environment}.json", optional: true, reloadOnChange: true)
-            .AddEnvironmentVariables()
+            .AddEnvironmentVariables("JUNIORDEV__")
             .AddUserSecrets(typeof(Program).Assembly, optional: true);
 
         return builder.Build();
@@ -119,6 +137,12 @@ static class Program
     {
         // Add configuration
         services.AddSingleton<IConfiguration>(configuration);
+
+        // Debug: Check configuration values
+        var openaiKey = configuration["AppConfig:Auth:OpenAI:ApiKey"];
+        var envVar = Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__OPENAI__APIKEY");
+        Console.WriteLine($"Configuration AppConfig:Auth:OpenAI:ApiKey: {!string.IsNullOrEmpty(openaiKey)}");
+        Console.WriteLine($"Environment variable: {!string.IsNullOrEmpty(envVar)}");
 
         // Add AppConfig from configuration
         var appConfig = JuniorDev.Contracts.ConfigBuilder.GetAppConfig(configuration);

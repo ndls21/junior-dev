@@ -27,5 +27,6 @@
     <PackageVersion Include="DevExpress.AIIntegration.WinForms.Chat" Version="24.2.9" />
     <PackageVersion Include="DevExpress.Win.Design" Version="24.2.9" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.0.1-preview.1.25571.5" />
+    <PackageVersion Include="DotNetEnv" Version="3.0.0" />
   </ItemGroup>
 </Project>

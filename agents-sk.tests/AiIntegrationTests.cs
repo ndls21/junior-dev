@@ -31,7 +31,7 @@ public class AiIntegrationTests
 
         // Arrange - Set up kernel with OpenAI chat completion
         var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ??
-                    Environment.GetEnvironmentVariable("JUNIORDEV__AppConfig__Auth__OpenAI__ApiKey");
+                    Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__OPENAI__APIKEY");
         
         var builder = Kernel.CreateBuilder();
         builder.AddOpenAIChatCompletion("gpt-4", apiKey!);
@@ -78,7 +78,7 @@ index 1234567..abcdef0 100644
 
         // Arrange - Set up kernel with OpenAI chat completion
         var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ??
-                    Environment.GetEnvironmentVariable("JUNIORDEV__AppConfig__Auth__OpenAI__ApiKey");
+                    Environment.GetEnvironmentVariable("JUNIORDEV__APPCONFIG__AUTH__OPENAI__APIKEY");
         
         var builder = Kernel.CreateBuilder();
         builder.AddOpenAIChatCompletion("gpt-4", apiKey!);
