@@ -20,6 +20,7 @@
     <PackageVersion Include="Microsoft.SemanticKernel.Core" Version="1.0.1" />
     <PackageVersion Include="Microsoft.SemanticKernel.Connectors.OpenAI" Version="1.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="8.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="8.0.0" />
     <PackageVersion Include="Moq" Version="4.20.70" />

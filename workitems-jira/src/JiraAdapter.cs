@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text;
@@ -7,6 +8,8 @@ using System.Threading.Tasks;
 
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics.Metrics;
 
 namespace JuniorDev.WorkItems.Jira;
 
@@ -21,9 +24,17 @@ public class JiraAdapter : IAdapter
     private readonly string _authHeader;
     private readonly bool _dryRun;
     private readonly CircuitBreaker _circuitBreaker;
+    private readonly ILogger<JiraAdapter> _logger;
+    private readonly Meter _meter;
+    private readonly Counter<long> _commandsProcessed;
+    private readonly Counter<long> _commandsSucceeded;
+    private readonly Counter<long> _commandsFailed;
+    private readonly Counter<long> _apiCalls;
+    private readonly Counter<long> _apiErrors;
 
-    public JiraAdapter(AppConfig appConfig)
+    public JiraAdapter(AppConfig appConfig, ILogger<JiraAdapter> logger)
     {
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dryRun = appConfig.LivePolicy?.DryRun ?? true;
 
         var jiraAuth = appConfig.Auth?.Jira;
@@ -43,6 +54,14 @@ public class JiraAdapter : IAdapter
         _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", _authHeader);
 
         _circuitBreaker = new CircuitBreaker();
+
+        // Initialize metrics
+        _meter = new Meter("JuniorDev.WorkItems.Jira", "1.0.0");
+        _commandsProcessed = _meter.CreateCounter<long>("jira_commands_processed", "commands", "Number of Jira commands processed");
+        _commandsSucceeded = _meter.CreateCounter<long>("jira_commands_succeeded", "commands", "Number of Jira commands that succeeded");
+        _commandsFailed = _meter.CreateCounter<long>("jira_commands_failed", "commands", "Number of Jira commands that failed");
+        _apiCalls = _meter.CreateCounter<long>("jira_api_calls", "calls", "Number of API calls made to Jira");
+        _apiErrors = _meter.CreateCounter<long>("jira_api_errors", "errors", "Number of API errors from Jira");
     }
 
     public bool CanHandle(ICommand command)
@@ -52,6 +71,8 @@ public class JiraAdapter : IAdapter
 
     public async Task HandleCommand(ICommand command, SessionState session)
     {
+        _commandsProcessed.Add(1, new KeyValuePair<string, object?>("command_type", command.GetType().Name));
+
         // Emit CommandAccepted
         var acceptedEvent = new CommandAccepted(
             Guid.NewGuid(),
@@ -63,6 +84,7 @@ public class JiraAdapter : IAdapter
         // Check for dry-run mode
         if (_dryRun)
         {
+            _logger.LogInformation("Dry-run mode: Command {CommandType} would be executed", command.GetType().Name);
             var dryRunEvent = new CommandCompleted(
                 Guid.NewGuid(),
                 command.Correlation,
@@ -80,6 +102,7 @@ public class JiraAdapter : IAdapter
                 "text/plain");
 
             await session.AddEvent(new ArtifactAvailable(Guid.NewGuid(), command.Correlation, artifact));
+            _commandsSucceeded.Add(1, new KeyValuePair<string, object?>("command_type", command.GetType().Name));
             return;
         }
 
@@ -108,10 +131,11 @@ public class JiraAdapter : IAdapter
                 CommandOutcome.Success);
 
             await session.AddEvent(completedEvent);
+            _commandsSucceeded.Add(1, new KeyValuePair<string, object?>("command_type", command.GetType().Name));
         }
         catch (CircuitBreakerOpenException ex)
         {
-            Console.WriteLine($"[JIRA CIRCUIT] Circuit breaker open for command {command.GetType().Name}: {ex.Message}");
+            _logger.LogWarning(ex, "Circuit breaker open for command {CommandType}", command.GetType().Name);
             var rejectedEvent = new CommandRejected(
                 Guid.NewGuid(),
                 command.Correlation,
@@ -120,9 +144,11 @@ public class JiraAdapter : IAdapter
                 "CIRCUIT_BREAKER");
 
             await session.AddEvent(rejectedEvent);
+            _commandsFailed.Add(1, new KeyValuePair<string, object?>("command_type", command.GetType().Name), new KeyValuePair<string, object?>("error_type", "CIRCUIT_BREAKER"));
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
         {
+            _logger.LogError(ex, "Authentication failed for command {CommandType}", command.GetType().Name);
             var rejectedEvent = new CommandRejected(
                 Guid.NewGuid(),
                 command.Correlation,
@@ -131,9 +157,11 @@ public class JiraAdapter : IAdapter
                 "AUTH_ERROR");
 
             await session.AddEvent(rejectedEvent);
+            _commandsFailed.Add(1, new KeyValuePair<string, object?>("command_type", command.GetType().Name), new KeyValuePair<string, object?>("error_type", "AUTH_ERROR"));
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
         {
+            _logger.LogError(ex, "Access forbidden for command {CommandType}", command.GetType().Name);
             var rejectedEvent = new CommandRejected(
                 Guid.NewGuid(),
                 command.Correlation,
@@ -142,9 +170,11 @@ public class JiraAdapter : IAdapter
                 "PERMISSION_ERROR");
 
             await session.AddEvent(rejectedEvent);
+            _commandsFailed.Add(1, new KeyValuePair<string, object?>("command_type", command.GetType().Name), new KeyValuePair<string, object?>("error_type", "PERMISSION_ERROR"));
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
+            _logger.LogWarning(ex, "Work item not found for command {CommandType}", command.GetType().Name);
             var rejectedEvent = new CommandRejected(
                 Guid.NewGuid(),
                 command.Correlation,
@@ -153,9 +183,11 @@ public class JiraAdapter : IAdapter
                 "NOT_FOUND");
 
             await session.AddEvent(rejectedEvent);
+            _commandsFailed.Add(1, new KeyValuePair<string, object?>("command_type", command.GetType().Name), new KeyValuePair<string, object?>("error_type", "NOT_FOUND"));
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
         {
+            _logger.LogWarning(ex, "Rate limit exceeded for command {CommandType}", command.GetType().Name);
             var rejectedEvent = new CommandRejected(
                 Guid.NewGuid(),
                 command.Correlation,
@@ -164,9 +196,11 @@ public class JiraAdapter : IAdapter
                 "RATE_LIMIT");
 
             await session.AddEvent(rejectedEvent);
+            _commandsFailed.Add(1, new KeyValuePair<string, object?>("command_type", command.GetType().Name), new KeyValuePair<string, object?>("error_type", "RATE_LIMIT"));
         }
         catch (HttpRequestException ex)
         {
+            _logger.LogError(ex, "HTTP error for command {CommandType}: {StatusCode}", command.GetType().Name, ex.StatusCode);
             var rejectedEvent = new CommandRejected(
                 Guid.NewGuid(),
                 command.Correlation,
@@ -175,9 +209,11 @@ public class JiraAdapter : IAdapter
                 "HTTP_ERROR");
 
             await session.AddEvent(rejectedEvent);
+            _commandsFailed.Add(1, new KeyValuePair<string, object?>("command_type", command.GetType().Name), new KeyValuePair<string, object?>("error_type", "HTTP_ERROR"));
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "General error for command {CommandType}", command.GetType().Name);
             var rejectedEvent = new CommandRejected(
                 Guid.NewGuid(),
                 command.Correlation,
@@ -186,6 +222,7 @@ public class JiraAdapter : IAdapter
                 "GENERAL_ERROR");
 
             await session.AddEvent(rejectedEvent);
+            _commandsFailed.Add(1, new KeyValuePair<string, object?>("command_type", command.GetType().Name), new KeyValuePair<string, object?>("error_type", "GENERAL_ERROR"));
         }
     }
 
@@ -302,6 +339,7 @@ public class JiraAdapter : IAdapter
             {
                 try
                 {
+                    _apiCalls.Add(1);
                     var response = await operation();
                     if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
                         response.StatusCode == System.Net.HttpStatusCode.Forbidden || response.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -311,8 +349,9 @@ public class JiraAdapter : IAdapter
                     // For other errors, check if retryable
                     if (IsRetryableError(response.StatusCode) && attempt < MaxRetries - 1)
                     {
+                        _apiErrors.Add(1, new KeyValuePair<string, object?>("error_type", response.StatusCode.ToString()));
                         var delay = CalculateDelayWithJitter(attempt);
-                        Console.WriteLine($"[JIRA RETRY] Retryable error ({response.StatusCode}), attempt {attempt + 1}/{MaxRetries}, delaying {delay}ms");
+                        _logger.LogWarning("Retryable error ({StatusCode}), attempt {Attempt}/{MaxRetries}, delaying {Delay}ms", response.StatusCode, attempt + 1, MaxRetries, delay);
                         await Task.Delay(delay);
                         continue;
                     }
@@ -320,10 +359,11 @@ public class JiraAdapter : IAdapter
                 }
                 catch (HttpRequestException ex) when (IsTransientNetworkError(ex))
                 {
+                    _apiErrors.Add(1, new KeyValuePair<string, object?>("error_type", "NETWORK_ERROR"));
                     if (attempt < MaxRetries - 1)
                     {
                         var delay = CalculateDelayWithJitter(attempt);
-                        Console.WriteLine($"[JIRA RETRY] Network error, attempt {attempt + 1}/{MaxRetries}, delaying {delay}ms");
+                        _logger.LogWarning(ex, "Network error, attempt {Attempt}/{MaxRetries}, delaying {Delay}ms", attempt + 1, MaxRetries, delay);
                         await Task.Delay(delay);
                         continue;
                     }

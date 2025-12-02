@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
 using JuniorDev.Contracts;
@@ -21,7 +22,7 @@ public static class WorkItemAdapterExtensions
 
         if (hasValidCredentials)
         {
-            services.AddSingleton<IAdapter>(sp => new JiraAdapter(appConfig));
+            services.AddSingleton<IAdapter>(sp => new JiraAdapter(appConfig, sp.GetRequiredService<ILogger<JiraAdapter>>()));
         }
         else
         {

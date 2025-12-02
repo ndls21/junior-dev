@@ -614,6 +614,13 @@ JUNIORDEV__AGENTCONFIG__ENABLEDETAILEDLOGGING=true
 - `builds_failed` (Counter): Number of builds that failed
 - `build_duration_ms` (Histogram): Time taken to complete builds
 
+#### Jira Adapter Metrics (JuniorDev.WorkItems.Jira)
+- `jira_commands_processed` (Counter): Number of Jira commands processed
+- `jira_commands_succeeded` (Counter): Number of Jira commands that succeeded
+- `jira_commands_failed` (Counter): Number of Jira commands that failed
+- `jira_api_calls` (Counter): Number of API calls made to Jira
+- `jira_api_errors` (Counter): Number of API errors from Jira
+
 #### Rate Limiter Metrics (JuniorDev.Orchestrator.TokenBucketRateLimiter)
 - `rate_limit_throttles` (Counter): Number of requests throttled by rate limiter
 

@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
 using JuniorDev.WorkItems.Jira;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace JuniorDev.WorkItems.Jira.Tests;
@@ -31,7 +32,7 @@ public class JiraAdapterIntegrationTests
                     Jira = new JiraAuthConfig(baseUrl, username, apiToken)
                 }
             };
-            _adapter = new JiraAdapter(appConfig);
+            _adapter = new JiraAdapter(appConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<JiraAdapter>.Instance);
         }
         // If environment variables are not set, _adapter remains null and tests will be skipped
     }
@@ -157,7 +158,7 @@ public class JiraAdapterIntegrationTests
                         "invalid")
                 }
             };
-            var invalidAdapter = new JiraAdapter(invalidAppConfig);
+            var invalidAdapter = new JiraAdapter(invalidAppConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<JiraAdapter>.Instance);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),
@@ -216,7 +217,7 @@ public class JiraAdapterIntegrationTests
                         "invalid")
                 }
             };
-            var invalidAdapter = new JiraAdapter(invalidAppConfig);
+            var invalidAdapter = new JiraAdapter(invalidAppConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<JiraAdapter>.Instance);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),
@@ -274,7 +275,7 @@ public class JiraAdapterIntegrationTests
                         "invalid")
                 }
             };
-            var invalidAdapter = new JiraAdapter(invalidAppConfig);
+            var invalidAdapter = new JiraAdapter(invalidAppConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<JiraAdapter>.Instance);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),

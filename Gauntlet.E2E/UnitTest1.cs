@@ -252,7 +252,7 @@ public class GauntletSmokeTest
             // Override with real adapters for live mode
             if (hasJiraConfig)
             {
-                services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter(appConfig));
+                services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter(appConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<JuniorDev.WorkItems.Jira.JiraAdapter>.Instance));
                 _output.WriteLine("Using real Jira adapter");
             }
             else
@@ -296,7 +296,7 @@ public class GauntletSmokeTest
             // Register adapters with the constructed config
             if (hasJiraConfig)
             {
-                services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter(envAppConfig));
+                services.AddSingleton<IAdapter>(new JuniorDev.WorkItems.Jira.JiraAdapter(envAppConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<JuniorDev.WorkItems.Jira.JiraAdapter>.Instance));
                 _output.WriteLine("Using real Jira adapter (from env vars)");
             }
             else
