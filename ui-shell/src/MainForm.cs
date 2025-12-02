@@ -23,7 +23,8 @@ public enum BlockingType
 {
     NeedsApproval,
     ConflictDetected,
-    Throttled
+    Throttled,
+    AutoPaused
 }
 
 public class BlockingCondition
@@ -37,6 +38,7 @@ public class BlockingCondition
 
 public class SessionItem
 {
+    public Guid SessionId { get; set; }
     public string Name { get; set; } = "";
     public JuniorDev.Contracts.SessionStatus Status { get; set; }
 
@@ -983,6 +985,7 @@ public partial class MainForm : Form
     private System.Windows.Forms.ListBox? sessionsListBox;
     private MemoEdit? eventsMemoEdit;
     private TreeList? artifactsTree;
+    private FlowLayoutPanel? actionPanel;
 
     // Chat components
     private AccordionLayoutManager? _accordionManager;
@@ -992,6 +995,7 @@ public partial class MainForm : Form
 
     // Blocking state tracking
     private List<BlockingCondition> _blockingConditions = new();
+    private Dictionary<Guid, int> _sessionErrorCounts = new();
 
     private bool isTestMode = false;
 
@@ -1272,7 +1276,7 @@ public partial class MainForm : Form
         panel.Dock = DockStyle.Fill;
 
         // Add action buttons at the top
-        var actionPanel = new FlowLayoutPanel();
+        actionPanel = new FlowLayoutPanel();
         actionPanel.Dock = DockStyle.Top;
         actionPanel.Height = 40;
         actionPanel.FlowDirection = FlowDirection.LeftToRight;
@@ -1287,8 +1291,14 @@ public partial class MainForm : Form
         attachButton.Width = 70;
         attachButton.Click += (s, e) => ShowAttachChatToSessionDialog();
 
+        var pushToggleButton = new SimpleButton();
+        pushToggleButton.Text = currentSettings.LiveProfile.PushEnabled ? "🔴 Push: ON" : "🟢 Push: OFF";
+        pushToggleButton.Width = 90;
+        pushToggleButton.Click += (s, e) => TogglePushSafety();
+
         actionPanel.Controls.Add(createButton);
         actionPanel.Controls.Add(attachButton);
+        actionPanel.Controls.Add(pushToggleButton);
 
         // Add filter buttons below actions
         var filterPanel = new FlowLayoutPanel();
@@ -1324,6 +1334,14 @@ public partial class MainForm : Form
         sessionsListBox.DrawMode = System.Windows.Forms.DrawMode.OwnerDrawFixed;
         sessionsListBox.ItemHeight = 30;
         sessionsListBox.DrawItem += SessionsListBox_DrawItem;
+
+        // Add context menu for session controls
+        var sessionContextMenu = new ContextMenuStrip();
+        var pauseMenuItem = new ToolStripMenuItem("Pause Session", null, async (s, e) => await PauseSelectedSession());
+        var resumeMenuItem = new ToolStripMenuItem("Resume Session", null, async (s, e) => await ResumeSelectedSession());
+        var abortMenuItem = new ToolStripMenuItem("Abort Session", null, async (s, e) => await AbortSelectedSession());
+        sessionContextMenu.Items.AddRange(new ToolStripItem[] { pauseMenuItem, resumeMenuItem, new ToolStripSeparator(), abortMenuItem });
+        sessionsListBox.ContextMenuStrip = sessionContextMenu;
 
         // Initialize with real sessions if not in test mode
         if (!isTestMode)
@@ -1876,6 +1894,8 @@ public partial class MainForm : Form
                     Message = $"⚠️ Merge conflict detected: {conflict.Details}",
                     ActionText = "Resolve"
                 });
+                // Auto-pause on conflicts for safety
+                _ = AutoPauseSessionOnError(conflict.Correlation.SessionId, "Merge conflict detected");
                 break;
 
             case SessionStatusChanged statusChanged when statusChanged.Status == JuniorDev.Contracts.SessionStatus.NeedsApproval:
@@ -1891,6 +1911,16 @@ public partial class MainForm : Form
             case SessionStatusChanged statusChanged when statusChanged.Status != JuniorDev.Contracts.SessionStatus.NeedsApproval:
                 // Remove approval blocking when status changes away from NeedsApproval
                 RemoveBlockingCondition(statusChanged.Correlation.SessionId, BlockingType.NeedsApproval);
+                break;
+
+            case CommandRejected rejected:
+                // Auto-pause on repeated command rejections (policy violations)
+                _ = AutoPauseSessionOnError(rejected.Correlation.SessionId, $"Command rejected: {rejected.Reason}");
+                break;
+
+            case CommandCompleted completed when completed.Outcome == CommandOutcome.Failure:
+                // Auto-pause on repeated failures
+                _ = AutoPauseSessionOnError(completed.Correlation.SessionId, $"Command failed: {completed.Message}");
                 break;
         }
     }
@@ -2237,6 +2267,7 @@ public partial class MainForm : Form
             {
                 var sessionItem = new SessionItem
                 {
+                    SessionId = chatStream.SessionId,
                     Name = chatStream.AgentName,
                     Status = chatStream.Status
                 };
@@ -2297,6 +2328,7 @@ public partial class MainForm : Form
                     {
                         var sessionItem = new SessionItem 
                         { 
+                            SessionId = chatStream.SessionId,
                             Name = chatStream.AgentName, 
                             Status = chatStream.Status 
                         };
@@ -3339,6 +3371,92 @@ public partial class MainForm : Form
         return new RepoRef("default-repo", Environment.CurrentDirectory);
     }
 
+    private async Task PauseSelectedSession()
+    {
+        if (sessionsListBox?.SelectedItem is SessionItem sessionItem)
+        {
+            try
+            {
+                await _sessionManager.PauseSession(sessionItem.SessionId);
+                Console.WriteLine($"Paused session {sessionItem.SessionId} ({sessionItem.Name})");
+                RefreshSessionsList(); // Refresh to show updated status
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to pause session: {ex.Message}");
+                MessageBox.Show($"Failed to pause session: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+    }
+
+    private async Task ResumeSelectedSession()
+    {
+        if (sessionsListBox?.SelectedItem is SessionItem sessionItem)
+        {
+            try
+            {
+                await _sessionManager.ResumeSession(sessionItem.SessionId);
+                Console.WriteLine($"Resumed session {sessionItem.SessionId} ({sessionItem.Name})");
+                RefreshSessionsList(); // Refresh to show updated status
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to resume session: {ex.Message}");
+                MessageBox.Show($"Failed to resume session: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+    }
+
+    private async Task AbortSelectedSession()
+    {
+        if (sessionsListBox?.SelectedItem is SessionItem sessionItem)
+        {
+            var result = MessageBox.Show(
+                $"Are you sure you want to abort session '{sessionItem.Name}'?\n\nThis will permanently stop the session and cannot be undone.",
+                "Confirm Abort Session",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+
+            if (result == DialogResult.Yes)
+            {
+                try
+                {
+                    await _sessionManager.AbortSession(sessionItem.SessionId);
+                    Console.WriteLine($"Aborted session {sessionItem.SessionId} ({sessionItem.Name})");
+                    RefreshSessionsList(); // Refresh to show updated status
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to abort session: {ex.Message}");
+                    MessageBox.Show($"Failed to abort session: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+    }
+
+    private void TogglePushSafety()
+    {
+        // Toggle the push enabled state in live profile settings
+        currentSettings.LiveProfile.PushEnabled = !currentSettings.LiveProfile.PushEnabled;
+
+        // Update the button text and appearance
+        var pushToggleButton = actionPanel?.Controls.OfType<SimpleButton>().FirstOrDefault(b => b.Text.Contains("Push"));
+        if (pushToggleButton != null)
+        {
+            pushToggleButton.Text = currentSettings.LiveProfile.PushEnabled ? "🔴 Push: ON" : "🟢 Push: OFF";
+            pushToggleButton.Appearance.BackColor = currentSettings.LiveProfile.PushEnabled ? Color.LightCoral : Color.LightGreen;
+        }
+
+        // Apply the updated live profile settings
+        ApplyLiveProfileSettings(currentSettings.LiveProfile);
+
+        // Save settings
+        SaveSettings(currentSettings);
+
+        Console.WriteLine($"Push safety toggled: {currentSettings.LiveProfile.PushEnabled}");
+    }
+
     private string FindWorkspaceRoot()
     {
         var currentDir = Directory.GetCurrentDirectory();
@@ -3358,5 +3476,46 @@ public partial class MainForm : Form
 
         // Fallback to current directory
         return currentDir;
+    }
+
+    private async Task AutoPauseSessionOnError(Guid sessionId, string reason)
+    {
+        // Track error count for this session
+        if (!_sessionErrorCounts.ContainsKey(sessionId))
+        {
+            _sessionErrorCounts[sessionId] = 0;
+        }
+        _sessionErrorCounts[sessionId]++;
+
+        const int ERROR_THRESHOLD = 3; // Auto-pause after 3 errors
+
+        if (_sessionErrorCounts[sessionId] >= ERROR_THRESHOLD)
+        {
+            try
+            {
+                await _sessionManager.PauseSession(sessionId);
+                
+                AddBlockingCondition(new BlockingCondition
+                {
+                    SessionId = sessionId,
+                    Type = BlockingType.AutoPaused,
+                    Message = $"🚨 Session auto-paused due to repeated errors ({_sessionErrorCounts[sessionId]} failures). Last: {reason}",
+                    ActionText = "Resume"
+                });
+
+                Console.WriteLine($"Auto-paused session {sessionId} due to {ERROR_THRESHOLD} consecutive errors");
+                
+                // Reset error count after auto-pause
+                _sessionErrorCounts[sessionId] = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to auto-pause session {sessionId}: {ex.Message}");
+            }
+        }
+        else
+        {
+            Console.WriteLine($"Session {sessionId} error count: {_sessionErrorCounts[sessionId]}/{ERROR_THRESHOLD} - {reason}");
+        }
     }
 }
