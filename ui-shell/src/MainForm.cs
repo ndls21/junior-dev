@@ -13,6 +13,7 @@ using JuniorDev.Orchestrator;
 using DevExpress.AIIntegration;
 using System.Xml;
 using System.Linq;
+using System.Text.Json;
 
 #pragma warning disable CS8602 // Dereference of possibly null reference - suppressed for fields initialized in constructor
 
@@ -62,6 +63,9 @@ public class SessionItem
 public class EventRenderer
 {
     private readonly MemoEdit _memoEdit;
+
+    public bool ShowTimestamps { get; set; } = true;
+    public int MaxEventHistory { get; set; } = 1000;
 
     public EventRenderer(MemoEdit memoEdit)
     {
@@ -156,18 +160,87 @@ public class AppSettings
     public int FontSize { get; set; } = 9;
     public bool ShowStatusChips { get; set; } = true;
     public bool AutoScrollEvents { get; set; } = true;
+    public bool ShowTimestamps { get; set; } = true;
+    public int MaxEventHistory { get; set; } = 1000;
+
+    // Live orchestrator profile settings
+    public LiveProfileSettings LiveProfile { get; set; } = new();
+}
+
+public class LiveProfileSettings
+{
+    public string WorkItemsAdapter { get; set; } = "fake";
+    public string VcsAdapter { get; set; } = "fake";
+    public string BuildAdapter { get; set; } = "powershell";
+
+    // GitHub settings
+    public string GitHubToken { get; set; } = "";
+    public string GitHubOrg { get; set; } = "";
+    public string GitHubRepo { get; set; } = "";
+
+    // Jira settings
+    public string JiraUrl { get; set; } = "";
+    public string JiraUsername { get; set; } = "";
+    public string JiraApiToken { get; set; } = "";
+
+    // Live policy settings
+    public bool PushEnabled { get; set; } = false;
+    public bool DryRun { get; set; } = true;
+    public bool RequireCredentialsValidation { get; set; } = true;
+
+    // Current mode
+    public bool IsLiveMode { get; set; } = false;
 }
 
 public class SettingsDialog : Form
 {
+    private System.Windows.Forms.TabControl? tabControl;
+    private System.Windows.Forms.TabPage? uiTabPage;
+    private System.Windows.Forms.TabPage? liveProfileTabPage;
+
+    // UI Settings controls
     private System.Windows.Forms.ComboBox? themeCombo;
     private System.Windows.Forms.NumericUpDown? fontSizeSpinner;
     private System.Windows.Forms.CheckBox? statusChipsCheck;
     private System.Windows.Forms.CheckBox? autoScrollCheck;
+    private System.Windows.Forms.CheckBox? showTimestampsCheck;
+    private System.Windows.Forms.NumericUpDown? maxEventHistorySpinner;
+
+    // Live Profile controls
+    private System.Windows.Forms.ComboBox? workItemsAdapterCombo;
+    private System.Windows.Forms.ComboBox? vcsAdapterCombo;
+    private System.Windows.Forms.ComboBox? buildAdapterCombo;
+
+    // GitHub controls
+    private System.Windows.Forms.TextBox? githubTokenTextBox;
+    private System.Windows.Forms.TextBox? githubOrgTextBox;
+    private System.Windows.Forms.TextBox? githubRepoTextBox;
+    private System.Windows.Forms.Button? githubValidateButton;
+    private System.Windows.Forms.Label? githubStatusLabel;
+
+    // Jira controls
+    private System.Windows.Forms.TextBox? jiraUrlTextBox;
+    private System.Windows.Forms.TextBox? jiraUsernameTextBox;
+    private System.Windows.Forms.TextBox? jiraApiTokenTextBox;
+    private System.Windows.Forms.Button? jiraValidateButton;
+    private System.Windows.Forms.Label? jiraStatusLabel;
+
+    // Live policy controls
+    private System.Windows.Forms.CheckBox? pushEnabledCheck;
+    private System.Windows.Forms.CheckBox? dryRunCheck;
+    private System.Windows.Forms.CheckBox? requireValidationCheck;
+
+    // Profile mode controls
+    private System.Windows.Forms.RadioButton? fakeModeRadio;
+    private System.Windows.Forms.RadioButton? liveModeRadio;
+    private System.Windows.Forms.Button? validateAllButton;
+    private System.Windows.Forms.Label? profileStatusLabel;
+
+    // Buttons
     private System.Windows.Forms.Button? okButton;
     private System.Windows.Forms.Button? cancelButton;
 
-    public AppSettings Settings { get; private set; } = new();
+    public AppSettings Settings { get; set; } = new();
 
     public SettingsDialog()
     {
@@ -178,68 +251,539 @@ public class SettingsDialog : Form
     private void InitializeDialog()
     {
         this.Text = "Settings";
-        this.Size = new Size(300, 200);
+        this.Size = new Size(600, 500);
         this.StartPosition = FormStartPosition.CenterParent;
         this.FormBorderStyle = FormBorderStyle.FixedDialog;
         this.MaximizeBox = false;
         this.MinimizeBox = false;
 
-        // Theme
-        var themeLabel = new System.Windows.Forms.Label { Text = "Theme:", Location = new Point(10, 10), AutoSize = true };
-        themeCombo = new System.Windows.Forms.ComboBox
+        // Create tab control
+        tabControl = new System.Windows.Forms.TabControl
         {
-            Location = new Point(100, 10),
-            DropDownStyle = ComboBoxStyle.DropDownList
-        };
-        themeCombo.Items.AddRange(new[] { "Light", "Dark", "Blue" });
-
-        // Font Size
-        var fontLabel = new System.Windows.Forms.Label { Text = "Font Size:", Location = new Point(10, 40), AutoSize = true };
-        fontSizeSpinner = new System.Windows.Forms.NumericUpDown
-        {
-            Location = new Point(100, 40),
-            Minimum = 8,
-            Maximum = 16,
-            Value = 9
+            Dock = DockStyle.Fill,
+            Location = new Point(0, 0)
         };
 
-        // Checkboxes
-        statusChipsCheck = new System.Windows.Forms.CheckBox { Text = "Show status chips", Location = new Point(10, 70), AutoSize = true };
-        autoScrollCheck = new System.Windows.Forms.CheckBox { Text = "Auto-scroll events", Location = new Point(10, 95), AutoSize = true, Checked = true };
+        // UI Settings Tab
+        uiTabPage = new System.Windows.Forms.TabPage("UI Settings");
+        InitializeUITab();
 
-        // Buttons
-        okButton = new System.Windows.Forms.Button { Text = "OK", Location = new Point(120, 130), DialogResult = DialogResult.OK };
-        cancelButton = new System.Windows.Forms.Button { Text = "Cancel", Location = new Point(200, 130), DialogResult = DialogResult.Cancel };
+        // Live Profile Tab
+        liveProfileTabPage = new System.Windows.Forms.TabPage("Live Profile");
+        InitializeLiveProfileTab();
+
+        tabControl.TabPages.Add(uiTabPage);
+        tabControl.TabPages.Add(liveProfileTabPage);
+
+        // Buttons at bottom
+        var buttonPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 50,
+            FlowDirection = FlowDirection.RightToLeft
+        };
+
+        okButton = new System.Windows.Forms.Button { Text = "OK", Width = 80, DialogResult = DialogResult.OK };
+        cancelButton = new System.Windows.Forms.Button { Text = "Cancel", Width = 80, DialogResult = DialogResult.Cancel };
 
         okButton.Click += OkButton_Click;
 
-        this.Controls.AddRange(new System.Windows.Forms.Control[] {
-            themeLabel, themeCombo, fontLabel, fontSizeSpinner,
-            statusChipsCheck, autoScrollCheck, okButton, cancelButton
-        });
+        buttonPanel.Controls.Add(cancelButton);
+        buttonPanel.Controls.Add(okButton);
+
+        this.Controls.Add(tabControl);
+        this.Controls.Add(buttonPanel);
 
         this.AcceptButton = okButton;
         this.CancelButton = cancelButton;
     }
 
+    private void InitializeUITab()
+    {
+        var panel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            Padding = new Padding(10)
+        };
+
+        // Theme
+        var themePanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 550 };
+        var themeLabel = new System.Windows.Forms.Label { Text = "Theme:", AutoSize = true, Width = 80 };
+        themeCombo = new System.Windows.Forms.ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 150
+        };
+        themeCombo.Items.AddRange(new[] { "Light", "Dark", "Blue" });
+        themePanel.Controls.Add(themeLabel);
+        themePanel.Controls.Add(themeCombo);
+
+        // Font Size
+        var fontPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 550 };
+        var fontLabel = new System.Windows.Forms.Label { Text = "Font Size:", AutoSize = true, Width = 80 };
+        fontSizeSpinner = new System.Windows.Forms.NumericUpDown
+        {
+            Minimum = 8,
+            Maximum = 16,
+            Value = 9,
+            Width = 60
+        };
+        fontPanel.Controls.Add(fontLabel);
+        fontPanel.Controls.Add(fontSizeSpinner);
+
+        // Checkboxes
+        statusChipsCheck = new System.Windows.Forms.CheckBox { Text = "Show status chips", AutoSize = true, Width = 200 };
+        autoScrollCheck = new System.Windows.Forms.CheckBox { Text = "Auto-scroll events", AutoSize = true, Width = 200, Checked = true };
+        showTimestampsCheck = new System.Windows.Forms.CheckBox { Text = "Show timestamps", AutoSize = true, Width = 200, Checked = true };
+
+        // Max Event History
+        var historyPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 550 };
+        var historyLabel = new System.Windows.Forms.Label { Text = "Max Event History:", AutoSize = true, Width = 120 };
+        maxEventHistorySpinner = new System.Windows.Forms.NumericUpDown
+        {
+            Minimum = 100,
+            Maximum = 10000,
+            Value = 1000,
+            Width = 80
+        };
+        historyPanel.Controls.Add(historyLabel);
+        historyPanel.Controls.Add(maxEventHistorySpinner);
+
+        panel.Controls.Add(themePanel);
+        panel.Controls.Add(fontPanel);
+        panel.Controls.Add(statusChipsCheck);
+        panel.Controls.Add(autoScrollCheck);
+        panel.Controls.Add(showTimestampsCheck);
+        panel.Controls.Add(historyPanel);
+
+        uiTabPage!.Controls.Add(panel);
+    }
+
+    private void InitializeLiveProfileTab()
+    {
+        var scrollPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true
+        };
+
+        var mainPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.TopDown,
+            Padding = new Padding(10),
+            AutoSize = true,
+            Width = 550
+        };
+
+        // Profile Mode Section
+        var modeGroup = new GroupBox { Text = "Profile Mode", Width = 530, Height = 80 };
+        fakeModeRadio = new System.Windows.Forms.RadioButton { Text = "Fake Mode (Safe, no external connections)", Location = new Point(10, 20), AutoSize = true, Checked = true };
+        liveModeRadio = new System.Windows.Forms.RadioButton { Text = "Live Mode (Connect to real services)", Location = new Point(10, 45), AutoSize = true };
+        profileStatusLabel = new System.Windows.Forms.Label { Text = "Current: Fake Mode", Location = new Point(300, 30), AutoSize = true, ForeColor = Color.Green };
+        modeGroup.Controls.Add(fakeModeRadio);
+        modeGroup.Controls.Add(liveModeRadio);
+        modeGroup.Controls.Add(profileStatusLabel);
+
+        // Adapter Configuration Section
+        var adapterGroup = new GroupBox { Text = "Adapter Configuration", Width = 530, Height = 120 };
+        var adapterPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            Padding = new Padding(10)
+        };
+
+        // Work Items Adapter
+        var workItemsPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 500 };
+        var workItemsLabel = new System.Windows.Forms.Label { Text = "Work Items:", AutoSize = true, Width = 80 };
+        workItemsAdapterCombo = new System.Windows.Forms.ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 120
+        };
+        workItemsAdapterCombo.Items.AddRange(new[] { "fake", "github", "jira" });
+        workItemsPanel.Controls.Add(workItemsLabel);
+        workItemsPanel.Controls.Add(workItemsAdapterCombo);
+
+        // VCS Adapter
+        var vcsPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 500 };
+        var vcsLabel = new System.Windows.Forms.Label { Text = "Version Control:", AutoSize = true, Width = 80 };
+        vcsAdapterCombo = new System.Windows.Forms.ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 120
+        };
+        vcsAdapterCombo.Items.AddRange(new[] { "fake", "git" });
+        vcsPanel.Controls.Add(vcsLabel);
+        vcsPanel.Controls.Add(vcsAdapterCombo);
+
+        // Build Adapter
+        var buildPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 500 };
+        var buildLabel = new System.Windows.Forms.Label { Text = "Build System:", AutoSize = true, Width = 80 };
+        buildAdapterCombo = new System.Windows.Forms.ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 120
+        };
+        buildAdapterCombo.Items.AddRange(new[] { "fake", "dotnet", "powershell" });
+        buildPanel.Controls.Add(buildLabel);
+        buildPanel.Controls.Add(buildAdapterCombo);
+
+        adapterPanel.Controls.Add(workItemsPanel);
+        adapterPanel.Controls.Add(vcsPanel);
+        adapterPanel.Controls.Add(buildPanel);
+        adapterGroup.Controls.Add(adapterPanel);
+
+        // GitHub Credentials Section
+        var githubGroup = new GroupBox { Text = "GitHub Credentials", Width = 530, Height = 150 };
+        var githubPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            Padding = new Padding(10)
+        };
+
+        githubTokenTextBox = new System.Windows.Forms.TextBox { PlaceholderText = "GitHub Personal Access Token", Width = 480, UseSystemPasswordChar = true };
+        githubOrgTextBox = new System.Windows.Forms.TextBox { PlaceholderText = "Default Organization (optional)", Width = 480 };
+        githubRepoTextBox = new System.Windows.Forms.TextBox { PlaceholderText = "Default Repository (optional)", Width = 480 };
+
+        var githubButtonPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 480 };
+        githubValidateButton = new System.Windows.Forms.Button { Text = "Validate GitHub", Width = 100 };
+        githubStatusLabel = new System.Windows.Forms.Label { Text = "Not validated", AutoSize = true };
+        githubButtonPanel.Controls.Add(githubValidateButton);
+        githubButtonPanel.Controls.Add(githubStatusLabel);
+
+        githubValidateButton.Click += GithubValidateButton_Click;
+
+        githubPanel.Controls.Add(new System.Windows.Forms.Label { Text = "Token:", AutoSize = true });
+        githubPanel.Controls.Add(githubTokenTextBox);
+        githubPanel.Controls.Add(new System.Windows.Forms.Label { Text = "Organization:", AutoSize = true });
+        githubPanel.Controls.Add(githubOrgTextBox);
+        githubPanel.Controls.Add(new System.Windows.Forms.Label { Text = "Repository:", AutoSize = true });
+        githubPanel.Controls.Add(githubRepoTextBox);
+        githubPanel.Controls.Add(githubButtonPanel);
+        githubGroup.Controls.Add(githubPanel);
+
+        // Jira Credentials Section
+        var jiraGroup = new GroupBox { Text = "Jira Credentials", Width = 530, Height = 170 };
+        var jiraPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            Padding = new Padding(10)
+        };
+
+        jiraUrlTextBox = new System.Windows.Forms.TextBox { PlaceholderText = "https://company.atlassian.net", Width = 480 };
+        jiraUsernameTextBox = new System.Windows.Forms.TextBox { PlaceholderText = "username@company.com", Width = 480 };
+        jiraApiTokenTextBox = new System.Windows.Forms.TextBox { PlaceholderText = "API Token", Width = 480, UseSystemPasswordChar = true };
+
+        var jiraButtonPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 480 };
+        jiraValidateButton = new System.Windows.Forms.Button { Text = "Validate Jira", Width = 100 };
+        jiraStatusLabel = new System.Windows.Forms.Label { Text = "Not validated", AutoSize = true };
+        jiraButtonPanel.Controls.Add(jiraValidateButton);
+        jiraButtonPanel.Controls.Add(jiraStatusLabel);
+
+        jiraValidateButton.Click += JiraValidateButton_Click;
+
+        jiraPanel.Controls.Add(new System.Windows.Forms.Label { Text = "URL:", AutoSize = true });
+        jiraPanel.Controls.Add(jiraUrlTextBox);
+        jiraPanel.Controls.Add(new System.Windows.Forms.Label { Text = "Username:", AutoSize = true });
+        jiraPanel.Controls.Add(jiraUsernameTextBox);
+        jiraPanel.Controls.Add(new System.Windows.Forms.Label { Text = "API Token:", AutoSize = true });
+        jiraPanel.Controls.Add(jiraApiTokenTextBox);
+        jiraPanel.Controls.Add(jiraButtonPanel);
+        jiraGroup.Controls.Add(jiraPanel);
+
+        // Live Policy Section
+        var policyGroup = new GroupBox { Text = "Live Policy Settings", Width = 530, Height = 100 };
+        var policyPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            Padding = new Padding(10)
+        };
+
+        pushEnabledCheck = new System.Windows.Forms.CheckBox { Text = "Enable push operations", AutoSize = true };
+        dryRunCheck = new System.Windows.Forms.CheckBox { Text = "Dry run mode (simulate operations)", AutoSize = true, Checked = true };
+        requireValidationCheck = new System.Windows.Forms.CheckBox { Text = "Require credentials validation", AutoSize = true, Checked = true };
+
+        var validateAllPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 480 };
+        validateAllButton = new System.Windows.Forms.Button { Text = "Validate All Credentials", Width = 150 };
+        validateAllButton.Click += ValidateAllButton_Click;
+        validateAllPanel.Controls.Add(validateAllButton);
+
+        policyPanel.Controls.Add(pushEnabledCheck);
+        policyPanel.Controls.Add(dryRunCheck);
+        policyPanel.Controls.Add(requireValidationCheck);
+        policyPanel.Controls.Add(validateAllPanel);
+        policyGroup.Controls.Add(policyPanel);
+
+        // Wire up mode change events
+        fakeModeRadio.CheckedChanged += ModeRadio_CheckedChanged;
+        liveModeRadio.CheckedChanged += ModeRadio_CheckedChanged;
+
+        mainPanel.Controls.Add(modeGroup);
+        mainPanel.Controls.Add(adapterGroup);
+        mainPanel.Controls.Add(githubGroup);
+        mainPanel.Controls.Add(jiraGroup);
+        mainPanel.Controls.Add(policyGroup);
+
+        scrollPanel.Controls.Add(mainPanel);
+        liveProfileTabPage!.Controls.Add(scrollPanel);
+    }
+
     private void LoadCurrentSettings()
     {
-        // Load from saved settings - in a real app this would be passed in
-        Settings = new AppSettings();
+        // Load UI settings
         themeCombo!.SelectedItem = Settings.Theme;
         fontSizeSpinner!.Value = Settings.FontSize;
         statusChipsCheck!.Checked = Settings.ShowStatusChips;
         autoScrollCheck!.Checked = Settings.AutoScrollEvents;
+        showTimestampsCheck!.Checked = Settings.ShowTimestamps;
+        maxEventHistorySpinner!.Value = Settings.MaxEventHistory;
+
+        // Load live profile settings
+        workItemsAdapterCombo!.SelectedItem = Settings.LiveProfile.WorkItemsAdapter;
+        vcsAdapterCombo!.SelectedItem = Settings.LiveProfile.VcsAdapter;
+        buildAdapterCombo!.SelectedItem = Settings.LiveProfile.BuildAdapter;
+
+        githubTokenTextBox!.Text = Settings.LiveProfile.GitHubToken;
+        githubOrgTextBox!.Text = Settings.LiveProfile.GitHubOrg;
+        githubRepoTextBox!.Text = Settings.LiveProfile.GitHubRepo;
+
+        jiraUrlTextBox!.Text = Settings.LiveProfile.JiraUrl;
+        jiraUsernameTextBox!.Text = Settings.LiveProfile.JiraUsername;
+        jiraApiTokenTextBox!.Text = Settings.LiveProfile.JiraApiToken;
+
+        pushEnabledCheck!.Checked = Settings.LiveProfile.PushEnabled;
+        dryRunCheck!.Checked = Settings.LiveProfile.DryRun;
+        requireValidationCheck!.Checked = Settings.LiveProfile.RequireCredentialsValidation;
+
+        fakeModeRadio!.Checked = !Settings.LiveProfile.IsLiveMode;
+        liveModeRadio!.Checked = Settings.LiveProfile.IsLiveMode;
+
+        UpdateProfileStatus();
+        UpdateControlStates();
+    }
+
+    private void ModeRadio_CheckedChanged(object? sender, EventArgs e)
+    {
+        UpdateControlStates();
+        UpdateProfileStatus();
+    }
+
+    private void UpdateControlStates()
+    {
+        bool isLiveMode = liveModeRadio!.Checked;
+
+        // Enable/disable adapter controls based on mode
+        workItemsAdapterCombo!.Enabled = isLiveMode;
+        vcsAdapterCombo!.Enabled = isLiveMode;
+        buildAdapterCombo!.Enabled = isLiveMode;
+
+        // Enable/disable credential controls based on mode and adapter selection
+        bool githubEnabled = isLiveMode && workItemsAdapterCombo!.SelectedItem?.ToString() == "github";
+        githubTokenTextBox!.Enabled = githubEnabled;
+        githubOrgTextBox!.Enabled = githubEnabled;
+        githubRepoTextBox!.Enabled = githubEnabled;
+        githubValidateButton!.Enabled = githubEnabled;
+
+        bool jiraEnabled = isLiveMode && workItemsAdapterCombo!.SelectedItem?.ToString() == "jira";
+        jiraUrlTextBox!.Enabled = jiraEnabled;
+        jiraUsernameTextBox!.Enabled = jiraEnabled;
+        jiraApiTokenTextBox!.Enabled = jiraEnabled;
+        jiraValidateButton!.Enabled = jiraEnabled;
+
+        // Policy controls always enabled in live mode
+        pushEnabledCheck!.Enabled = isLiveMode;
+        dryRunCheck!.Enabled = isLiveMode;
+        requireValidationCheck!.Enabled = isLiveMode;
+        validateAllButton!.Enabled = isLiveMode;
+    }
+
+    private void UpdateProfileStatus()
+    {
+        bool isLiveMode = liveModeRadio!.Checked;
+        profileStatusLabel!.Text = $"Current: {(isLiveMode ? "Live Mode" : "Fake Mode")}";
+        profileStatusLabel!.ForeColor = isLiveMode ? Color.Red : Color.Green;
+    }
+
+    private async void GithubValidateButton_Click(object? sender, EventArgs e)
+    {
+        await ValidateGitHubCredentials();
+    }
+
+    private async void JiraValidateButton_Click(object? sender, EventArgs e)
+    {
+        await ValidateJiraCredentials();
+    }
+
+    private async void ValidateAllButton_Click(object? sender, EventArgs e)
+    {
+        await ValidateAllCredentials();
+    }
+
+    private async Task ValidateGitHubCredentials()
+    {
+        githubStatusLabel!.Text = "Validating...";
+        githubStatusLabel!.ForeColor = Color.Orange;
+
+        try
+        {
+            var token = githubTokenTextBox!.Text.Trim();
+            if (string.IsNullOrEmpty(token))
+            {
+                throw new InvalidOperationException("GitHub token is required");
+            }
+
+            // Create a temporary config to validate
+            var authConfig = new AuthConfig
+            {
+                GitHub = new GitHubAuthConfig(token, githubOrgTextBox!.Text.Trim(), githubRepoTextBox!.Text.Trim())
+            };
+
+            var adaptersConfig = new AdaptersConfig("github", "fake", "powershell");
+            var livePolicy = new LivePolicyConfig(pushEnabledCheck!.Checked, dryRunCheck!.Checked, requireValidationCheck!.Checked);
+
+            var appConfig = new AppConfig
+            {
+                Auth = authConfig,
+                Adapters = adaptersConfig,
+                LivePolicy = livePolicy
+            };
+
+            // Validate credentials
+            ConfigBuilder.ValidateLiveAdapterCredentials(appConfig);
+
+            // Additional validation - try to make a simple API call
+            // For now, just check token format (should start with ghp_)
+            if (!token.StartsWith("ghp_") && !token.StartsWith("github_pat_"))
+            {
+                throw new InvalidOperationException("GitHub token appears to be invalid (should start with 'ghp_' or 'github_pat_')");
+            }
+
+            githubStatusLabel!.Text = "✓ Valid";
+            githubStatusLabel!.ForeColor = Color.Green;
+        }
+        catch (Exception ex)
+        {
+            githubStatusLabel!.Text = $"✗ Invalid: {ex.Message}";
+            githubStatusLabel!.ForeColor = Color.Red;
+        }
+    }
+
+    private async Task ValidateJiraCredentials()
+    {
+        jiraStatusLabel!.Text = "Validating...";
+        jiraStatusLabel!.ForeColor = Color.Orange;
+
+        try
+        {
+            var url = jiraUrlTextBox!.Text.Trim();
+            var username = jiraUsernameTextBox!.Text.Trim();
+            var token = jiraApiTokenTextBox!.Text.Trim();
+
+            if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(username) || string.IsNullOrEmpty(token))
+            {
+                throw new InvalidOperationException("All Jira fields are required");
+            }
+
+            // Create a temporary config to validate
+            var authConfig = new AuthConfig
+            {
+                Jira = new JiraAuthConfig(url, username, token)
+            };
+
+            var adaptersConfig = new AdaptersConfig("jira", "fake", "powershell");
+            var livePolicy = new LivePolicyConfig(pushEnabledCheck!.Checked, dryRunCheck!.Checked, requireValidationCheck!.Checked);
+
+            var appConfig = new AppConfig
+            {
+                Auth = authConfig,
+                Adapters = adaptersConfig,
+                LivePolicy = livePolicy
+            };
+
+            // Validate credentials
+            ConfigBuilder.ValidateLiveAdapterCredentials(appConfig);
+
+            jiraStatusLabel!.Text = "✓ Valid";
+            jiraStatusLabel!.ForeColor = Color.Green;
+        }
+        catch (Exception ex)
+        {
+            jiraStatusLabel!.Text = $"✗ Invalid: {ex.Message}";
+            jiraStatusLabel!.ForeColor = Color.Red;
+        }
+    }
+
+    private async Task ValidateAllCredentials()
+    {
+        // Validate based on selected adapters
+        var workItemsAdapter = workItemsAdapterCombo!.SelectedItem?.ToString() ?? "fake";
+
+        if (workItemsAdapter == "github")
+        {
+            await ValidateGitHubCredentials();
+        }
+        else if (workItemsAdapter == "jira")
+        {
+            await ValidateJiraCredentials();
+        }
+
+        // Could add validation for VCS and build adapters here if needed
+        MessageBox.Show("Credential validation complete. Check status indicators for results.", "Validation Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void OkButton_Click(object? sender, EventArgs e)
     {
+        // Validate live mode settings if live mode is selected
+        if (liveModeRadio!.Checked)
+        {
+            var workItemsAdapter = workItemsAdapterCombo!.SelectedItem?.ToString() ?? "fake";
+            if (workItemsAdapter == "github" && string.IsNullOrEmpty(githubTokenTextBox!.Text.Trim()))
+            {
+                MessageBox.Show("GitHub token is required when using GitHub adapter in live mode.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                tabControl!.SelectedTab = liveProfileTabPage;
+                return;
+            }
+            else if (workItemsAdapter == "jira" &&
+                     (string.IsNullOrEmpty(jiraUrlTextBox!.Text.Trim()) ||
+                      string.IsNullOrEmpty(jiraUsernameTextBox!.Text.Trim()) ||
+                      string.IsNullOrEmpty(jiraApiTokenTextBox!.Text.Trim())))
+            {
+                MessageBox.Show("All Jira credentials are required when using Jira adapter in live mode.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                tabControl!.SelectedTab = liveProfileTabPage;
+                return;
+            }
+        }
+
         Settings = new AppSettings
         {
             Theme = themeCombo!.SelectedItem?.ToString() ?? "Light",
             FontSize = (int)fontSizeSpinner!.Value,
             ShowStatusChips = statusChipsCheck!.Checked,
-            AutoScrollEvents = autoScrollCheck!.Checked
+            AutoScrollEvents = autoScrollCheck!.Checked,
+            ShowTimestamps = showTimestampsCheck!.Checked,
+            MaxEventHistory = (int)maxEventHistorySpinner!.Value,
+            LiveProfile = new LiveProfileSettings
+            {
+                WorkItemsAdapter = workItemsAdapterCombo!.SelectedItem?.ToString() ?? "fake",
+                VcsAdapter = vcsAdapterCombo!.SelectedItem?.ToString() ?? "fake",
+                BuildAdapter = buildAdapterCombo!.SelectedItem?.ToString() ?? "powershell",
+                GitHubToken = githubTokenTextBox!.Text.Trim(),
+                GitHubOrg = githubOrgTextBox!.Text.Trim(),
+                GitHubRepo = githubRepoTextBox!.Text.Trim(),
+                JiraUrl = jiraUrlTextBox!.Text.Trim(),
+                JiraUsername = jiraUsernameTextBox!.Text.Trim(),
+                JiraApiToken = jiraApiTokenTextBox!.Text.Trim(),
+                PushEnabled = pushEnabledCheck!.Checked,
+                DryRun = dryRunCheck!.Checked,
+                RequireCredentialsValidation = requireValidationCheck!.Checked,
+                IsLiveMode = liveModeRadio!.Checked
+            }
         };
     }
 }
@@ -1387,11 +1931,21 @@ public partial class MainForm : Form
         }
 
         using var dialog = new SettingsDialog();
+        dialog.Settings = currentSettings; // Pass current settings to dialog
         if (dialog.ShowDialog() == DialogResult.OK)
         {
             // Apply settings
             ApplySettings(dialog.Settings);
             SaveSettings(dialog.Settings);
+
+            // Apply live profile settings if changed
+            if (dialog.Settings.LiveProfile.IsLiveMode != currentSettings.LiveProfile.IsLiveMode ||
+                dialog.Settings.LiveProfile.WorkItemsAdapter != currentSettings.LiveProfile.WorkItemsAdapter ||
+                dialog.Settings.LiveProfile.VcsAdapter != currentSettings.LiveProfile.VcsAdapter ||
+                dialog.Settings.LiveProfile.BuildAdapter != currentSettings.LiveProfile.BuildAdapter)
+            {
+                ApplyLiveProfileSettings(dialog.Settings.LiveProfile);
+            }
         }
     }
 
@@ -1399,6 +1953,7 @@ public partial class MainForm : Form
     {
         var settings = LoadSettings();
         ApplySettings(settings);
+        ApplyLiveProfileSettings(settings.LiveProfile);
     }
 
     public void ApplySettings(AppSettings settings)
@@ -1449,8 +2004,167 @@ public partial class MainForm : Form
             sessionsListBox.Refresh(); // Redraw to apply changes
         }
 
+        // Apply ShowTimestamps behavior
+        if (eventRenderer != null)
+        {
+            eventRenderer.ShowTimestamps = settings.ShowTimestamps;
+        }
+
+        // Apply MaxEventHistory behavior
+        if (eventRenderer != null)
+        {
+            eventRenderer.MaxEventHistory = settings.MaxEventHistory;
+        }
+
         // Apply AutoScrollEvents behavior (stored for use in AddMockEvent)
         // This will be checked in AddMockEvent method
+    }
+
+    private void ApplyLiveProfileSettings(LiveProfileSettings liveProfile)
+    {
+        // Update the application title to indicate live mode
+        var baseTitle = "Junior Dev - AI-Assisted Development Platform";
+        if (liveProfile.IsLiveMode)
+        {
+            this.Text = $"{baseTitle} [LIVE MODE - {liveProfile.WorkItemsAdapter.ToUpper()}]";
+            this.BackColor = Color.FromArgb(255, 240, 240); // Light red background for live mode
+        }
+        else
+        {
+            this.Text = baseTitle;
+            // Reset background color based on theme
+            ApplySettings(currentSettings);
+        }
+
+        // Show warning banner if in live mode with push enabled
+        if (liveProfile.IsLiveMode && liveProfile.PushEnabled && !liveProfile.DryRun)
+        {
+            ShowLiveModeWarning("⚠️ LIVE MODE WITH PUSH ENABLED - Real changes will be made to external systems!");
+        }
+        else if (liveProfile.IsLiveMode && liveProfile.DryRun)
+        {
+            ShowLiveModeWarning("🔄 LIVE MODE (DRY RUN) - Connected to real systems but operations will be simulated");
+        }
+        else if (liveProfile.IsLiveMode)
+        {
+            ShowLiveModeWarning("🔗 LIVE MODE - Connected to real systems (push disabled)");
+        }
+        else
+        {
+            HideLiveModeWarning();
+        }
+
+        // Update appsettings.json with live profile settings
+        UpdateAppSettingsWithLiveProfile(liveProfile);
+
+        // Update current settings
+        currentSettings.LiveProfile = liveProfile;
+
+        Console.WriteLine($"Applied live profile settings: Mode={liveProfile.IsLiveMode}, WorkItems={liveProfile.WorkItemsAdapter}, VCS={liveProfile.VcsAdapter}");
+    }
+
+    private void UpdateAppSettingsWithLiveProfile(LiveProfileSettings liveProfile)
+    {
+        try
+        {
+            // Load current appsettings.json
+            var appSettingsPath = Path.Combine(FindWorkspaceRoot(), "appsettings.json");
+            if (!File.Exists(appSettingsPath)) return;
+
+            var json = File.ReadAllText(appSettingsPath);
+            var appSettings = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonDocument>(json);
+            if (appSettings == null) return;
+
+            // Update the AppConfig section
+            if (appSettings.RootElement.TryGetProperty("AppConfig", out var appConfigElement))
+            {
+                var updatedConfig = appConfigElement.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>();
+                if (updatedConfig == null) return;
+
+                // Update Adapters
+                if (updatedConfig.ContainsKey("Adapters"))
+                {
+                    var adapters = updatedConfig["Adapters"].Deserialize<Dictionary<string, System.Text.Json.JsonElement>>();
+                    if (adapters != null)
+                    {
+                        adapters["WorkItemsAdapter"] = System.Text.Json.JsonSerializer.SerializeToElement(liveProfile.WorkItemsAdapter);
+                        adapters["VcsAdapter"] = System.Text.Json.JsonSerializer.SerializeToElement(liveProfile.VcsAdapter);
+                        adapters["BuildAdapter"] = System.Text.Json.JsonSerializer.SerializeToElement(liveProfile.BuildAdapter);
+                        updatedConfig["Adapters"] = System.Text.Json.JsonSerializer.SerializeToElement(adapters);
+                    }
+                }
+
+                // Update Auth
+                var auth = new Dictionary<string, object>();
+                if (liveProfile.WorkItemsAdapter == "github" && !string.IsNullOrEmpty(liveProfile.GitHubToken))
+                {
+                    auth["GitHub"] = new
+                    {
+                        Token = liveProfile.GitHubToken,
+                        DefaultOrg = liveProfile.GitHubOrg,
+                        DefaultRepo = liveProfile.GitHubRepo
+                    };
+                }
+                if (liveProfile.WorkItemsAdapter == "jira" &&
+                    !string.IsNullOrEmpty(liveProfile.JiraUrl) &&
+                    !string.IsNullOrEmpty(liveProfile.JiraUsername) &&
+                    !string.IsNullOrEmpty(liveProfile.JiraApiToken))
+                {
+                    auth["Jira"] = new
+                    {
+                        BaseUrl = liveProfile.JiraUrl,
+                        Username = liveProfile.JiraUsername,
+                        ApiToken = liveProfile.JiraApiToken
+                    };
+                }
+                if (auth.Count > 0)
+                {
+                    updatedConfig["Auth"] = System.Text.Json.JsonSerializer.SerializeToElement(auth);
+                }
+
+                // Update LivePolicy
+                var livePolicy = new
+                {
+                    PushEnabled = liveProfile.PushEnabled,
+                    DryRun = liveProfile.DryRun,
+                    RequireCredentialsValidation = liveProfile.RequireCredentialsValidation
+                };
+                updatedConfig["LivePolicy"] = System.Text.Json.JsonSerializer.SerializeToElement(livePolicy);
+
+                // Save updated configuration
+                var rootObject = new Dictionary<string, object> { ["AppConfig"] = updatedConfig };
+                var updatedJson = System.Text.Json.JsonSerializer.Serialize(rootObject, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(appSettingsPath, updatedJson);
+
+                Console.WriteLine("Updated appsettings.json with live profile settings");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to update appsettings.json: {ex.Message}");
+        }
+    }
+
+    private void ShowLiveModeWarning(string message)
+    {
+        if (_blockingBannerPanel == null) return;
+
+        _blockingBannerLabel!.Text = message;
+        _blockingBannerLabel!.ForeColor = Color.DarkRed;
+        _blockingBannerPanel!.BackColor = Color.FromArgb(255, 255, 200); // Light yellow
+        _blockingBannerPanel!.Visible = true;
+        _blockingBannerActionButton!.Visible = false; // No action button for warnings
+
+        // Ensure banner appears above panels
+        _blockingBannerPanel!.BringToFront();
+    }
+
+    private void HideLiveModeWarning()
+    {
+        if (_blockingBannerPanel != null)
+        {
+            _blockingBannerPanel!.Visible = false;
+        }
     }
 
     private void SaveSettings(AppSettings settings)
@@ -1836,7 +2550,13 @@ public partial class MainForm : Form
             if (File.Exists(settingsFile))
             {
                 var json = File.ReadAllText(settingsFile);
-                return System.Text.Json.JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+                var settings = System.Text.Json.JsonSerializer.Deserialize<AppSettings>(json);
+                if (settings != null)
+                {
+                    // Ensure LiveProfile is initialized
+                    settings.LiveProfile ??= new LiveProfileSettings();
+                    return settings;
+                }
             }
         }
         catch (Exception ex)
@@ -1844,7 +2564,7 @@ public partial class MainForm : Form
             Console.WriteLine($"Failed to load settings: {ex.Message}");
         }
 
-        return new AppSettings();
+        return new AppSettings { LiveProfile = new LiveProfileSettings() };
     }
 
     public void LoadLayout()
@@ -2619,9 +3339,24 @@ public partial class MainForm : Form
         return new RepoRef("default-repo", Environment.CurrentDirectory);
     }
 
-    public ISessionManager GetSessionManagerForTest()
+    private string FindWorkspaceRoot()
     {
-        // For testing only - return the session manager
-        return _sessionManager;
+        var currentDir = Directory.GetCurrentDirectory();
+
+        // Look for solution file or common workspace markers
+        var directory = new DirectoryInfo(currentDir);
+        while (directory != null)
+        {
+            if (directory.GetFiles("*.sln").Any() ||
+                directory.GetFiles("Directory.Packages.props").Any() ||
+                directory.GetFiles("global.json").Any())
+            {
+                return directory.FullName;
+            }
+            directory = directory.Parent;
+        }
+
+        // Fallback to current directory
+        return currentDir;
     }
 }
