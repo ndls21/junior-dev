@@ -29,7 +29,7 @@ public class JiraAdapterIntegrationTests
             {
                 Auth = new AuthConfig
                 {
-                    Jira = new JiraAuthConfig(baseUrl, username, apiToken)
+                    Jira = new JiraAuthConfig(baseUrl, username, apiToken, projectKey)
                 }
             };
             _adapter = new JiraAdapter(appConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<JiraAdapter>.Instance);
@@ -155,7 +155,8 @@ public class JiraAdapterIntegrationTests
                     Jira = new JiraAuthConfig(
                         Environment.GetEnvironmentVariable("JIRA_BASE_URL") ?? "https://invalid.atlassian.net",
                         "invalid",
-                        "invalid")
+                        "invalid",
+                        "PROJ")
                 }
             };
             var invalidAdapter = new JiraAdapter(invalidAppConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<JiraAdapter>.Instance);
@@ -214,7 +215,8 @@ public class JiraAdapterIntegrationTests
                     Jira = new JiraAuthConfig(
                         Environment.GetEnvironmentVariable("JIRA_BASE_URL") ?? "https://invalid.atlassian.net",
                         "invalid",
-                        "invalid")
+                        "invalid",
+                        "PROJ")
                 }
             };
             var invalidAdapter = new JiraAdapter(invalidAppConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<JiraAdapter>.Instance);
@@ -272,7 +274,8 @@ public class JiraAdapterIntegrationTests
                     Jira = new JiraAuthConfig(
                         Environment.GetEnvironmentVariable("JIRA_BASE_URL") ?? "https://invalid.atlassian.net",
                         "invalid",
-                        "invalid")
+                        "invalid",
+                        "PROJ")
                 }
             };
             var invalidAdapter = new JiraAdapter(invalidAppConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<JiraAdapter>.Instance);

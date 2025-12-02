@@ -1855,7 +1855,7 @@ public class MainFormTests : IDisposable
             Adapters = new AdaptersConfig("jira", "git", "powershell"),
             Auth = new AuthConfig
             {
-                Jira = new JiraAuthConfig("https://company.atlassian.net", "user@company.com", "api-token-123"),
+                Jira = new JiraAuthConfig("https://company.atlassian.net", "user@company.com", "api-token-123", "PROJ"),
                 GitHub = new GitHubAuthConfig("ghp_1234567890abcdef", "company-org", "main-repo")
             }
         };
@@ -1893,7 +1893,7 @@ public class MainFormTests : IDisposable
             Adapters = new AdaptersConfig("github", "git", "powershell"),
             Auth = new AuthConfig
             {
-                Jira = new JiraAuthConfig("https://company.atlassian.net", "user@company.com", "api-token-123")
+                Jira = new JiraAuthConfig("https://company.atlassian.net", "user@company.com", "api-token-123", "PROJ")
             }
         };
 
@@ -1912,7 +1912,7 @@ public class MainFormTests : IDisposable
             Adapters = new AdaptersConfig("jira", "git", "powershell"),
             Auth = new AuthConfig
             {
-                Jira = new JiraAuthConfig("", "user@company.com", "api-token-123"),
+                Jira = new JiraAuthConfig("", "user@company.com", "api-token-123", "PROJ"),
                 GitHub = new GitHubAuthConfig("ghp_1234567890abcdef")
             }
         };
@@ -1932,8 +1932,8 @@ public class MainFormTests : IDisposable
             Adapters = new AdaptersConfig("github", "git", "powershell"),
             Auth = new AuthConfig
             {
-                Jira = new JiraAuthConfig("https://company.atlassian.net", "user@company.com", "api-token-123"),
-                GitHub = new GitHubAuthConfig("")
+                Jira = new JiraAuthConfig("https://company.atlassian.net", "user@company.com", "api-token-123", "PROJ"),
+                GitHub = new GitHubAuthConfig("", "company-org", "main-repo")
             }
         };
 

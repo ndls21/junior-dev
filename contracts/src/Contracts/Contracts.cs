@@ -247,7 +247,8 @@ public sealed record AuthConfig(
 public sealed record JiraAuthConfig(
     string BaseUrl,
     string Username,
-    string ApiToken);
+    string ApiToken,
+    string? ProjectKey = null);
 
 /// <summary>
 /// GitHub authentication settings
@@ -265,7 +266,8 @@ public sealed record GitAuthConfig(
     string? PersonalAccessToken = null,
     string? DefaultRemote = null,
     string? UserName = null,
-    string? UserEmail = null);
+    string? UserEmail = null,
+    string? BranchPrefix = null);
 
 /// <summary>
 /// OpenAI authentication settings
@@ -556,6 +558,14 @@ public static class ConfigBuilder
             {
                 throw new InvalidOperationException("GitHub Token is required but not configured.");
             }
+            if (string.IsNullOrWhiteSpace(auth.GitHub.DefaultOrg))
+            {
+                throw new InvalidOperationException("GitHub DefaultOrg is required for live operations but not configured.");
+            }
+            if (string.IsNullOrWhiteSpace(auth.GitHub.DefaultRepo))
+            {
+                throw new InvalidOperationException("GitHub DefaultRepo is required for live operations but not configured.");
+            }
         }
 
         // Validate Jira adapter credentials if configured
@@ -576,6 +586,10 @@ public static class ConfigBuilder
             if (string.IsNullOrWhiteSpace(auth.Jira.ApiToken))
             {
                 throw new InvalidOperationException("Jira ApiToken is required but not configured.");
+            }
+            if (string.IsNullOrWhiteSpace(auth.Jira.ProjectKey))
+            {
+                throw new InvalidOperationException("Jira ProjectKey is required for live operations but not configured.");
             }
         }
 

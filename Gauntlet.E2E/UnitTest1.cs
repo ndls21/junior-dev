@@ -288,7 +288,8 @@ public class GauntletSmokeTest
                     Jira = hasJiraConfig ? new JiraAuthConfig(
                         Environment.GetEnvironmentVariable("JIRA_URL") ?? "https://dummy.atlassian.net",
                         Environment.GetEnvironmentVariable("JIRA_USER") ?? "dummy-user",
-                        Environment.GetEnvironmentVariable("JIRA_TOKEN") ?? "dummy-token"
+                        Environment.GetEnvironmentVariable("JIRA_TOKEN") ?? "dummy-token",
+                        Environment.GetEnvironmentVariable("JIRA_PROJECT") ?? "PROJ"
                     ) : null
                 }
             };

@@ -184,6 +184,7 @@ public class LiveProfileSettings
     public string JiraUrl { get; set; } = "";
     public string JiraUsername { get; set; } = "";
     public string JiraApiToken { get; set; } = "";
+    public string JiraProjectKey { get; set; } = "";
 
     // Live policy settings
     public bool PushEnabled { get; set; } = false;
@@ -224,6 +225,7 @@ public class SettingsDialog : Form
     private System.Windows.Forms.TextBox? jiraUrlTextBox;
     private System.Windows.Forms.TextBox? jiraUsernameTextBox;
     private System.Windows.Forms.TextBox? jiraApiTokenTextBox;
+    private System.Windows.Forms.TextBox? jiraProjectKeyTextBox;
     private System.Windows.Forms.Button? jiraValidateButton;
     private System.Windows.Forms.Label? jiraStatusLabel;
 
@@ -480,6 +482,7 @@ public class SettingsDialog : Form
         jiraUrlTextBox = new System.Windows.Forms.TextBox { PlaceholderText = "https://company.atlassian.net", Width = 480 };
         jiraUsernameTextBox = new System.Windows.Forms.TextBox { PlaceholderText = "username@company.com", Width = 480 };
         jiraApiTokenTextBox = new System.Windows.Forms.TextBox { PlaceholderText = "API Token", Width = 480, UseSystemPasswordChar = true };
+        jiraProjectKeyTextBox = new System.Windows.Forms.TextBox { PlaceholderText = "PROJ", Width = 480 };
 
         var jiraButtonPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 480 };
         jiraValidateButton = new System.Windows.Forms.Button { Text = "Validate Jira", Width = 100 };
@@ -495,6 +498,8 @@ public class SettingsDialog : Form
         jiraPanel.Controls.Add(jiraUsernameTextBox);
         jiraPanel.Controls.Add(new System.Windows.Forms.Label { Text = "API Token:", AutoSize = true });
         jiraPanel.Controls.Add(jiraApiTokenTextBox);
+        jiraPanel.Controls.Add(new System.Windows.Forms.Label { Text = "Project Key:", AutoSize = true });
+        jiraPanel.Controls.Add(jiraProjectKeyTextBox);
         jiraPanel.Controls.Add(jiraButtonPanel);
         jiraGroup.Controls.Add(jiraPanel);
 
@@ -558,6 +563,7 @@ public class SettingsDialog : Form
         jiraUrlTextBox!.Text = Settings.LiveProfile.JiraUrl;
         jiraUsernameTextBox!.Text = Settings.LiveProfile.JiraUsername;
         jiraApiTokenTextBox!.Text = Settings.LiveProfile.JiraApiToken;
+        jiraProjectKeyTextBox!.Text = Settings.LiveProfile.JiraProjectKey;
 
         pushEnabledCheck!.Checked = Settings.LiveProfile.PushEnabled;
         dryRunCheck!.Checked = Settings.LiveProfile.DryRun;
@@ -596,6 +602,7 @@ public class SettingsDialog : Form
         jiraUrlTextBox!.Enabled = jiraEnabled;
         jiraUsernameTextBox!.Enabled = jiraEnabled;
         jiraApiTokenTextBox!.Enabled = jiraEnabled;
+        jiraProjectKeyTextBox!.Enabled = jiraEnabled;
         jiraValidateButton!.Enabled = jiraEnabled;
 
         // Policy controls always enabled in live mode
@@ -686,8 +693,9 @@ public class SettingsDialog : Form
             var url = jiraUrlTextBox!.Text.Trim();
             var username = jiraUsernameTextBox!.Text.Trim();
             var token = jiraApiTokenTextBox!.Text.Trim();
+            var projectKey = jiraProjectKeyTextBox!.Text.Trim();
 
-            if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(username) || string.IsNullOrEmpty(token))
+            if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(username) || string.IsNullOrEmpty(token) || string.IsNullOrEmpty(projectKey))
             {
                 throw new InvalidOperationException("All Jira fields are required");
             }
@@ -695,7 +703,7 @@ public class SettingsDialog : Form
             // Create a temporary config to validate
             var authConfig = new AuthConfig
             {
-                Jira = new JiraAuthConfig(url, username, token)
+                Jira = new JiraAuthConfig(url, username, token, projectKey)
             };
 
             var adaptersConfig = new AdaptersConfig("jira", "fake", "powershell");
@@ -754,7 +762,8 @@ public class SettingsDialog : Form
             else if (workItemsAdapter == "jira" &&
                      (string.IsNullOrEmpty(jiraUrlTextBox!.Text.Trim()) ||
                       string.IsNullOrEmpty(jiraUsernameTextBox!.Text.Trim()) ||
-                      string.IsNullOrEmpty(jiraApiTokenTextBox!.Text.Trim())))
+                      string.IsNullOrEmpty(jiraApiTokenTextBox!.Text.Trim()) ||
+                      string.IsNullOrEmpty(jiraProjectKeyTextBox!.Text.Trim())))
             {
                 MessageBox.Show("All Jira credentials are required when using Jira adapter in live mode.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 tabControl!.SelectedTab = liveProfileTabPage;
@@ -781,6 +790,7 @@ public class SettingsDialog : Form
                 JiraUrl = jiraUrlTextBox!.Text.Trim(),
                 JiraUsername = jiraUsernameTextBox!.Text.Trim(),
                 JiraApiToken = jiraApiTokenTextBox!.Text.Trim(),
+                JiraProjectKey = jiraProjectKeyTextBox!.Text.Trim(),
                 PushEnabled = pushEnabledCheck!.Checked,
                 DryRun = dryRunCheck!.Checked,
                 RequireCredentialsValidation = requireValidationCheck!.Checked,
@@ -2180,13 +2190,15 @@ public partial class MainForm : Form
                 if (liveProfile.WorkItemsAdapter == "jira" &&
                     !string.IsNullOrEmpty(liveProfile.JiraUrl) &&
                     !string.IsNullOrEmpty(liveProfile.JiraUsername) &&
-                    !string.IsNullOrEmpty(liveProfile.JiraApiToken))
+                    !string.IsNullOrEmpty(liveProfile.JiraApiToken) &&
+                    !string.IsNullOrEmpty(liveProfile.JiraProjectKey))
                 {
                     auth["Jira"] = new
                     {
                         BaseUrl = liveProfile.JiraUrl,
                         Username = liveProfile.JiraUsername,
-                        ApiToken = liveProfile.JiraApiToken
+                        ApiToken = liveProfile.JiraApiToken,
+                        ProjectKey = liveProfile.JiraProjectKey
                     };
                 }
                 if (auth.Count > 0)

@@ -889,7 +889,7 @@ public class ConfigurationTests
             Adapters = new AdaptersConfig("github", "git", "powershell"),
             Auth = new AuthConfig
             {
-                GitHub = new GitHubAuthConfig("ghp_1234567890abcdef")
+                GitHub = new GitHubAuthConfig("ghp_1234567890abcdef", "testorg", "testrepo")
             }
         };
 
@@ -922,7 +922,7 @@ public class ConfigurationTests
             Adapters = new AdaptersConfig("jira", "git", "powershell"),
             Auth = new AuthConfig
             {
-                Jira = new JiraAuthConfig("", "user@company.com", "api-token-123")
+                Jira = new JiraAuthConfig("", "user@company.com", "api-token-123", "PROJ")
             }
         };
 
@@ -956,7 +956,7 @@ public class ConfigurationTests
             Adapters = new AdaptersConfig("github", "git", "powershell"),
             Auth = new AuthConfig
             {
-                GitHub = new GitHubAuthConfig("ghp_1234567890abcdef")
+                GitHub = new GitHubAuthConfig("ghp_1234567890abcdef", "testorg", "testrepo")
             },
             LivePolicy = new LivePolicyConfig { RequireCredentialsValidation = true }
         };

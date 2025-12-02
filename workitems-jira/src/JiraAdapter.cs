@@ -44,7 +44,7 @@ public class JiraAdapter : IAdapter
         }
 
         _baseUrl = jiraAuth.BaseUrl ?? throw new InvalidOperationException("Jira BaseUrl is not configured");
-        _projectKey = Environment.GetEnvironmentVariable("JIRA_PROJECT") ?? "PROJ"; // Default fallback
+        _projectKey = jiraAuth.ProjectKey ?? throw new InvalidOperationException("Jira ProjectKey is not configured");
 
         var username = jiraAuth.Username ?? throw new InvalidOperationException("Jira Username is not configured");
         var token = jiraAuth.ApiToken ?? throw new InvalidOperationException("Jira ApiToken is not configured");

@@ -37,8 +37,6 @@ Set these environment variables or configure in `appsettings.json`:
 JUNIORDEV__APPCONFIG__AUTH__JIRA__BASEURL=https://yourcompany.atlassian.net
 JUNIORDEV__APPCONFIG__AUTH__JIRA__USERNAME=your.email@company.com
 JUNIORDEV__APPCONFIG__AUTH__JIRA__APITOKEN=your_jira_api_token
-
-# Optional: Default project key (can be overridden per command)
 JUNIORDEV__APPCONFIG__AUTH__JIRA__PROJECTKEY=PROJ
 ```
 
@@ -51,22 +49,21 @@ Or in `appsettings.json`:
       "Jira": {
         "BaseUrl": "https://yourcompany.atlassian.net",
         "Username": "your.email@company.com",
-        "ApiToken": "your_jira_api_token"
+        "ApiToken": "your_jira_api_token",
+        "ProjectKey": "PROJ"
       }
     }
   }
 }
 ```
 
-**Note:** The project key is used as a fallback when work item IDs don't include it (e.g., "PROJ-123" vs "123").
+**Note:** The project key is required for live operations and used as a fallback when work item IDs don't include it (e.g., "PROJ-123" vs "123").
 
 ### GitHub Authentication
 
 ```bash
 # Required for live GitHub integration
 JUNIORDEV__APPCONFIG__AUTH__GITHUB__TOKEN=your_github_personal_access_token
-
-# Optional defaults (used when not specified in commands)
 JUNIORDEV__APPCONFIG__AUTH__GITHUB__DEFAULTORG=your-organization
 JUNIORDEV__APPCONFIG__AUTH__GITHUB__DEFAULTREPO=your-repo
 ```
@@ -92,6 +89,8 @@ Or in `appsettings.json`:
 - Must have `read:org` scope if working with organization repositories
 - Personal Access Token (classic) or fine-grained token with appropriate permissions
 
+**Note:** DefaultOrg and DefaultRepo are required for live operations and used as fallbacks when repository information is not specified in commands.
+
 ### Git Authentication
 
 ```bash
@@ -105,6 +104,7 @@ JUNIORDEV__APPCONFIG__AUTH__GIT__PERSONALACCESSTOKEN=your_git_token
 JUNIORDEV__APPCONFIG__AUTH__GIT__USERNAME=your.name
 JUNIORDEV__APPCONFIG__AUTH__GIT__USEREMAIL=your.email@company.com
 JUNIORDEV__APPCONFIG__AUTH__GIT__DEFAULTREMOTE=origin
+JUNIORDEV__APPCONFIG__AUTH__GIT__BRANCHPREFIX=feature/
 ```
 
 ### OpenAI Authentication
@@ -521,6 +521,7 @@ var policy = appConfig.Policy.Profiles[appConfig.Policy.DefaultProfile];
 | **Auth - Jira** | BaseUrl | `JUNIORDEV__APPCONFIG__AUTH__JIRA__BASEURL` | Jira instance URL |
 | | Username | `JUNIORDEV__APPCONFIG__AUTH__JIRA__USERNAME` | Jira username/email |
 | | ApiToken | `JUNIORDEV__APPCONFIG__AUTH__JIRA__APITOKEN` | Jira API token |
+| | ProjectKey | `JUNIORDEV__APPCONFIG__AUTH__JIRA__PROJECTKEY` | Default Jira project key |
 | **Auth - GitHub** | Token | `JUNIORDEV__APPCONFIG__AUTH__GITHUB__TOKEN` | GitHub PAT |
 | | DefaultOrg | `JUNIORDEV__APPCONFIG__AUTH__GITHUB__DEFAULTORG` | Default organization |
 | | DefaultRepo | `JUNIORDEV__APPCONFIG__AUTH__GITHUB__DEFAULTREPO` | Default repository |
@@ -529,6 +530,7 @@ var policy = appConfig.Policy.Profiles[appConfig.Policy.DefaultProfile];
 | | UserName | `JUNIORDEV__APPCONFIG__AUTH__GIT__USERNAME` | Git user name |
 | | UserEmail | `JUNIORDEV__APPCONFIG__AUTH__GIT__USEREMAIL` | Git user email |
 | | DefaultRemote | `JUNIORDEV__APPCONFIG__AUTH__GIT__DEFAULTREMOTE` | Default remote name |
+| | BranchPrefix | `JUNIORDEV__APPCONFIG__AUTH__GIT__BRANCHPREFIX` | Prefix for created branches |
 | **Auth - OpenAI** | ApiKey | `JUNIORDEV__APPCONFIG__AUTH__OPENAI__APIKEY` | OpenAI API key |
 | | OrganizationId | `JUNIORDEV__APPCONFIG__AUTH__OPENAI__ORGANIZATIONID` | OpenAI org ID |
 | **Auth - Azure OpenAI** | Endpoint | `JUNIORDEV__APPCONFIG__AUTH__AZUREOPENAI__ENDPOINT` | Azure endpoint URL |
