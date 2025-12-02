@@ -113,6 +113,8 @@ public class AgentPanel : Panel
     private readonly TranscriptStorage _transcriptStorage;
     private readonly TranscriptConfig _transcriptConfig;
     private ChatTranscript? _currentTranscript;
+    private System.Windows.Forms.Timer? _transcriptSaveTimer;
+    private int _lastSavedMessageCount = 0;
 
     public ChatStream ChatStream => _chatStream;
     public Control ChatControl => _chatControl;
@@ -157,6 +159,9 @@ public class AgentPanel : Panel
             // Create new transcript if none exists
             _currentTranscript = new ChatTranscript(_chatStream.SessionId, _chatStream.AgentName);
         }
+
+        // Initialize transcript save timer to periodically check for new AI messages
+        InitializeTranscriptSaveTimer();
 
         // Initialize rich preview controls
         _previewPanel = new Panel
@@ -531,6 +536,9 @@ public class AgentPanel : Panel
                 aiChatControl.LoadMessages(blazorMessages);
 
                 Console.WriteLine($"Loaded {blazorMessages.Count} context messages into chat control for session {_chatStream.SessionId} (configured limit: {contextMessageCount})");
+                
+                // Update our tracking of saved messages
+                _lastSavedMessageCount = blazorMessages.Count;
             }
         }
         catch (Exception ex)
@@ -600,6 +608,25 @@ public class AgentPanel : Panel
     }
 
     /// <summary>
+    /// Initializes a timer to periodically check for new AI messages in the chat control
+    /// </summary>
+    private void InitializeTranscriptSaveTimer()
+    {
+        if (!_transcriptConfig.Enabled || _chatControl is not AIChatControl)
+            return;
+
+        _transcriptSaveTimer = new System.Windows.Forms.Timer
+        {
+            Interval = 2000, // Check every 2 seconds
+            Enabled = true
+        };
+        _transcriptSaveTimer.Tick += OnTranscriptSaveTimerTick;
+        _transcriptSaveTimer.Start();
+
+        Console.WriteLine("Initialized transcript save timer for periodic AI message detection");
+    }
+
+    /// <summary>
     /// Handles when a user sends a message
     /// </summary>
     private void OnMessageSent(object? sender, AIChatControlMessageSentEventArgs e)
@@ -619,6 +646,57 @@ public class AgentPanel : Panel
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to save user message to transcript: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Timer tick handler that checks for new AI messages in the chat control
+    /// </summary>
+    private void OnTranscriptSaveTimerTick(object? sender, EventArgs e)
+    {
+        if (_currentTranscript == null || _chatControl is not AIChatControl aiChatControl)
+            return;
+
+        try
+        {
+            // Get current messages from the chat control
+            var currentMessages = aiChatControl.SaveMessages()?.ToList();
+            if (currentMessages == null || !currentMessages.Any())
+                return;
+
+            // Check if we have new messages since last save
+            if (currentMessages.Count <= _lastSavedMessageCount)
+                return;
+
+            // Process new messages (skip the ones we've already saved)
+            for (int i = _lastSavedMessageCount; i < currentMessages.Count; i++)
+            {
+                var message = currentMessages[i];
+                
+                // Convert DevExpress message to our format
+                var role = message.Role == DevExpress.AIIntegration.Blazor.Chat.ChatMessageRole.Assistant ? "assistant" : "user";
+                var content = message.Content ?? string.Empty;
+
+                // Only save assistant messages (AI responses) - user messages are already saved via MessageSent event
+                if (role == "assistant" && !string.IsNullOrWhiteSpace(content))
+                {
+                    _currentTranscript.AddMessage(role, content);
+                    Console.WriteLine($"Saved new AI response to transcript for session {_chatStream.SessionId}");
+                }
+            }
+
+            // Save the transcript
+            _transcriptStorage.SaveTranscript(_currentTranscript);
+            
+            // Update the transcript history display
+            DisplayTranscriptHistory(_currentTranscript);
+            
+            // Update our tracking
+            _lastSavedMessageCount = currentMessages.Count;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to check for new AI messages: {ex.Message}");
         }
     }
 
@@ -786,6 +864,14 @@ public class AgentPanel : Panel
     {
         if (disposing)
         {
+            // Stop and dispose transcript save timer
+            if (_transcriptSaveTimer != null)
+            {
+                _transcriptSaveTimer.Stop();
+                _transcriptSaveTimer.Dispose();
+                _transcriptSaveTimer = null;
+            }
+
             // Save transcript before disposing
             if (_currentTranscript != null)
             {

@@ -6,7 +6,8 @@
 
 - Each chat/agent generates its own event stream; combine only at the global artifacts layer.
 - ChatStream maps to SessionId; UI routes events by SessionId (and IssuerAgentId when available).
-- Global artifacts panel is shared, with filters for ChatStream/SessionId.
+- Global artifacts panel is shared, filterable by ChatStream/SessionId.
+- **Chat transcripts are now persisted** to `%APPDATA%\JuniorDev\ChatTranscripts\` as JSON files with configurable pruning by message count, size, and age.
 
 ## 📐 **Revised Layout: Integrated Per-Agent Monitoring**
 
