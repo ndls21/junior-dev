@@ -30,9 +30,9 @@ Contracts are serialized using System.Text.Json with the following options:
 - `TransitionTicket { WorkItemRef Item, string State }`
 - `Comment { WorkItemRef Item, string Body }`
 - `SetAssignee { WorkItemRef Item, string Assignee }`
-- `ClaimWorkItem { WorkItemRef Item, string Assignee, TimeSpan? ClaimTimeout }`
-- `ReleaseWorkItem { WorkItemRef Item, string Reason }`
-- `RenewClaim { WorkItemRef Item, TimeSpan? Extension }`
+- `ClaimWorkItem { WorkItemRef Item, string Assignee, TimeSpan? ClaimTimeout }` - Exclusively claim a work item with optional timeout
+- `ReleaseWorkItem { WorkItemRef Item, string Reason }` - Release a claimed work item
+- `RenewClaim { WorkItemRef Item, TimeSpan? Extension }` - Renew/extend a claim's expiration time
 - `UploadArtifact { string Name, string ContentType, byte[]/Stream Content }`
 - `RequestApproval { string Reason, string[] RequiredActions }`
 - `QueryBacklog { string? Filter }`
@@ -50,10 +50,10 @@ Contracts are serialized using System.Text.Json with the following options:
 - `PlanUpdated { SessionId, Plan }`
 - `BacklogQueried { WorkItemSummary[] Items }`
 - `WorkItemQueried { WorkItemDetails Details }`
-- `WorkItemClaimed { WorkItemRef Item, string Assignee, DateTimeOffset ExpiresAt }`
-- `WorkItemClaimReleased { WorkItemRef Item, string Reason }`
-- `ClaimRenewed { WorkItemRef Item, DateTimeOffset NewExpiresAt }`
-- `ClaimExpired { WorkItemRef Item, string PreviousAssignee }`
+- `WorkItemClaimed { WorkItemRef Item, string Assignee, DateTimeOffset ExpiresAt }` - Work item successfully claimed
+- `WorkItemClaimReleased { WorkItemRef Item, string Reason }` - Work item claim released
+- `ClaimRenewed { WorkItemRef Item, DateTimeOffset NewExpiresAt }` - Claim expiration extended
+- `ClaimExpired { WorkItemRef Item, string PreviousAssignee }` - Claim automatically expired due to timeout
 
 ## Enums
 - `CommandOutcome { Success, Failure }`
@@ -80,7 +80,7 @@ Contracts are serialized using System.Text.Json with the following options:
 ## Configuration
 - `AdaptersConfig { string WorkItemsAdapter, string VcsAdapter, string TerminalAdapter, string? BuildAdapter }` - Adapter selection (build adapter is opt-in)
 - `PolicyConfig { Dictionary<string,PolicyProfile> Profiles, string DefaultProfile, RateLimits GlobalLimits }` - Policy profiles and global limits
-- `WorkItemConfig { TimeSpan DefaultClaimTimeout, int MaxConcurrentClaimsPerAgent, int MaxConcurrentClaimsPerSession, TimeSpan ClaimRenewalWindow, bool AutoReleaseOnInactivity, TimeSpan CleanupInterval }` - Work item claim management settings
+- `WorkItemConfig { TimeSpan DefaultClaimTimeout, int MaxConcurrentClaimsPerAgent, int MaxConcurrentClaimsPerSession, TimeSpan ClaimRenewalWindow, bool AutoReleaseOnInactivity, TimeSpan CleanupInterval }` - Work item claim management settings (default: 2h timeout, 3 per agent, 5 per session, 30min renewal window, 5min cleanup interval)
 
 ## Serialization & Compatibility
 - Contracts are plain DTOs; serialization stable (JSON camelCase).
