@@ -9,6 +9,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>ui-shell.tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\contracts\Contracts.csproj" />
     <ProjectReference Include="..\orchestrator\Orchestrator.csproj" />
     <ProjectReference Include="..\agents\Agents.csproj" />

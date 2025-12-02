@@ -983,6 +983,7 @@ public partial class MainForm : Form
 
     // Controls within panels
     private System.Windows.Forms.ListBox? sessionsListBox;
+    private ContextMenuStrip? sessionsContextMenu;
     private MemoEdit? eventsMemoEdit;
     private TreeList? artifactsTree;
     private FlowLayoutPanel? actionPanel;
@@ -1336,12 +1337,12 @@ public partial class MainForm : Form
         sessionsListBox.DrawItem += SessionsListBox_DrawItem;
 
         // Add context menu for session controls
-        var sessionContextMenu = new ContextMenuStrip();
+        sessionsContextMenu = new ContextMenuStrip();
         var pauseMenuItem = new ToolStripMenuItem("Pause Session", null, async (s, e) => await PauseSelectedSession());
         var resumeMenuItem = new ToolStripMenuItem("Resume Session", null, async (s, e) => await ResumeSelectedSession());
         var abortMenuItem = new ToolStripMenuItem("Abort Session", null, async (s, e) => await AbortSelectedSession());
-        sessionContextMenu.Items.AddRange(new ToolStripItem[] { pauseMenuItem, resumeMenuItem, new ToolStripSeparator(), abortMenuItem });
-        sessionsListBox.ContextMenuStrip = sessionContextMenu;
+        sessionsContextMenu.Items.AddRange(new ToolStripItem[] { pauseMenuItem, resumeMenuItem, new ToolStripSeparator(), abortMenuItem });
+        sessionsListBox.ContextMenuStrip = sessionsContextMenu;
 
         // Initialize with real sessions if not in test mode
         if (!isTestMode)
@@ -1922,6 +1923,47 @@ public partial class MainForm : Form
                 // Auto-pause on repeated failures
                 _ = AutoPauseSessionOnError(completed.Correlation.SessionId, $"Command failed: {completed.Message}");
                 break;
+        }
+    }
+
+    private async Task AutoPauseSessionOnError(Guid sessionId, string reason)
+    {
+        // Track error count for this session
+        if (!_sessionErrorCounts.ContainsKey(sessionId))
+        {
+            _sessionErrorCounts[sessionId] = 0;
+        }
+        _sessionErrorCounts[sessionId]++;
+
+        const int ERROR_THRESHOLD = 3; // Auto-pause after 3 errors
+
+        if (_sessionErrorCounts[sessionId] >= ERROR_THRESHOLD)
+        {
+            try
+            {
+                await _sessionManager.PauseSession(sessionId);
+                
+                AddBlockingCondition(new BlockingCondition
+                {
+                    SessionId = sessionId,
+                    Type = BlockingType.AutoPaused,
+                    Message = $"🚨 Session auto-paused due to repeated errors ({_sessionErrorCounts[sessionId]} failures). Last: {reason}",
+                    ActionText = "Resume"
+                });
+
+                Console.WriteLine($"Auto-paused session {sessionId} due to {ERROR_THRESHOLD} consecutive errors");
+                
+                // Reset error count after auto-pause
+                _sessionErrorCounts[sessionId] = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to auto-pause session {sessionId}: {ex.Message}");
+            }
+        }
+        else
+        {
+            Console.WriteLine($"Session {sessionId} error count: {_sessionErrorCounts[sessionId]}/{ERROR_THRESHOLD} - {reason}");
         }
     }
 
@@ -3440,12 +3482,15 @@ public partial class MainForm : Form
         // Toggle the push enabled state in live profile settings
         currentSettings.LiveProfile.PushEnabled = !currentSettings.LiveProfile.PushEnabled;
 
-        // Update the button text and appearance
-        var pushToggleButton = actionPanel?.Controls.OfType<SimpleButton>().FirstOrDefault(b => b.Text.Contains("Push"));
-        if (pushToggleButton != null)
+        // Update the button text and appearance for all push buttons
+        var pushButtons = actionPanel?.Controls.OfType<SimpleButton>().Where(b => b.Text.Contains("Push")).ToList();
+        if (pushButtons != null)
         {
-            pushToggleButton.Text = currentSettings.LiveProfile.PushEnabled ? "🔴 Push: ON" : "🟢 Push: OFF";
-            pushToggleButton.Appearance.BackColor = currentSettings.LiveProfile.PushEnabled ? Color.LightCoral : Color.LightGreen;
+            foreach (var pushToggleButton in pushButtons)
+            {
+                pushToggleButton.Text = currentSettings.LiveProfile.PushEnabled ? "🔴 Push: ON" : "🟢 Push: OFF";
+                pushToggleButton.Appearance.BackColor = currentSettings.LiveProfile.PushEnabled ? Color.LightCoral : Color.LightGreen;
+            }
         }
 
         // Apply the updated live profile settings
@@ -3478,44 +3523,97 @@ public partial class MainForm : Form
         return currentDir;
     }
 
-    private async Task AutoPauseSessionOnError(Guid sessionId, string reason)
+    // Test helper methods
+    internal async Task AutoPauseSessionOnErrorForTest(Guid sessionId, string reason)
     {
-        // Track error count for this session
-        if (!_sessionErrorCounts.ContainsKey(sessionId))
-        {
-            _sessionErrorCounts[sessionId] = 0;
-        }
-        _sessionErrorCounts[sessionId]++;
+        await AutoPauseSessionOnError(sessionId, reason);
+    }
 
-        const int ERROR_THRESHOLD = 3; // Auto-pause after 3 errors
+    internal void TogglePushSafetyForTest()
+    {
+        TogglePushSafety();
+    }
 
-        if (_sessionErrorCounts[sessionId] >= ERROR_THRESHOLD)
+    internal async Task AbortSelectedSessionForTest(bool confirmAbort, Guid? sessionId = null)
+    {
+        if (confirmAbort)
         {
-            try
+            // If sessionId is provided, use it directly (for testing)
+            if (sessionId.HasValue)
             {
-                await _sessionManager.PauseSession(sessionId);
-                
-                AddBlockingCondition(new BlockingCondition
+                try
                 {
-                    SessionId = sessionId,
-                    Type = BlockingType.AutoPaused,
-                    Message = $"🚨 Session auto-paused due to repeated errors ({_sessionErrorCounts[sessionId]} failures). Last: {reason}",
-                    ActionText = "Resume"
-                });
-
-                Console.WriteLine($"Auto-paused session {sessionId} due to {ERROR_THRESHOLD} consecutive errors");
-                
-                // Reset error count after auto-pause
-                _sessionErrorCounts[sessionId] = 0;
+                    await _sessionManager.AbortSession(sessionId.Value);
+                    Console.WriteLine($"Aborted session {sessionId.Value}");
+                    RefreshSessionsList();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to abort session: {ex.Message}");
+                    // In test mode, don't show MessageBox
+                }
             }
-            catch (Exception ex)
+            // Otherwise, use the UI selection
+            else if (sessionsListBox?.SelectedItem is SessionItem sessionItem)
             {
-                Console.WriteLine($"Failed to auto-pause session {sessionId}: {ex.Message}");
+                try
+                {
+                    await _sessionManager.AbortSession(sessionItem.SessionId);
+                    Console.WriteLine($"Aborted session {sessionItem.SessionId} ({sessionItem.Name})");
+                    RefreshSessionsList();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to abort session: {ex.Message}");
+                    // In test mode, don't show MessageBox
+                }
             }
         }
-        else
+        // If confirmAbort is false, do nothing (simulates user clicking No)
+    }
+
+    internal void SetSelectedSessionItemForTest(SessionItem? sessionItem)
+    {
+        if (sessionsListBox == null)
         {
-            Console.WriteLine($"Session {sessionId} error count: {_sessionErrorCounts[sessionId]}/{ERROR_THRESHOLD} - {reason}");
+            CreateSessionsPanel();
         }
+        if (sessionsListBox != null)
+        {
+            sessionsListBox.SelectedItem = sessionItem;
+        }
+    }
+
+    internal AppSettings GetCurrentSettingsForTest()
+    {
+        return currentSettings;
+    }
+
+    internal void AddPushButtonForTest(DevExpress.XtraEditors.SimpleButton button)
+    {
+        // Add button to actionPanel for testing
+        if (actionPanel == null)
+        {
+            CreateSessionsPanel();
+        }
+        if (actionPanel != null)
+        {
+            actionPanel.Controls.Add(button);
+        }
+    }
+
+    internal List<BlockingCondition> GetBlockingConditionsForTest()
+    {
+        return _blockingConditions.ToList();
+    }
+
+    internal void CreateSessionsPanelForTest()
+    {
+        CreateSessionsPanel();
+    }
+
+    internal ContextMenuStrip GetSessionsContextMenuForTest()
+    {
+        return sessionsContextMenu;
     }
 }

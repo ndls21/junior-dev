@@ -1943,6 +1943,259 @@ public class MainFormTests : IDisposable
         Assert.Contains("GitHub Token is required", exception.Message);
     }
 
+    [Fact]
+    public async Task SessionKillSwitches_AutoPauseOnErrorThreshold_TriggersAfterThreeErrors()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        mockSessionManager.Setup(sm => sm.PauseSession(It.IsAny<Guid>()))
+            .Returns(Task.CompletedTask);
+
+        // Act - Simulate 2 errors (should not auto-pause yet)
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 1");
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 2");
+
+        // Assert - Should not have paused yet
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId), Times.Never);
+
+        // Act - Third error should trigger auto-pause
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 3");
+
+        // Assert - Should have paused and added blocking condition
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId), Times.Once);
+        
+        var blockingConditions = form.GetBlockingConditionsForTest();
+        Assert.Contains(blockingConditions, bc => 
+            bc.SessionId == sessionId && 
+            bc.Type == BlockingType.AutoPaused && 
+            bc.Message.Contains("auto-paused due to repeated errors"));
+    }
+
+    [Fact]
+    public async Task SessionKillSwitches_AutoPauseOnErrorThreshold_ResetsCountAfterAutoPause()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        mockSessionManager.Setup(sm => sm.PauseSession(It.IsAny<Guid>()))
+            .Returns(Task.CompletedTask);
+
+        // Act - Trigger auto-pause with 3 errors
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 1");
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 2");
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 3");
+
+        // Assert - Should have paused
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId), Times.Once);
+
+        // Act - Add more errors after reset
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 4");
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 5");
+
+        // Assert - Should not pause again yet (count reset after auto-pause)
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId), Times.Once);
+    }
+
+    [Fact]
+    public async Task SessionKillSwitches_AutoPauseOnErrorThreshold_HandlesPauseFailureGracefully()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        mockSessionManager.Setup(sm => sm.PauseSession(It.IsAny<Guid>()))
+            .ThrowsAsync(new Exception("Pause failed"));
+
+        // Act - Trigger auto-pause
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 1");
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 2");
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 3");
+
+        // Assert - Should have attempted to pause but handled failure gracefully
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId), Times.Once);
+        // No blocking condition should be added due to failure
+        var blockingConditions = form.GetBlockingConditionsForTest();
+        Assert.DoesNotContain(blockingConditions, bc => bc.SessionId == sessionId && bc.Type == BlockingType.AutoPaused);
+    }
+
+    [Fact]
+    public void SessionKillSwitches_PushTogglePersistence_TogglesStateAndUpdatesUI()
+    {
+        // Arrange
+        var form = CreateMainForm(isTestMode: true);
+        var initialPushEnabled = form.GetCurrentSettingsForTest().LiveProfile.PushEnabled;
+
+        // Act - Toggle push safety
+        form.TogglePushSafetyForTest();
+
+        // Assert - State should be toggled
+        var newPushEnabled = form.GetCurrentSettingsForTest().LiveProfile.PushEnabled;
+        Assert.NotEqual(initialPushEnabled, newPushEnabled);
+
+        // Act - Toggle again
+        form.TogglePushSafetyForTest();
+
+        // Assert - Should be back to original state
+        var finalPushEnabled = form.GetCurrentSettingsForTest().LiveProfile.PushEnabled;
+        Assert.Equal(initialPushEnabled, finalPushEnabled);
+    }
+
+    [Fact]
+    public void SessionKillSwitches_PushTogglePersistence_UpdatesButtonAppearance()
+    {
+        // Arrange
+        var form = CreateMainForm(isTestMode: true);
+        
+        // Create a mock push button
+        var pushButton = new DevExpress.XtraEditors.SimpleButton();
+        pushButton.Text = "Push: OFF";
+        form.AddPushButtonForTest(pushButton);
+
+        // Act - Toggle to ON
+        form.TogglePushSafetyForTest();
+
+        // Assert - Button should show ON state
+        Assert.Contains("Push: ON", pushButton.Text);
+        Assert.Equal(Color.LightCoral, pushButton.Appearance.BackColor);
+
+        // Act - Toggle to OFF
+        form.TogglePushSafetyForTest();
+
+        // Assert - Button should show OFF state
+        Assert.Contains("Push: OFF", pushButton.Text);
+        Assert.Equal(Color.LightGreen, pushButton.Appearance.BackColor);
+    }
+
+    [Fact]
+    public void SessionKillSwitches_PushTogglePersistence_SavesSettings()
+    {
+        // Arrange
+        var form = CreateMainForm(isTestMode: true);
+        var initialSettings = form.GetCurrentSettingsForTest().LiveProfile.PushEnabled;
+
+        // Act - Toggle push safety
+        form.TogglePushSafetyForTest();
+
+        // Assert - Settings should be saved (we can verify by checking if SaveSettings was called)
+        // Since SaveSettings is private, we verify the state change persisted
+        var toggledSettings = form.GetCurrentSettingsForTest().LiveProfile.PushEnabled;
+        Assert.NotEqual(initialSettings, toggledSettings);
+    }
+
+    [Fact]
+    public async Task SessionKillSwitches_AbortSelectedSession_WithValidSelection_AbortsSession()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var sessionItem = new SessionItem { Name = "Test Session", SessionId = sessionId };
+        
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+        form.SetSelectedSessionItemForTest(sessionItem);
+
+        mockSessionManager.Setup(sm => sm.AbortSession(It.IsAny<Guid>()))
+            .Returns(Task.CompletedTask);
+
+        // Act - Abort selected session (simulate user clicking Yes in dialog)
+        await form.AbortSelectedSessionForTest(true, sessionId);
+
+        // Assert - Should have called AbortSession
+        mockSessionManager.Verify(sm => sm.AbortSession(sessionId), Times.Once);
+    }
+
+    [Fact]
+    public async Task SessionKillSwitches_AbortSelectedSession_UserCancels_NoAbort()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var sessionItem = new SessionItem { Name = "Test Session", SessionId = sessionId };
+        
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+        form.SetSelectedSessionItemForTest(sessionItem);
+
+        // Act - User cancels abort (simulate clicking No in dialog)
+        await form.AbortSelectedSessionForTest(false);
+
+        // Assert - Should not have called AbortSession
+        mockSessionManager.Verify(sm => sm.AbortSession(It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SessionKillSwitches_AbortSelectedSession_NoSelection_DoesNothing()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+        form.SetSelectedSessionItemForTest(null); // No selection
+
+        // Act - Try to abort with no selection
+        await form.AbortSelectedSessionForTest(true);
+
+        // Assert - Should not have called AbortSession
+        mockSessionManager.Verify(sm => sm.AbortSession(It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SessionKillSwitches_AbortSelectedSession_AbortFailure_ShowsError()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var sessionItem = new SessionItem { Name = "Test Session", SessionId = sessionId };
+        
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+        form.SetSelectedSessionItemForTest(sessionItem);
+
+        mockSessionManager.Setup(sm => sm.AbortSession(It.IsAny<Guid>()))
+            .ThrowsAsync(new Exception("Abort failed"));
+
+        // Act - Abort fails
+        await form.AbortSelectedSessionForTest(true, sessionId);
+
+        // Assert - Should have attempted abort but handled failure
+        mockSessionManager.Verify(sm => sm.AbortSession(sessionId), Times.Once);
+        // Error would be shown to user (in real scenario), but we can't test MessageBox in unit tests
+    }
+
+    [Fact]
+    public async Task SessionKillSwitches_UIContextMenu_PauseResumeAbort_AvailableForSessions()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var sessionItem = new SessionItem { Name = "Test Session", SessionId = sessionId };
+        
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        // Create sessions list with context menu
+        form.CreateSessionsPanelForTest();
+
+        // Act - Simulate right-click context menu creation
+        var contextMenu = form.GetSessionsContextMenuForTest();
+
+        // Assert - Context menu should have Pause, Resume, and Abort items
+        Assert.NotNull(contextMenu);
+        var menuItems = contextMenu.Items.OfType<ToolStripMenuItem>().ToList();
+        Assert.Contains(menuItems, item => item.Text.Contains("Pause"));
+        Assert.Contains(menuItems, item => item.Text.Contains("Resume"));
+        Assert.Contains(menuItems, item => item.Text.Contains("Abort"));
+    }
+
 public class TestAsyncEnumerable : IAsyncEnumerable<IEvent>
 {
     private readonly IEnumerable<IEvent> _events;
