@@ -741,7 +741,7 @@ Provide a clear assessment of the log contents.";
         [Description("Analyzes repository structure for organization, missing files, and architectural issues.")]
         public async Task<IReadOnlyList<AnalysisFinding>> AnalyzeStructureAsync(
             [Description("Repository structure information (file tree, directories, etc.)")] string repoStructure,
-            [Description("Configuration for the analysis")] RepositoryAnalysisConfig config)
+            [Description("Area-specific limits for this analysis")] AreaLimits limits)
         {
             // Use LLM to analyze repository structure
             var prompt = $@"Analyze this repository structure and identify specific issues:
@@ -772,12 +772,12 @@ Return findings as a structured list.";
         [Description("Analyzes code quality across the repository including patterns, consistency, and best practices.")]
         public async Task<IReadOnlyList<AnalysisFinding>> AnalyzeQualityAsync(
             [Description("Code files and their contents from the repository")] IReadOnlyList<FileMetadata> files,
-            [Description("Configuration for the analysis")] RepositoryAnalysisConfig config)
+            [Description("Area-specific limits for this analysis")] AreaLimits limits)
         {
-            // Filter and limit files based on config
+            // Filter and limit files based on area limits
             var filesToAnalyze = files
-                .Where(f => f.Content != null && f.Size <= config.MaxFileBytes)
-                .Take(config.MaxFiles)
+                .Where(f => f.Content != null && f.Size <= limits.MaxFileBytes)
+                .Take(limits.MaxFiles)
                 .ToList();
 
             if (!filesToAnalyze.Any())
@@ -816,16 +816,16 @@ Return findings as a structured list.";
         [Description("Scans for security vulnerabilities and best practices in the codebase.")]
         public async Task<IReadOnlyList<AnalysisFinding>> SecurityScanAsync(
             [Description("Code files and configuration files to scan for security issues")] IReadOnlyList<FileMetadata> files,
-            [Description("Configuration for the analysis")] RepositoryAnalysisConfig config)
+            [Description("Area-specific limits for this analysis")] AreaLimits limits)
         {
-            // Filter for security-sensitive files
+            // Filter for security-sensitive files with area limits
             var securityFiles = files
                 .Where(f => f.Content != null &&
                            (f.Path.Contains("config") || f.Path.Contains("settings") ||
                             f.Path.Contains("auth") || f.Path.Contains("security") ||
                             f.Path.EndsWith(".cs") || f.Path.EndsWith(".js") || f.Path.EndsWith(".py")))
-                .Where(f => f.Size <= config.MaxFileBytes)
-                .Take(config.MaxFiles)
+                .Where(f => f.Size <= limits.MaxFileBytes)
+                .Take(limits.MaxFiles)
                 .ToList();
 
             if (!securityFiles.Any())
@@ -865,12 +865,12 @@ Return findings as a structured list.";
         [Description("Analyzes performance characteristics and potential bottlenecks in the code.")]
         public async Task<IReadOnlyList<AnalysisFinding>> PerformanceScanAsync(
             [Description("Code files to analyze for performance issues")] IReadOnlyList<FileMetadata> files,
-            [Description("Configuration for the analysis")] RepositoryAnalysisConfig config)
+            [Description("Area-specific limits for this analysis")] AreaLimits limits)
         {
-            // Filter for performance-critical files
+            // Filter for performance-critical files with area limits
             var perfFiles = files
-                .Where(f => f.Content != null && f.Size <= config.MaxFileBytes)
-                .Take(config.MaxFiles)
+                .Where(f => f.Content != null && f.Size <= limits.MaxFileBytes)
+                .Take(limits.MaxFiles)
                 .ToList();
 
             if (!perfFiles.Any())
@@ -909,16 +909,16 @@ Return findings as a structured list.";
         [Description("Audits dependencies for security vulnerabilities, outdated packages, and licensing issues.")]
         public async Task<IReadOnlyList<AnalysisFinding>> DependencyAuditAsync(
             [Description("Dependency information (package files, lock files, etc.)")] IReadOnlyList<FileMetadata> files,
-            [Description("Configuration for the analysis")] RepositoryAnalysisConfig config)
+            [Description("Area-specific limits for this analysis")] AreaLimits limits)
         {
-            // Filter for dependency files
+            // Filter for dependency files with corrected patterns and area limits
             var depFiles = files
                 .Where(f => f.Content != null &&
-                           (f.Path.Contains("package.json") || f.Path.Contains("requirements.txt") ||
-                            f.Path.Contains("packages.config") || f.Path.Contains("Directory.Packages.props") ||
-                            f.Path.Contains("*.csproj") || f.Path.Contains("*.fsproj")))
-                .Where(f => f.Size <= config.MaxFileBytes)
-                .Take(config.MaxFiles)
+                           (f.Path.EndsWith("package.json") || f.Path.EndsWith("requirements.txt") ||
+                            f.Path.EndsWith("packages.config") || f.Path.EndsWith("Directory.Packages.props") ||
+                            f.Path.EndsWith(".csproj") || f.Path.EndsWith(".fsproj")))
+                .Where(f => f.Size <= limits.MaxFileBytes)
+                .Take(limits.MaxFiles)
                 .ToList();
 
             if (!depFiles.Any())
@@ -1034,15 +1034,20 @@ Return findings as a structured list.";
         {
             Logger.LogInformation("Performing repository-wide analysis");
 
-            // Check cache first
-            var cacheKey = "repo_analysis";
+            // Get repository analysis config
+            var config = _reviewerConfig.Analysis ?? new RepositoryAnalysisConfig();
+
+            // Generate cache key that includes revision, enabled areas, and config hash
+            var cacheKey = GenerateAnalysisCacheKey(config);
+
             if (_analysisCache.TryGetValue(cacheKey, out var cachedResult))
             {
                 // Check if cache is still valid
                 var cacheAge = DateTimeOffset.Now - cachedResult.Timestamp;
                 if (cacheAge < _reviewerConfig.AnalysisCacheTimeout)
                 {
-                    Logger.LogInformation("Using cached repository analysis (age: {Age})", cacheAge);
+                    Logger.LogInformation("Using cached repository analysis (age: {Age}, key: {CacheKey})",
+                        cacheAge, cacheKey);
                     return ParseCachedAnalysisResult(cachedResult.Result);
                 }
                 else
@@ -1069,7 +1074,7 @@ Return findings as a structured list.";
             var serializedResult = SerializeAnalysisResult(result);
             _analysisCache[cacheKey] = (DateTimeOffset.Now, serializedResult);
 
-            Logger.LogInformation("Repository analysis completed and cached");
+            Logger.LogInformation("Repository analysis completed and cached (key: {CacheKey})", cacheKey);
             return result;
         }
         catch (Exception ex)
@@ -1077,6 +1082,56 @@ Return findings as a structured list.";
             Logger.LogError(ex, "Failed to perform repository analysis");
             return null;
         }
+    }
+
+    private string GenerateAnalysisCacheKey(RepositoryAnalysisConfig config)
+    {
+        // Get current commit/revision ID (simplified - could use git rev-parse HEAD)
+        var revisionId = GetCurrentRevisionId();
+
+        // Sort enabled areas for consistent key
+        var enabledAreas = string.Join(",", (config.EnabledAreas ?? new List<string>()).OrderBy(a => a));
+
+        // Create a simple config hash based on key limits
+        var configHash = $"{config.MaxFiles}_{config.MaxFileBytes}_{config.MaxTokens}_{config.MaxCost}";
+
+        return $"repo_analysis_{revisionId}_{enabledAreas}_{configHash}";
+    }
+
+    private string GetCurrentRevisionId()
+    {
+        try
+        {
+            // Try to get git commit hash
+            var workspaceRoot = Context!.Config.Workspace.Path;
+            var gitDir = Path.Combine(workspaceRoot, ".git");
+
+            if (Directory.Exists(gitDir))
+            {
+                var headFile = Path.Combine(gitDir, "HEAD");
+                if (File.Exists(headFile))
+                {
+                    var headContent = File.ReadAllText(headFile).Trim();
+                    if (headContent.StartsWith("ref: "))
+                    {
+                        var refPath = headContent.Substring(5);
+                        var refFile = Path.Combine(gitDir, refPath);
+                        if (File.Exists(refFile))
+                        {
+                            var commitHash = File.ReadAllText(refFile).Trim();
+                            return commitHash.Length >= 8 ? commitHash.Substring(0, 8) : commitHash;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to get current revision ID, using timestamp-based fallback");
+        }
+
+        // Fallback: use current date/time for cache invalidation
+        return DateTimeOffset.Now.ToString("yyyyMMddHHmm");
     }
 
     /// <summary>
@@ -1087,6 +1142,7 @@ Return findings as a structured list.";
     public async Task<IReadOnlyList<AnalysisFinding>> RunRepositoryAnalysisAsync()
     {
         var allFindings = new List<AnalysisFinding>();
+        var startTime = DateTimeOffset.Now;
 
         try
         {
@@ -1095,102 +1151,353 @@ Return findings as a structured list.";
             // Get repository analysis config
             var config = _reviewerConfig.Analysis ?? new RepositoryAnalysisConfig();
 
-            // Use VCS helper to gather files
+            // Check if analysis is enabled
+            if (!config.Enabled)
+            {
+                Logger.LogInformation("Repository analysis is disabled in configuration");
+                return allFindings;
+            }
+
+            // Use VCS helper to gather files with smart selection strategy
             var workspaceRoot = Context!.Config.Workspace.Path;
             var vcsHelper = new FileSystemVcsHelper(workspaceRoot);
 
-            // Get all files in repository
-            var allFiles = await vcsHelper.ListFilesAsync(
-                new[] { "." },
-                maxFiles: config.MaxFiles);
+            // Smart file selection: prioritize touched files from context, fall back to all files
+            var selectedFiles = await SelectFilesForAnalysisAsync(vcsHelper, config);
 
-            // Get file contents for analysis
-            var filePaths = allFiles.Select(f => f.Path).ToList();
+            // Get file contents for analysis with global limits
+            var filePaths = selectedFiles.Select(f => f.Path).ToList();
             var filesWithContent = await vcsHelper.GetFileContentsAsync(filePaths, config.MaxFileBytes);
 
-            Logger.LogInformation("Gathered {FileCount} files for analysis", filesWithContent.Count);
+            Logger.LogInformation("Selected {FileCount} files ({TotalBytes} bytes) for analysis from {SelectionStrategy}",
+                filesWithContent.Count, filesWithContent.Sum(f => f.Size),
+                selectedFiles.Count == filesWithContent.Count ? "context/touched files" : "full repository");
 
-            // Run enabled analysis functions
+            // Run enabled analysis functions with area-specific limits
             var enabledAreas = config.EnabledAreas ?? new List<string>();
+            var partialAnalysis = false;
 
-            if (enabledAreas.Contains("structure"))
+            foreach (var area in enabledAreas)
             {
-                Logger.LogInformation("Running structure analysis");
-                var structureFindings = await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
-                    "review_analysis", "analyze_structure",
-                    new KernelArguments
+                // Check duration limit
+                var elapsed = DateTimeOffset.Now - startTime;
+                if (elapsed > config.MaxDuration)
+                {
+                    Logger.LogWarning("Analysis duration limit ({Limit}) exceeded after {Elapsed}, stopping early",
+                        config.MaxDuration, elapsed);
+                    partialAnalysis = true;
+                    allFindings.Add(new AnalysisFinding(
+                        "",
+                        "system",
+                        "warning",
+                        $"Analysis stopped early due to duration limit ({config.MaxDuration.TotalMinutes} minutes)",
+                        $"Completed areas: {string.Join(", ", enabledAreas.TakeWhile(a => a != area))}",
+                        "Consider reducing enabled areas or increasing MaxDuration limit"));
+                    break;
+                }
+
+                // Check total findings limit (prevent runaway analysis)
+                if (allFindings.Count > 1000)
+                {
+                    Logger.LogWarning("Too many findings ({Count}), stopping analysis to prevent overload", allFindings.Count);
+                    partialAnalysis = true;
+                    break;
+                }
+
+                var areaLimits = config.GetAreaLimits(area);
+
+                try
+                {
+                    Logger.LogInformation("Running {Area} analysis (limits: {MaxFiles} files, {MaxTokens} tokens, ${MaxCost})",
+                        area, areaLimits.MaxFiles, areaLimits.MaxTokens, areaLimits.MaxCost);
+
+                    var areaFindings = await RunAreaAnalysisAsync(area, selectedFiles, filesWithContent, areaLimits);
+
+                    if (areaFindings != null)
                     {
-                        ["repoStructure"] = GenerateRepositoryStructureText(allFiles),
-                        ["config"] = config
-                    });
-                if (structureFindings != null)
-                    allFindings.AddRange(structureFindings);
+                        allFindings.AddRange(areaFindings);
+                        Logger.LogInformation("{Area} analysis completed with {FindingCount} findings",
+                            area, areaFindings.Count);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Failed to run {Area} analysis", area);
+                    allFindings.Add(new AnalysisFinding(
+                        "",
+                        area,
+                        "error",
+                        $"{area} analysis failed: {ex.Message}",
+                        ex.StackTrace ?? "",
+                        "Check logs for detailed error information"));
+                }
             }
 
-            if (enabledAreas.Contains("quality"))
+            if (partialAnalysis)
             {
-                Logger.LogInformation("Running code quality analysis");
-                var qualityFindings = await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
-                    "review_analysis", "analyze_quality",
-                    new KernelArguments
-                    {
-                        ["files"] = filesWithContent,
-                        ["config"] = config
-                    });
-                if (qualityFindings != null)
-                    allFindings.AddRange(qualityFindings);
+                allFindings.Insert(0, new AnalysisFinding(
+                    "",
+                    "system",
+                    "info",
+                    "Repository analysis completed partially due to limits",
+                    $"Analysis was limited by configured caps. Total findings: {allFindings.Count}",
+                    "Consider adjusting limits in RepositoryAnalysisConfig for more complete analysis"));
             }
 
-            if (enabledAreas.Contains("security"))
-            {
-                Logger.LogInformation("Running security analysis");
-                var securityFindings = await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
-                    "review_analysis", "security_scan",
-                    new KernelArguments
-                    {
-                        ["files"] = filesWithContent,
-                        ["config"] = config
-                    });
-                if (securityFindings != null)
-                    allFindings.AddRange(securityFindings);
-            }
-
-            if (enabledAreas.Contains("performance"))
-            {
-                Logger.LogInformation("Running performance analysis");
-                var perfFindings = await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
-                    "review_analysis", "perf_scan",
-                    new KernelArguments
-                    {
-                        ["files"] = filesWithContent,
-                        ["config"] = config
-                    });
-                if (perfFindings != null)
-                    allFindings.AddRange(perfFindings);
-            }
-
-            if (enabledAreas.Contains("dependencies"))
-            {
-                Logger.LogInformation("Running dependency analysis");
-                var depFindings = await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
-                    "review_analysis", "dep_audit",
-                    new KernelArguments
-                    {
-                        ["files"] = filesWithContent,
-                        ["config"] = config
-                    });
-                if (depFindings != null)
-                    allFindings.AddRange(depFindings);
-            }
-
-            Logger.LogInformation("Repository analysis completed with {FindingCount} findings", allFindings.Count);
+            Logger.LogInformation("Repository analysis completed with {FindingCount} findings in {Duration}",
+                allFindings.Count, DateTimeOffset.Now - startTime);
             return allFindings;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to run repository analysis");
+            allFindings.Add(new AnalysisFinding(
+                "",
+                "system",
+                "critical",
+                "Repository analysis failed completely",
+                ex.Message,
+                "Check configuration and ensure VCS helper is properly configured"));
             return allFindings;
         }
+    }
+
+    private async Task<IReadOnlyList<FileMetadata>> SelectFilesForAnalysisAsync(
+        FileSystemVcsHelper vcsHelper, RepositoryAnalysisConfig config)
+    {
+        // Strategy 1: Use touched files from current context (diff, PR, etc.)
+        var touchedFiles = await GetTouchedFilesFromContextAsync();
+        if (touchedFiles.Any())
+        {
+            Logger.LogInformation("Using {Count} touched files from context for focused analysis", touchedFiles.Count);
+
+            // Get metadata for touched files
+            var touchedMetadata = await vcsHelper.ListFilesAsync(
+                touchedFiles,
+                maxFiles: config.MaxFiles,
+                maxTotalBytes: config.MaxTotalBytes);
+
+            // If we have enough touched files, use them; otherwise supplement with broader selection
+            if (touchedMetadata.Count >= Math.Min(10, config.MaxFiles / 2))
+            {
+                return touchedMetadata;
+            }
+
+            Logger.LogInformation("Supplementing touched files with broader repository selection");
+        }
+
+        // Strategy 2: Fall back to full repository analysis with smart filtering
+        Logger.LogInformation("Using full repository analysis with smart filtering");
+
+        // Get all files but apply intelligent filtering
+        var allFiles = await vcsHelper.ListFilesAsync(
+            new[] { "." },
+            maxFiles: config.MaxFiles,
+            maxTotalBytes: config.MaxTotalBytes);
+
+        // Apply smart filtering to prioritize important files
+        var prioritizedFiles = PrioritizeFilesForAnalysis(allFiles, config);
+
+        return prioritizedFiles;
+    }
+
+    private async Task<IReadOnlyList<string>> GetTouchedFilesFromContextAsync()
+    {
+        var touchedFiles = new List<string>();
+
+        try
+        {
+            // For now, we can't easily access recent artifacts from context
+            // This is a simplified implementation that could be enhanced later
+            // to track artifacts within the agent or receive them through events
+
+            // Check work item for file references in title/description if available
+            if (Context?.Config?.WorkItem != null)
+            {
+                // We don't have direct access to work item details here
+                // This could be enhanced by storing recent artifacts in the agent
+                // or by querying work item details through the orchestrator
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to extract touched files from context, falling back to full analysis");
+        }
+
+        return touchedFiles;
+    }
+
+    private IReadOnlyList<FileMetadata> PrioritizeFilesForAnalysis(
+        IReadOnlyList<FileMetadata> allFiles, RepositoryAnalysisConfig config)
+    {
+        // Prioritize files based on importance for analysis
+        var prioritized = allFiles.OrderByDescending(f =>
+        {
+            var path = f.Path.ToLowerInvariant();
+            var score = 0;
+
+            // High priority: source code files
+            if (path.EndsWith(".cs") || path.EndsWith(".js") || path.EndsWith(".ts") ||
+                path.EndsWith(".py") || path.EndsWith(".java") || path.EndsWith(".cpp"))
+            {
+                score += 100;
+            }
+
+            // Medium priority: config and dependency files
+            if (path.Contains("config") || path.Contains("settings") ||
+                path.EndsWith("package.json") || path.EndsWith("requirements.txt") ||
+                path.EndsWith(".csproj") || path.EndsWith(".fsproj") ||
+                path.EndsWith("directory.packages.props"))
+            {
+                score += 50;
+            }
+
+            // Low priority: documentation and build files
+            if (path.EndsWith(".md") || path.EndsWith(".txt") || path.Contains("readme") ||
+                path.EndsWith(".yml") || path.EndsWith(".yaml"))
+            {
+                score += 25;
+            }
+
+            // Very low priority: generated and cache files
+            if (path.Contains("bin/") || path.Contains("obj/") || path.Contains("node_modules/") ||
+                path.Contains(".git/") || path.EndsWith(".dll") || path.EndsWith(".exe"))
+            {
+                score -= 50;
+            }
+
+            // Size penalty for very large files
+            if (f.Size > 100000) // 100KB
+            {
+                score -= 20;
+            }
+
+            return score;
+        }).ToList();
+
+        // Take top files within limits
+        return prioritized.Take(config.MaxFiles).ToList();
+    }
+
+    private async Task<IReadOnlyList<AnalysisFinding>?> RunAreaAnalysisAsync(
+        string area,
+        IReadOnlyList<FileMetadata> allFiles,
+        IReadOnlyList<FileMetadata> filesWithContent,
+        AreaLimits limits)
+    {
+        return area switch
+        {
+            "structure" => await RunStructureAnalysisAsync(allFiles, limits),
+            "quality" => await RunQualityAnalysisAsync(filesWithContent, limits),
+            "security" => await RunSecurityAnalysisAsync(filesWithContent, limits),
+            "performance" => await RunPerformanceAnalysisAsync(filesWithContent, limits),
+            "dependencies" => await RunDependencyAnalysisAsync(filesWithContent, limits),
+            _ => null
+        };
+    }
+
+    private async Task<IReadOnlyList<AnalysisFinding>> RunStructureAnalysisAsync(
+        IReadOnlyList<FileMetadata> allFiles, AreaLimits limits)
+    {
+        var structureText = GenerateRepositoryStructureText(allFiles);
+        if (string.IsNullOrEmpty(structureText))
+            return Array.Empty<AnalysisFinding>();
+
+        return await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
+            "review_analysis", "analyze_structure",
+            new KernelArguments
+            {
+                ["repoStructure"] = structureText,
+                ["config"] = limits
+            });
+    }
+
+    private async Task<IReadOnlyList<AnalysisFinding>> RunQualityAnalysisAsync(
+        IReadOnlyList<FileMetadata> files, AreaLimits limits)
+    {
+        var filesToAnalyze = files
+            .Where(f => f.Content != null && f.Size <= limits.MaxFileBytes)
+            .Take(limits.MaxFiles)
+            .ToList();
+
+        if (!filesToAnalyze.Any())
+            return Array.Empty<AnalysisFinding>();
+
+        return await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
+            "review_analysis", "analyze_quality",
+            new KernelArguments
+            {
+                ["files"] = filesToAnalyze,
+                ["config"] = limits
+            });
+    }
+
+    private async Task<IReadOnlyList<AnalysisFinding>> RunSecurityAnalysisAsync(
+        IReadOnlyList<FileMetadata> files, AreaLimits limits)
+    {
+        var securityFiles = files
+            .Where(f => f.Content != null &&
+                       (f.Path.Contains("config") || f.Path.Contains("settings") ||
+                        f.Path.Contains("auth") || f.Path.Contains("security") ||
+                        f.Path.EndsWith(".cs") || f.Path.EndsWith(".js") || f.Path.EndsWith(".py")))
+            .Where(f => f.Size <= limits.MaxFileBytes)
+            .Take(limits.MaxFiles)
+            .ToList();
+
+        if (!securityFiles.Any())
+            return Array.Empty<AnalysisFinding>();
+
+        return await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
+            "review_analysis", "security_scan",
+            new KernelArguments
+            {
+                ["files"] = securityFiles,
+                ["config"] = limits
+            });
+    }
+
+    private async Task<IReadOnlyList<AnalysisFinding>> RunPerformanceAnalysisAsync(
+        IReadOnlyList<FileMetadata> files, AreaLimits limits)
+    {
+        var perfFiles = files
+            .Where(f => f.Content != null && f.Size <= limits.MaxFileBytes)
+            .Take(limits.MaxFiles)
+            .ToList();
+
+        if (!perfFiles.Any())
+            return Array.Empty<AnalysisFinding>();
+
+        return await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
+            "review_analysis", "perf_scan",
+            new KernelArguments
+            {
+                ["files"] = perfFiles,
+                ["config"] = limits
+            });
+    }
+
+    private async Task<IReadOnlyList<AnalysisFinding>> RunDependencyAnalysisAsync(
+        IReadOnlyList<FileMetadata> files, AreaLimits limits)
+    {
+        var depFiles = files
+            .Where(f => f.Content != null &&
+                       (f.Path.EndsWith("package.json") || f.Path.EndsWith("requirements.txt") ||
+                        f.Path.EndsWith("packages.config") || f.Path.EndsWith("Directory.Packages.props") ||
+                        f.Path.EndsWith(".csproj") || f.Path.EndsWith(".fsproj")))
+            .Where(f => f.Size <= limits.MaxFileBytes)
+            .Take(limits.MaxFiles)
+            .ToList();
+
+        if (!depFiles.Any())
+            return Array.Empty<AnalysisFinding>();
+
+        return await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
+            "review_analysis", "dep_audit",
+            new KernelArguments
+            {
+                ["files"] = depFiles,
+                ["config"] = limits
+            });
     }
 
     private string GenerateRepositoryStructureText(IReadOnlyList<FileMetadata> files)

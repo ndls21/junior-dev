@@ -479,7 +479,8 @@ public sealed record RepositoryAnalysisConfig(
     long MaxTotalBytes = 10485760, // 10MB total
     int MaxTokens = 8000,
     decimal MaxCost = 0.10m, // $0.10 max cost
-    TimeSpan MaxDuration = default) // 5 minutes default
+    TimeSpan MaxDuration = default, // 5 minutes default
+    Dictionary<string, AreaLimits>? AreaLimits = null) // Area-specific limits
 {
     public RepositoryAnalysisConfig() : this(
         false, // Enabled
@@ -489,9 +490,41 @@ public sealed record RepositoryAnalysisConfig(
         10 * 1024 * 1024, // MaxTotalBytes (10MB)
         8000, // MaxTokens
         0.10m, // MaxCost ($0.10)
-        TimeSpan.FromMinutes(5) // MaxDuration
+        TimeSpan.FromMinutes(5), // MaxDuration
+        new Dictionary<string, AreaLimits>
+        {
+            ["structure"] = new AreaLimits(50, 1024 * 1024, 5 * 1024 * 1024, 2000, 0.02m),
+            ["quality"] = new AreaLimits(75, 1024 * 1024, 7 * 1024 * 1024, 3000, 0.03m),
+            ["security"] = new AreaLimits(25, 512 * 1024, 2 * 1024 * 1024, 1500, 0.02m), // Fewer files, smaller limits for security
+            ["performance"] = new AreaLimits(50, 1024 * 1024, 5 * 1024 * 1024, 2500, 0.03m),
+            ["dependencies"] = new AreaLimits(10, 1024 * 1024, 1 * 1024 * 1024, 1000, 0.01m) // Very few files for deps
+        }
     ) { }
+
+    /// <summary>
+    /// Gets the effective limits for a specific analysis area, falling back to global limits.
+    /// </summary>
+    public AreaLimits GetAreaLimits(string area)
+    {
+        if (AreaLimits?.TryGetValue(area, out var areaLimits) == true)
+        {
+            return areaLimits;
+        }
+
+        // Fallback to global limits
+        return new AreaLimits(MaxFiles, MaxFileBytes, MaxTotalBytes, MaxTokens, MaxCost);
+    }
 }
+
+/// <summary>
+/// Area-specific limits for repository analysis
+/// </summary>
+public sealed record AreaLimits(
+    int MaxFiles,
+    long MaxFileBytes,
+    long MaxTotalBytes,
+    int MaxTokens,
+    decimal MaxCost);
 
 /// <summary>
 /// Result of a repository analysis finding
