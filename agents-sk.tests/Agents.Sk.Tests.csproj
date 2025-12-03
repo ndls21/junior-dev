@@ -17,6 +17,7 @@
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Moq" />
     <PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" />
+    <PackageReference Include="System.Linq.Async" />
   </ItemGroup>
 
   <ItemGroup>

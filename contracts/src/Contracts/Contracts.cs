@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using DotNetEnv;
 
 namespace JuniorDev.Contracts;
@@ -420,7 +421,13 @@ public sealed record LivePolicyConfig(
     bool PushEnabled = false,
     bool DryRun = true,
     bool RequireCredentialsValidation = true,
-    int AutoPauseErrorThreshold = 3);
+    int AutoPauseErrorThreshold = 3)
+{
+    /// <summary>
+    /// Creates a new instance with default safety settings
+    /// </summary>
+    public LivePolicyConfig() : this(PushEnabled: false, DryRun: true, RequireCredentialsValidation: true, AutoPauseErrorThreshold: 3) { }
+}
 
 /// <summary>
 /// Configuration for transcript persistence and management
@@ -560,6 +567,33 @@ public sealed record WorkItemConfig(
         true, // Auto-release inactive claims
         TimeSpan.FromMinutes(5) // Check for expired claims every 5 minutes
     ) { }
+}
+
+/// <summary>
+/// Simple static options monitor for use when DI is not available.
+/// Always returns the same default instance.
+/// </summary>
+public class StaticOptionsMonitor<T> : IOptionsMonitor<T> where T : new()
+{
+    private readonly T _value;
+
+    public StaticOptionsMonitor(T value)
+    {
+        _value = value;
+    }
+
+    public StaticOptionsMonitor() : this(new T()) { }
+
+    public T CurrentValue => _value;
+
+    public T Get(string? name) => _value;
+
+    public IDisposable OnChange(Action<T, string?> listener) => new EmptyDisposable();
+
+    private class EmptyDisposable : IDisposable
+    {
+        public void Dispose() { }
+    }
 }
 
 // Configuration Builder Utility

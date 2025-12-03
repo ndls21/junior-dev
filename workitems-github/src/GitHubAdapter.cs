@@ -31,7 +31,7 @@ public class GitHubAdapter : IAdapter
     public GitHubAdapter(AppConfig appConfig, ILogger<GitHubAdapter>? logger = null, IOptionsMonitor<LivePolicyConfig>? livePolicyMonitor = null)
     {
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<GitHubAdapter>.Instance;
-        _livePolicyMonitor = livePolicyMonitor ?? new OptionsMonitor<LivePolicyConfig>(new OptionsFactory<LivePolicyConfig>(Enumerable.Empty<IConfigureOptions<LivePolicyConfig>>(), Enumerable.Empty<IPostConfigureOptions<LivePolicyConfig>>()), Enumerable.Empty<IOptionsChangeTokenSource<LivePolicyConfig>>(), new OptionsCache<LivePolicyConfig>());
+        _livePolicyMonitor = livePolicyMonitor ?? new StaticOptionsMonitor<LivePolicyConfig>();
 
         var gitHubAuth = appConfig.Auth?.GitHub;
         if (gitHubAuth == null || string.IsNullOrEmpty(gitHubAuth.Token))

@@ -55,6 +55,14 @@ public abstract class AgentBase : IAgent
         await OnStartedAsync();
     }
 
+    /// <summary>
+    /// Sets the context for testing purposes. Only use in test scenarios.
+    /// </summary>
+    public void SetContextForTesting(AgentSessionContext context)
+    {
+        Context = context ?? throw new ArgumentNullException(nameof(context));
+    }
+
     public async Task StopAsync()
     {
         if (Context == null)
@@ -207,5 +215,22 @@ public abstract class AgentBase : IAgent
     {
         public long Count { get; set; }
         public TimeSpan TotalDuration { get; set; }
+    }
+}
+
+/// <summary>
+/// Factory for creating agents in test scenarios.
+/// </summary>
+public static class AgentFactory
+{
+    /// <summary>
+    /// Creates an agent instance with the specified context for testing.
+    /// </summary>
+    public static TAgent CreateForTesting<TAgent>(AgentSessionContext context) 
+        where TAgent : AgentBase, new()
+    {
+        var agent = new TAgent();
+        agent.SetContextForTesting(context);
+        return agent;
     }
 }

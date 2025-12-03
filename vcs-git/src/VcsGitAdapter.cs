@@ -32,7 +32,7 @@ public class VcsGitAdapter : IAdapter
         _isFake = isFake;
         _appConfig = appConfig ?? new AppConfig();
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<VcsGitAdapter>.Instance;
-        _livePolicyMonitor = livePolicyMonitor ?? new OptionsMonitor<LivePolicyConfig>(new OptionsFactory<LivePolicyConfig>(Enumerable.Empty<IConfigureOptions<LivePolicyConfig>>(), Enumerable.Empty<IPostConfigureOptions<LivePolicyConfig>>()), Enumerable.Empty<IOptionsChangeTokenSource<LivePolicyConfig>>(), new OptionsCache<LivePolicyConfig>());
+        _livePolicyMonitor = livePolicyMonitor ?? new StaticOptionsMonitor<LivePolicyConfig>();
 
         // Initialize metrics
         _meter = new Meter("JuniorDev.VcsGit", "1.0.0");

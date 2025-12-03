@@ -38,7 +38,8 @@ public interface IVcsHelper
     /// </summary>
     Task<IReadOnlyList<FileMetadata>> GetFileContentsAsync(
         IEnumerable<string> paths,
-        long? maxFileBytes = null);
+        long? maxFileBytes = null,
+        long? maxTotalBytes = null);
 
     /// <summary>
     /// Gets basic metadata for files without content.
@@ -135,9 +136,11 @@ public class FileSystemVcsHelper : IVcsHelper
 
     public async Task<IReadOnlyList<FileMetadata>> GetFileContentsAsync(
         IEnumerable<string> paths,
-        long? maxFileBytes = null)
+        long? maxFileBytes = null,
+        long? maxTotalBytes = null)
     {
         var results = new List<FileMetadata>();
+        long totalBytes = 0;
 
         foreach (var path in paths)
         {
@@ -154,8 +157,13 @@ public class FileSystemVcsHelper : IVcsHelper
                 if (maxFileBytes.HasValue && size > maxFileBytes.Value)
                     continue;
 
+                // Check total bytes limit
+                if (maxTotalBytes.HasValue && totalBytes + size > maxTotalBytes.Value)
+                    continue;
+
                 var content = await File.ReadAllTextAsync(fullPath);
                 results.Add(new FileMetadata(path, size, info.LastWriteTimeUtc, content));
+                totalBytes += size;
             }
             catch (Exception)
             {

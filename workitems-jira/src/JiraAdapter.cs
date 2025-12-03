@@ -37,7 +37,7 @@ public class JiraAdapter : IAdapter
     public JiraAdapter(AppConfig appConfig, ILogger<JiraAdapter> logger, IOptionsMonitor<LivePolicyConfig>? livePolicyMonitor = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _livePolicyMonitor = livePolicyMonitor ?? new OptionsMonitor<LivePolicyConfig>(new OptionsFactory<LivePolicyConfig>(Enumerable.Empty<IConfigureOptions<LivePolicyConfig>>(), Enumerable.Empty<IPostConfigureOptions<LivePolicyConfig>>()), Enumerable.Empty<IOptionsChangeTokenSource<LivePolicyConfig>>(), new OptionsCache<LivePolicyConfig>());
+        _livePolicyMonitor = livePolicyMonitor ?? new StaticOptionsMonitor<LivePolicyConfig>();
 
         var jiraAuth = appConfig.Auth?.Jira;
         if (jiraAuth == null)
