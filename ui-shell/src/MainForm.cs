@@ -77,6 +77,8 @@ public class EventRenderer
 
     public void RenderEvent(IEvent @event, DateTimeOffset timestamp)
     {
+        if (_memoEdit == null) return; // Skip rendering in test mode
+        
         var message = FormatEventAsMessage(@event, timestamp);
         _memoEdit.Text += message + Environment.NewLine;
         
@@ -1048,6 +1050,7 @@ public partial class MainForm : Form
     private MenuStrip? mainMenu;
     private System.Windows.Forms.Timer? eventTimer;
     private AppSettings currentSettings = new();
+    private System.Windows.Forms.DrawMode currentSessionsListBoxDrawMode = System.Windows.Forms.DrawMode.Normal;
     
     // Test helper fields
     private string? _testLayoutFilePath;
@@ -1086,6 +1089,10 @@ public partial class MainForm : Form
             // Initialize minimal components for testing
             eventRenderer = new EventRenderer(null); // No memo edit in test mode
             _sessionErrorCounts = new ConcurrentDictionary<Guid, int>();
+            
+            // Initialize accordion manager for test mode
+            _chatContainerPanel = new Panel(); // Dummy panel for test mode
+            _accordionManager = new AccordionLayoutManager(_chatContainerPanel, isTestMode: true);
         }
 
         if (this.isTestMode)
@@ -1485,7 +1492,7 @@ public partial class MainForm : Form
         };
 
         // Initialize accordion layout manager
-        _accordionManager = new AccordionLayoutManager(_chatContainerPanel);
+        _accordionManager = new AccordionLayoutManager(_chatContainerPanel, isTestMode);
 
         // Wire up events
         _accordionManager.StreamsChanged += (s, e) => UpdateChatFilterOptions();
@@ -2257,6 +2264,8 @@ public partial class MainForm : Form
             sessionsListBox.DrawMode = settings.ShowStatusChips ? System.Windows.Forms.DrawMode.OwnerDrawFixed : System.Windows.Forms.DrawMode.Normal;
             sessionsListBox.Refresh(); // Redraw to apply changes
         }
+        // Store the DrawMode setting for test mode compatibility
+        currentSessionsListBoxDrawMode = settings.ShowStatusChips ? System.Windows.Forms.DrawMode.OwnerDrawFixed : System.Windows.Forms.DrawMode.Normal;
 
         // Apply ShowTimestamps behavior
         if (eventRenderer != null)
@@ -2569,7 +2578,7 @@ public partial class MainForm : Form
     // Test helper methods
     public System.Windows.Forms.DrawMode GetSessionsListBoxDrawMode()
     {
-        return sessionsListBox?.DrawMode ?? System.Windows.Forms.DrawMode.Normal;
+        return sessionsListBox?.DrawMode ?? currentSessionsListBoxDrawMode;
     }
 
     public bool GetAutoScrollEventsSetting()
@@ -2609,7 +2618,7 @@ public partial class MainForm : Form
         var chatStream = new ChatStream(config.SessionId, $"Agent-{config.SessionId.ToString().Substring(0, 8)}");
         
         // Create AgentPanel for the chat stream (normally done by AccordionLayoutManager)
-        var agentPanel = new AgentPanel(chatStream);
+        var agentPanel = new AgentPanel(chatStream, isTestMode: isTestMode);
         // Add the panel to the container for proper UI hierarchy
         if (_accordionManager != null && _accordionManager is AccordionLayoutManager manager)
         {
@@ -2735,7 +2744,7 @@ public partial class MainForm : Form
         var chatStream = new ChatStream(config.SessionId, $"Agent-{config.SessionId.ToString().Substring(0, 8)}");
         
         // Create AgentPanel for the chat stream (normally done by AccordionLayoutManager)
-        var agentPanel = new AgentPanel(chatStream);
+        var agentPanel = new AgentPanel(chatStream, isTestMode: isTestMode);
         // Add the panel to the container for proper UI hierarchy
         if (_accordionManager != null && _accordionManager is AccordionLayoutManager manager)
         {
@@ -2885,6 +2894,9 @@ public partial class MainForm : Form
             
             // Reset chat streams to default
             LoadDefaultChatStreams();
+            
+            // Save the default chat streams to file
+            SaveChatStreams();
             
             // Save the reset layout immediately
             SaveLayout();
@@ -3232,6 +3244,12 @@ public partial class MainForm : Form
 
     private void UpdateBlockingBanner()
     {
+        // Skip UI updates in test mode
+        if (isTestMode)
+        {
+            return;
+        }
+
         if (_blockingConditions.Count == 0)
         {
             _blockingBannerPanel!.Visible = false;

@@ -1438,7 +1438,7 @@ public class MainFormTests : IDisposable
         mockSessionManager.Setup(sm => sm.CreateSession(It.IsAny<SessionConfig>()))
             .Returns(Task.CompletedTask);
         mockSessionManager.Setup(sm => sm.Subscribe(attachSessionId))
-            .Returns(new TestAsyncEnumerable(postAttachEvents));
+            .Returns(System.Linq.AsyncEnumerable.ToAsyncEnumerable(postAttachEvents));
         mockSessionManager.Setup(sm => sm.GetActiveSessions())
             .Returns(new List<SessionInfo> 
             { 

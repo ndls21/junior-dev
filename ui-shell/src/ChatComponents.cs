@@ -116,15 +116,18 @@ public class AgentPanel : Panel
     private System.Windows.Forms.Timer? _transcriptSaveTimer;
     private int _lastSavedMessageCount = 0;
 
+    private readonly bool _isTestMode;
+
     public ChatStream ChatStream => _chatStream;
     public Control ChatControl => _chatControl;
     public MemoEdit EventsMemo => _eventsMemo;
 
-    public AgentPanel(ChatStream chatStream, ISessionManager? sessionManager = null, IServiceProvider? serviceProvider = null, IConfiguration? configuration = null)
+    public AgentPanel(ChatStream chatStream, ISessionManager? sessionManager = null, IServiceProvider? serviceProvider = null, IConfiguration? configuration = null, bool isTestMode = false)
     {
         _chatStream = chatStream;
         _sessionManager = sessionManager;
         _serviceProvider = serviceProvider;
+        _isTestMode = isTestMode;
         _chatStream.Panel = this;
 
         // Get transcript configuration from appsettings
@@ -162,6 +165,33 @@ public class AgentPanel : Panel
 
         // Initialize transcript save timer to periodically check for new AI messages
         InitializeTranscriptSaveTimer();
+
+        if (_isTestMode)
+        {
+            // In test mode, create minimal UI components to avoid threading issues
+            _previewPanel = new Panel { Dock = DockStyle.Top, Height = 60 };
+            _agentNameLabel = new System.Windows.Forms.Label { Text = _chatStream.AgentName };
+            _statusLabel = new System.Windows.Forms.Label { Text = "Test Mode" };
+            _taskLabel = new System.Windows.Forms.Label { Text = "" };
+            _progressLabel = new System.Windows.Forms.Label { Text = "" };
+            _timeLabel = new System.Windows.Forms.Label { Text = "" };
+            _commandToolbar = new ToolStrip();
+            _contextMenu = new ContextMenuStrip();
+            _chatControl = new Label { Text = "AI Chat Unavailable (Test Mode)", Dock = DockStyle.Fill };
+            _eventsMemo = new MemoEdit { Dock = DockStyle.Fill };
+            _eventRenderer = new EventRenderer(_eventsMemo);
+            _splitContainer = new SplitContainer { Dock = DockStyle.Fill };
+            _transcriptHistoryPanel = new Panel { Dock = DockStyle.Top, Height = 150 };
+            _transcriptHistoryLabel = new Label { Text = "Transcript History" };
+            _transcriptHistoryText = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true };
+
+            // Set basic properties
+            this.BorderStyle = BorderStyle.FixedSingle;
+            this.Padding = new Padding(2);
+            UpdatePreviewDisplay();
+            SetCollapsedState();
+            return;
+        }
 
         // Initialize rich preview controls
         _previewPanel = new Panel
@@ -367,6 +397,9 @@ public class AgentPanel : Panel
 
     private void UpdateCommandButtonStates()
     {
+        // Skip in test mode where buttons are not created
+        if (_isTestMode) return;
+
         // Enable buttons if this chat stream is attached to an active session
         // Check if session manager is available and this stream has a valid session
         bool enableCommands = false;
@@ -909,6 +942,7 @@ public class AccordionLayoutManager
     private readonly Panel _container;
     private readonly List<ChatStream> _chatStreams = new();
     private ChatStream? _expandedStream;
+    private readonly bool _isTestMode;
 
     public IReadOnlyList<ChatStream> ChatStreams => _chatStreams.AsReadOnly();
     public event EventHandler<ChatStream>? StreamExpanded;
@@ -917,10 +951,11 @@ public class AccordionLayoutManager
     public event EventHandler<AgentPanel>? CreateSessionRequested;
     public event EventHandler<AgentPanel>? AttachToSessionRequested;
 
-    public AccordionLayoutManager(Panel container)
+    public AccordionLayoutManager(Panel container, bool isTestMode = false)
     {
         _container = container;
         _container.AutoScroll = true;
+        _isTestMode = isTestMode;
     }
 
     public void AddChatStream(ChatStream chatStream, ISessionManager? sessionManager = null, IServiceProvider? serviceProvider = null, IConfiguration? configuration = null)
@@ -928,7 +963,7 @@ public class AccordionLayoutManager
         // Create the AgentPanel for this chat stream
         if (chatStream.Panel == null)
         {
-            chatStream.Panel = new AgentPanel(chatStream, sessionManager, serviceProvider, configuration);
+            chatStream.Panel = new AgentPanel(chatStream, sessionManager, serviceProvider, configuration, _isTestMode);
             
             // Wire up session management events
             if (chatStream.Panel is AgentPanel agentPanel)

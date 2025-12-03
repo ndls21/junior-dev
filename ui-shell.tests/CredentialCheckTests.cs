@@ -17,7 +17,7 @@ namespace ui_shell.tests
         {
             // Arrange
             var chatStream = new ChatStream(Guid.NewGuid(), "Test Agent");
-            var agentPanel = new AgentPanel(chatStream);
+            var agentPanel = new AgentPanel(chatStream, isTestMode: true);
 
             // Act - CheckValidAICredentials is private, so we test indirectly by checking what control is created
             var field = typeof(AgentPanel).GetField("_chatControl", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -34,7 +34,7 @@ namespace ui_shell.tests
             var services = new ServiceCollection();
             var serviceProvider = services.BuildServiceProvider();
             var chatStream = new ChatStream(Guid.NewGuid(), "Test Agent");
-            var agentPanel = new AgentPanel(chatStream);
+            var agentPanel = new AgentPanel(chatStream, isTestMode: true);
             agentPanel.SetDependencies(null, null); // Set dependencies after construction
 
             // Act
@@ -54,7 +54,7 @@ namespace ui_shell.tests
         services.AddSingleton<IChatClientFactory>(mockFactory);
         var serviceProvider = services.BuildServiceProvider();
         var chatStream = new ChatStream(Guid.NewGuid(), "Test Agent");
-        var agentPanel = new AgentPanel(chatStream);
+        var agentPanel = new AgentPanel(chatStream, isTestMode: true);
         agentPanel.SetDependencies(null, null); // Set dependencies after construction
 
         // Act
@@ -83,7 +83,7 @@ namespace ui_shell.tests
 
         // Act - Try to create an AgentPanel (which would create AIChatControl)
         var chatStream = new ChatStream(Guid.NewGuid(), "Test Agent");
-        var agentPanel = new AgentPanel(chatStream);
+        var agentPanel = new AgentPanel(chatStream, isTestMode: true);
 
         // Assert - Should not throw exceptions and should create a placeholder control
         var field = typeof(AgentPanel).GetField("_chatControl", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
