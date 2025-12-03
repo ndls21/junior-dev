@@ -5,6 +5,8 @@ using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Options;
+using System.Linq;
 
 namespace JuniorDev.WorkItems.GitHub;
 
@@ -12,7 +14,6 @@ public class GitHubAdapter : IAdapter
 {
     private readonly HttpClient _httpClient;
     private readonly string _repo;
-    private readonly bool _dryRun;
     private readonly CircuitBreaker _circuitBreaker;
     private readonly ILogger<GitHubAdapter> _logger;
     private readonly Meter _meter;
@@ -21,15 +22,16 @@ public class GitHubAdapter : IAdapter
     private readonly Counter<long> _commandsFailed;
     private readonly Counter<long> _apiCalls;
     private readonly Counter<long> _apiErrors;
+    private readonly IOptionsMonitor<LivePolicyConfig> _livePolicyMonitor;
     private const int MaxRetries = 3;
     private const int BaseDelayMs = 1000;
     private const int MaxDelayMs = 30000;
     private static readonly Random _random = new();
 
-    public GitHubAdapter(AppConfig appConfig, ILogger<GitHubAdapter>? logger = null)
+    public GitHubAdapter(AppConfig appConfig, ILogger<GitHubAdapter>? logger = null, IOptionsMonitor<LivePolicyConfig>? livePolicyMonitor = null)
     {
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<GitHubAdapter>.Instance;
-        _dryRun = appConfig.LivePolicy?.DryRun ?? true;
+        _livePolicyMonitor = livePolicyMonitor ?? new OptionsMonitor<LivePolicyConfig>(new OptionsFactory<LivePolicyConfig>(Enumerable.Empty<IConfigureOptions<LivePolicyConfig>>(), Enumerable.Empty<IPostConfigureOptions<LivePolicyConfig>>()), Enumerable.Empty<IOptionsChangeTokenSource<LivePolicyConfig>>(), new OptionsCache<LivePolicyConfig>());
 
         var gitHubAuth = appConfig.Auth?.GitHub;
         if (gitHubAuth == null || string.IsNullOrEmpty(gitHubAuth.Token))
@@ -76,8 +78,9 @@ public class GitHubAdapter : IAdapter
         // Record command processed metric
         _commandsProcessed.Add(1, new KeyValuePair<string, object?>("command_type", command.Kind));
 
-        // Check for dry-run mode
-        if (_dryRun)
+        // Check for dry-run mode (read dynamically from configuration)
+        var livePolicy = _livePolicyMonitor.CurrentValue;
+        if (livePolicy?.DryRun ?? true)
         {
             _logger.LogInformation("Processing command {CommandType} in dry-run mode", command.Kind);
             await session.AddEvent(new CommandCompleted(Guid.NewGuid(), correlation, command.Id, CommandOutcome.Success));

@@ -144,6 +144,12 @@ public enum SessionStatus
 public sealed record SessionStatusChanged(Guid Id, Correlation Correlation, SessionStatus Status, string? Reason = null)
     : EventBase(Id, Correlation, nameof(SessionStatusChanged));
 
+public sealed record SessionPaused(Guid Id, Correlation Correlation, string Actor, string Reason, Guid? CommandId = null)
+    : EventBase(Id, Correlation, nameof(SessionPaused));
+
+public sealed record SessionAborted(Guid Id, Correlation Correlation, string Actor, string Reason, Guid? CommandId = null)
+    : EventBase(Id, Correlation, nameof(SessionAborted));
+
 public sealed record PlanUpdated(Guid Id, Correlation Correlation, TaskPlan Plan)
     : EventBase(Id, Correlation, nameof(PlanUpdated));
 
@@ -195,6 +201,7 @@ public sealed class PolicyProfile
     public int? MaxFilesPerCommit { get; init; } = null;
     public List<string>? AllowedWorkItemTransitions { get; init; } = null;
     public RateLimits? Limits { get; init; } = null;
+    public int AutoPauseErrorThreshold { get; init; } = 3;
 }
 
 public sealed record SessionConfig(
@@ -229,6 +236,7 @@ public sealed record AppConfig(
     PolicyConfig? Policy = null,
     LivePolicyConfig? LivePolicy = null,
     TranscriptConfig? Transcript = null,
+    ReviewerConfig? Reviewer = null,
     WorkItemConfig? WorkItems = null);
 
 /// <summary>
@@ -411,7 +419,8 @@ public sealed record PolicyConfig(
 public sealed record LivePolicyConfig(
     bool PushEnabled = false,
     bool DryRun = true,
-    bool RequireCredentialsValidation = true);
+    bool RequireCredentialsValidation = true,
+    int AutoPauseErrorThreshold = 3);
 
 /// <summary>
 /// Configuration for transcript persistence and management
@@ -432,6 +441,71 @@ public sealed record TranscriptConfig(
         10, // TranscriptContextMessages
         null // StorageDirectory
     ) { }
+}
+
+/// <summary>
+/// Configuration for reviewer agent repository-wide analysis
+/// </summary>
+public sealed record ReviewerConfig(
+    bool EnableRepositoryAnalysis = true,
+    int MaxFilesToAnalyze = 50,
+    int MaxAnalysisDepth = 3,
+    TimeSpan AnalysisCacheTimeout = default, // 1 hour default in constructor
+    List<string> AnalysisFocusAreas = default!, // ["structure", "quality", "security", "performance", "dependencies"]
+    long MaxFileSizeBytes = 1048576, // 1MB default
+    int MaxTokensPerAnalysis = 4000,
+    RepositoryAnalysisConfig? Analysis = null)
+{
+    public ReviewerConfig() : this(
+        true, // EnableRepositoryAnalysis
+        50, // MaxFilesToAnalyze
+        3, // MaxAnalysisDepth
+        TimeSpan.FromHours(1), // AnalysisCacheTimeout
+        new List<string> { "structure", "quality" }, // AnalysisFocusAreas (conservative defaults)
+        1024 * 1024, // MaxFileSizeBytes (1MB)
+        4000, // MaxTokensPerAnalysis
+        new RepositoryAnalysisConfig() // Analysis
+    ) { }
+}
+
+/// <summary>
+/// Configuration for repository-wide analysis (Phase 2)
+/// </summary>
+public sealed record RepositoryAnalysisConfig(
+    bool Enabled = false,
+    List<string> EnabledAreas = default!, // ["structure", "quality", "security", "performance", "dependencies"]
+    int MaxFiles = 100,
+    long MaxFileBytes = 1048576, // 1MB per file
+    long MaxTotalBytes = 10485760, // 10MB total
+    int MaxTokens = 8000,
+    decimal MaxCost = 0.10m, // $0.10 max cost
+    TimeSpan MaxDuration = default) // 5 minutes default
+{
+    public RepositoryAnalysisConfig() : this(
+        false, // Enabled
+        new List<string> { "structure", "quality" }, // EnabledAreas (conservative defaults)
+        100, // MaxFiles
+        1024 * 1024, // MaxFileBytes (1MB)
+        10 * 1024 * 1024, // MaxTotalBytes (10MB)
+        8000, // MaxTokens
+        0.10m, // MaxCost ($0.10)
+        TimeSpan.FromMinutes(5) // MaxDuration
+    ) { }
+}
+
+/// <summary>
+/// Result of a repository analysis finding
+/// </summary>
+public sealed record AnalysisFinding(
+    string Path,
+    string Kind, // "structure", "quality", "security", "performance", "dependencies"
+    string Severity, // "info", "warning", "error", "critical"
+    string Summary,
+    string Details = "",
+    string? Recommendation = null)
+{
+    public AnalysisFinding(string Path, string Kind, string Severity, string Summary)
+        : this(Path, Kind, Severity, Summary, "", null) { }
 }
 
 /// <summary>

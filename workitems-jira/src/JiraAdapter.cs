@@ -10,6 +10,8 @@ using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Options;
+using System.Linq;
 
 namespace JuniorDev.WorkItems.Jira;
 
@@ -22,7 +24,6 @@ public class JiraAdapter : IAdapter
     private readonly string _baseUrl;
     private readonly string _projectKey;
     private readonly string _authHeader;
-    private readonly bool _dryRun;
     private readonly CircuitBreaker _circuitBreaker;
     private readonly ILogger<JiraAdapter> _logger;
     private readonly Meter _meter;
@@ -31,11 +32,12 @@ public class JiraAdapter : IAdapter
     private readonly Counter<long> _commandsFailed;
     private readonly Counter<long> _apiCalls;
     private readonly Counter<long> _apiErrors;
+    private readonly IOptionsMonitor<LivePolicyConfig> _livePolicyMonitor;
 
-    public JiraAdapter(AppConfig appConfig, ILogger<JiraAdapter> logger)
+    public JiraAdapter(AppConfig appConfig, ILogger<JiraAdapter> logger, IOptionsMonitor<LivePolicyConfig>? livePolicyMonitor = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _dryRun = appConfig.LivePolicy?.DryRun ?? true;
+        _livePolicyMonitor = livePolicyMonitor ?? new OptionsMonitor<LivePolicyConfig>(new OptionsFactory<LivePolicyConfig>(Enumerable.Empty<IConfigureOptions<LivePolicyConfig>>(), Enumerable.Empty<IPostConfigureOptions<LivePolicyConfig>>()), Enumerable.Empty<IOptionsChangeTokenSource<LivePolicyConfig>>(), new OptionsCache<LivePolicyConfig>());
 
         var jiraAuth = appConfig.Auth?.Jira;
         if (jiraAuth == null)
@@ -81,8 +83,9 @@ public class JiraAdapter : IAdapter
 
         await session.AddEvent(acceptedEvent);
 
-        // Check for dry-run mode
-        if (_dryRun)
+        // Check for dry-run mode (read dynamically from configuration)
+        var livePolicy = _livePolicyMonitor.CurrentValue;
+        if (livePolicy?.DryRun ?? true)
         {
             _logger.LogInformation("Dry-run mode: Command {CommandType} would be executed", command.GetType().Name);
             var dryRunEvent = new CommandCompleted(

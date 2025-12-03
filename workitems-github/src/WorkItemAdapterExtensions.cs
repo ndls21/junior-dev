@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
 using JuniorDev.Contracts;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 
 namespace JuniorDev.WorkItems.GitHub;
 
@@ -17,7 +19,7 @@ public static class WorkItemAdapterExtensions
 
         if (hasValidCredentials)
         {
-            services.AddSingleton<IAdapter>(sp => new GitHubAdapter(appConfig));
+            services.AddSingleton<IAdapter>(sp => new GitHubAdapter(appConfig, sp.GetService<ILogger<GitHubAdapter>>(), sp.GetService<IOptionsMonitor<LivePolicyConfig>>()));
         }
         else
         {

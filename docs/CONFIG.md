@@ -212,7 +212,7 @@ Configure which adapters to use in `appsettings.json`:
 
 ### Live Policy Configuration
 
-Control live adapter behavior with the `LivePolicy` section:
+Control live adapter behavior with the `LivePolicy` section. **Changes to LivePolicy take effect immediately without restart.**
 
 ```json
 {
@@ -220,16 +220,120 @@ Control live adapter behavior with the `LivePolicy` section:
     "LivePolicy": {
       "PushEnabled": false,        // Default: false - require explicit opt-in for push operations
       "DryRun": true,             // Default: true - require explicit opt-in for live operations
-      "RequireCredentialsValidation": true  // Whether to validate credentials before allowing live adapters
+      "RequireCredentialsValidation": true,  // Whether to validate credentials before allowing live adapters
+      "AutoPauseErrorThreshold": 3  // Auto-pause session after N consecutive errors (0 = disabled)
     }
   }
 }
 ```
 
 **LivePolicy Settings:**
-- **PushEnabled**: Controls whether VCS push operations are allowed (default: `false`)
-- **DryRun**: When `true`, adapters skip actual API calls and return success with dry-run artifacts (default: `true`)
+- **PushEnabled**: Controls whether VCS push operations are allowed (default: `false`) - **Hot-reload enabled**
+- **DryRun**: When `true`, adapters skip actual API calls and return success with dry-run artifacts (default: `true`) - **Hot-reload enabled**
 - **RequireCredentialsValidation**: Whether to validate credentials at startup when using live adapters (default: `true`)
+- **AutoPauseErrorThreshold**: Number of consecutive command failures before automatically pausing the session (default: `3`, set to `0` to disable)
+
+**Hot-Reload Behavior:**
+- Configuration changes are detected automatically via `reloadOnChange: true`
+- `PushEnabled` and `DryRun` take effect immediately on the next command
+- No application restart required for safety toggles
+- Auto-pause threshold applies to new errors after configuration change
+
+## Emergency Kill-Switch Procedures
+
+### Quick Reference: Emergency Actions
+
+When you need to immediately stop problematic sessions or disable dangerous operations:
+
+#### 1. Disable Push Operations (Immediate Effect)
+Edit `appsettings.json` and set:
+```json
+{
+  "AppConfig": {
+    "LivePolicy": {
+      "PushEnabled": false
+    }
+  }
+}
+```
+**Effect**: Next VCS command will skip push operations. No restart required.
+
+#### 2. Enable Dry-Run Mode (Immediate Effect)
+Edit `appsettings.json` and set:
+```json
+{
+  "AppConfig": {
+    "LivePolicy": {
+      "DryRun": true
+    }
+  }
+}
+```
+**Effect**: Adapters skip live API calls immediately. No restart required.
+
+#### 3. Pause Specific Session (UI or API)
+**Via UI:** Right-click session in Sessions panel → "Pause Session"
+**Via API:** `POST /api/sessions/{sessionId}/pause`
+
+**Effect**: Session stops processing commands immediately. Commands are rejected with "Session is paused" message.
+
+#### 4. Abort Session (UI or API)
+**Via UI:** Right-click session → "Abort Session"
+**Via API:** `POST /api/sessions/{sessionId}/abort`
+
+**Effect**: Session enters Error state, stops all processing, events logged for audit.
+
+#### 5. Emergency Application Shutdown
+Press `Ctrl+C` in console or close UI window.
+
+**Effect**: All sessions stop immediately, state may be lost, event logs preserved on disk.
+
+### Auto-Pause on Errors
+
+Sessions automatically pause when consecutive errors exceed the configured threshold:
+
+**Configurable Per Session:**
+Each session's PolicyProfile can specify its own threshold:
+```csharp
+var policy = new PolicyProfile 
+{
+    Name = "strict-policy",
+    AutoPauseErrorThreshold = 2,  // Pause after 2 consecutive errors
+    // ... other settings
+};
+```
+
+**Global Default:** Set in `LivePolicyConfig.AutoPauseErrorThreshold` (default: 3)
+
+**Auto-Pause Behavior:**
+- Tracks consecutive `CommandCompleted` events with `Outcome = Failure`
+- Resets count on any successful command
+- When threshold reached, emits `SessionPaused` event with actor `"system-auto-pause"`
+- Logs auto-pause action: `[AUTO-PAUSE] Session {id} auto-paused after N consecutive errors`
+- Metric: `sessions_auto_paused` counter incremented
+
+**Recovery from Auto-Pause:**
+1. Check session event log for error details
+2. Fix root cause (credentials, merge conflicts, etc.)
+3. Resume session via UI or API
+4. Error count resets to 0
+
+### Session Control Reference
+
+#### Pause Session
+**Purpose:** Temporarily stop command processing without terminating session
+**When to use:** During debugging, before making config changes, to prevent runaway operations
+**How to resume:** Call ResumeSession or use UI
+
+#### Abort Session  
+**Purpose:** Force session into terminal Error state
+**When to use:** Session is unrecoverable, needs full cleanup
+**Cannot resume:** Aborted sessions stay in Error state
+
+#### Complete Session
+**Purpose:** Normal session termination
+**When to use:** Work is finished successfully
+**Effect:** Session enters Completed state
 
 ### Enabling Live Operations
 
@@ -849,3 +953,210 @@ Each gate requires:
 - <1% error rate in metrics
 - Manual review of generated artifacts
 - Stakeholder approval
+
+## Emergency Procedures & Kill Switches
+
+Junior Dev includes multiple layers of safety controls to prevent runaway operations and enable quick recovery from issues. This section documents the emergency procedures for stopping operations and recovering from problems.
+
+### Kill Switch Hierarchy
+
+Junior Dev implements a hierarchical kill switch system with multiple escalation levels:
+
+#### Level 1: Session-Level Controls (Immediate Response)
+- **Auto-Pause on Errors**: Sessions automatically pause after consecutive failures (configurable threshold, default: 3)
+- **Manual Session Pause**: Right-click any session in the UI → "Pause Session"
+- **Command Cancellation**: Individual commands can be cancelled mid-execution
+
+#### Level 2: Adapter-Level Controls (Service Isolation)
+- **Dry-Run Mode**: Enable `LivePolicy.DryRun = true` to skip all external API calls
+- **Push Disable**: Set `LivePolicy.PushEnabled = false` to prevent VCS push operations
+- **Adapter Switching**: Change adapters to "fake" mode for immediate isolation
+
+#### Level 3: Application-Level Controls (Full Shutdown)
+- **Circuit Breaker**: Automatic shutdown of failing adapters after consecutive errors
+- **Rate Limiting**: Automatic throttling of excessive API usage
+- **Configuration Override**: Environment variables override dangerous settings
+
+### Emergency Kill Sequence
+
+#### Step 1: Immediate Session Control (0-30 seconds)
+If a session is misbehaving:
+
+1. **Identify Problem Session**: Check the Sessions panel for error indicators
+2. **Pause Session**: Right-click session → "Pause Session"
+3. **Cancel Active Commands**: If commands are still running, they will complete but new commands are blocked
+4. **Verify Pause**: Session status changes to "Paused", blocking banner appears
+
+#### Step 2: Service Isolation (30-60 seconds)
+If multiple sessions are affected:
+
+1. **Enable Dry-Run Mode**:
+   ```json
+   {
+     "LivePolicy": {
+       "DryRun": true
+     }
+   }
+   ```
+   Or via environment variable:
+   ```bash
+   JUNIORDEV__APPCONFIG__LIVEPOLICY__DRYRUN=true
+   ```
+
+2. **Disable Push Operations**:
+   ```bash
+   JUNIORDEV__APPCONFIG__LIVEPOLICY__PUSHENABLED=false
+   ```
+
+3. **Monitor Metrics**: Check that `commands_failed` stops increasing
+
+#### Step 3: Full Shutdown (1-5 minutes)
+For complete isolation:
+
+1. **Switch to Fake Adapters**:
+   ```bash
+   JUNIORDEV__APPCONFIG__ADAPTERS__WORKITEMSADAPTER=fake
+   JUNIORDEV__APPCONFIG__ADAPTERS__VCSADAPTER=fake
+   ```
+
+2. **Restart Application**: Graceful restart to pick up configuration changes
+
+3. **Verify Isolation**: Confirm no external API calls are being made
+
+### Push Toggle Behavior
+
+The push toggle in the UI controls VCS push operations with the following behavior:
+
+- **Toggle State**: 🔴 Push: ON = `LivePolicy.PushEnabled = true`
+- **Toggle State**: 🟢 Push: OFF = `LivePolicy.PushEnabled = false`
+- **Persistence**: Setting is saved to user settings file and persists between restarts
+- **Override**: Environment variable `JUNIORDEV__APPCONFIG__LIVEPOLICY__PUSHENABLED` takes precedence
+- **Safety**: Push operations are disabled by default in all configurations
+
+**Important**: Changes to `LivePolicy` settings (PushEnabled, DryRun, AutoPauseErrorThreshold) now take effect **immediately** without requiring application restart. The system uses hot-reload configuration monitoring to apply changes dynamically.
+
+### Auto-Pause Configuration
+
+Sessions automatically pause when they encounter repeated errors:
+
+```json
+{
+  "LivePolicy": {
+    "AutoPauseErrorThreshold": 3
+  }
+}
+```
+
+- **Default Threshold**: 3 consecutive errors trigger auto-pause
+- **Error Types**: Command failures, API errors, merge conflicts
+- **Recovery**: Use "Resume Session" to continue after fixing issues
+- **Reset**: Error count resets after successful operations resume
+
+### Monitoring During Incidents
+
+#### Key Metrics for Emergency Response
+- `sessions_auto_paused` (Counter): Sessions automatically paused due to error threshold
+- `sessions_paused` (Counter): Total sessions paused (manual + auto)
+- `sessions_aborted` (Counter): Sessions force-terminated
+- `commands_rejected_paused_session` (Counter): Commands blocked by paused sessions
+- `circuit_breaker_trips` (Counter): Adapters that have shut down due to failures
+- `rate_limit_throttles` (Counter): Operations blocked by rate limiting
+
+#### Log Patterns for Issues
+```
+[AUTO-PAUSE] Session {sessionId} auto-paused after 3 consecutive errors. Command: {commandId}
+ERROR: Circuit breaker opened for adapter GitHub after 5 consecutive failures
+WARN: Command rejected: Session {sessionId} is paused
+INFO: Push operations disabled via configuration override
+```
+
+### Audit Trail for Kill-Switch Actions
+
+All session control actions are logged to the session event stream for full auditability:
+
+#### Manual Pause Event
+```json
+{
+  "eventType": "SessionPaused",
+  "id": "event-guid",
+  "correlation": { "sessionId": "session-guid" },
+  "actor": "admin@company.com",
+  "reason": "Session paused by user/system",
+  "commandId": null,
+  "timestamp": "2025-12-03T10:30:00Z"
+}
+```
+
+#### Auto-Pause Event
+```json
+{
+  "eventType": "SessionPaused",
+  "id": "event-guid",
+  "correlation": { "sessionId": "session-guid" },
+  "actor": "system-auto-pause",
+  "reason": "Auto-paused: 3 consecutive errors (threshold: 3)",
+  "commandId": "triggering-command-guid",
+  "timestamp": "2025-12-03T10:30:00Z"
+}
+```
+
+#### Abort Event
+```json
+{
+  "eventType": "SessionAborted",
+  "id": "event-guid",
+  "correlation": { "sessionId": "session-guid" },
+  "actor": "admin@company.com",
+  "reason": "Session aborted by user/system",
+  "commandId": null,
+  "timestamp": "2025-12-03T10:31:00Z"
+}
+```
+
+**Audit Access:**
+- **Session Event Log**: Check `session.Events` property or subscribe to event stream
+- **Console Logs**: Auto-pause actions logged with `[AUTO-PAUSE]` prefix
+- **Metrics**: Query `sessions_auto_paused`, `sessions_paused`, `sessions_aborted` counters
+- **UI**: Session details panel shows all events in chronological order
+
+### Recovery Procedures
+
+#### Resuming Paused Sessions
+1. **Identify Root Cause**: Check session logs and error details
+2. **Fix Issues**: Resolve merge conflicts, fix credentials, etc.
+3. **Resume Session**: Right-click session → "Resume Session"
+4. **Monitor**: Watch for continued errors that may trigger re-pause
+
+#### Restoring Live Operations
+1. **Gradual Re-enablement**: Start with dry-run mode enabled
+2. **Single Session Testing**: Resume one session at a time
+3. **Monitor Metrics**: Ensure error rates remain low
+4. **Full Restore**: Re-enable push operations and live adapters
+
+#### Configuration Rollback
+Keep backup configurations for quick restoration:
+
+```bash
+# Safe configuration backup
+cp appsettings.json appsettings.safe-backup.json
+
+# Quick rollback to safe state
+cp appsettings.safe-backup.json appsettings.json
+```
+
+### Prevention Measures
+
+#### Proactive Monitoring
+- Set up alerts for `session_auto_paused > 0`
+- Monitor `commands_failed / commands_processed > 0.05`
+- Track `circuit_breaker_trips` for adapter health
+
+#### Configuration Validation
+- Use `ConfigBuilder.ValidateLiveAdapters()` before enabling live operations
+- Test configurations in dry-run mode first
+- Maintain separate config files for different environments
+
+#### Access Controls
+- Limit who can modify live policy settings
+- Use environment variables for production overrides
+- Implement approval workflows for configuration changes

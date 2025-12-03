@@ -148,6 +148,9 @@ static class Program
         var appConfig = JuniorDev.Contracts.ConfigBuilder.GetAppConfig(configuration);
         services.AddSingleton<AppConfig>(appConfig);
 
+        // Configure LivePolicyConfig as IOptionsMonitor for hot-reload
+        services.Configure<LivePolicyConfig>(configuration.GetSection("AppConfig:LivePolicy"));
+
         // Add logging
         services.AddLogging(configure => configure.AddConsole());
 

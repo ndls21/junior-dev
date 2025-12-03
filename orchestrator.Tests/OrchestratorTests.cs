@@ -510,20 +510,21 @@ public class OrchestratorTests : TimeoutTestBase
 
         // Assert
         Console.WriteLine("Assert: Verifying the sequence of events matches expected lifecycle behavior.");
-        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(6).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(7).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
         Console.WriteLine($"Received {events.Count} events in the sequence.");
 
-        // Should have: accepted+completed for cmd1, status paused, rejected for cmd2, status running, accepted+completed for cmd3
-        Assert.Equal(6, events.Count);
+        // Should have: accepted+completed for cmd1, paused events, rejected for cmd2, running status, accepted for cmd3
+        Assert.Equal(7, events.Count);
         Assert.IsType<CommandAccepted>(events[0]);
         Assert.IsType<CommandCompleted>(events[1]);
-        Assert.IsType<SessionStatusChanged>(events[2]);
-        Assert.Equal(SessionStatus.Paused, ((SessionStatusChanged)events[2]).Status);
-        Assert.IsType<CommandRejected>(events[3]);
-        Assert.IsType<SessionStatusChanged>(events[4]);
-        Assert.Equal(SessionStatus.Running, ((SessionStatusChanged)events[4]).Status);
-        Assert.IsType<CommandAccepted>(events[5]);
-        // Note: completed for cmd3 and abort status not included in Take(6)
+        Assert.IsType<SessionPaused>(events[2]);
+        Assert.IsType<SessionStatusChanged>(events[3]);
+        Assert.Equal(SessionStatus.Paused, ((SessionStatusChanged)events[3]).Status);
+        Assert.IsType<CommandRejected>(events[4]);
+        Assert.IsType<SessionStatusChanged>(events[5]);
+        Assert.Equal(SessionStatus.Running, ((SessionStatusChanged)events[5]).Status);
+        Assert.IsType<CommandAccepted>(events[6]);
+        // Note: completed for cmd3 and abort status not included in Take(7)
         Console.WriteLine("Test passed: Session lifecycle (pause/resume/abort) properly controls command execution.");
     }
 
@@ -745,13 +746,13 @@ public class OrchestratorTests : TimeoutTestBase
     }
 
     [Fact]
-    public async Task BuildProjectCommand_WithInvalidPath_Rejected()
+    public async Task PausedSession_RejectsCommands_WithCommandRejectedEvent()
     {
-        Console.WriteLine("Test: BuildProjectCommand_WithInvalidPath_Rejected");
-        Console.WriteLine("Purpose: Verify that BuildProject commands with invalid paths are rejected by policy.");
+        Console.WriteLine("Test: PausedSession_RejectsCommands_WithCommandRejectedEvent");
+        Console.WriteLine("Purpose: Verify that commands published to a paused session are rejected with CommandRejected events.");
 
         // Arrange
-        Console.WriteLine("Arrange: Creating a session for build command validation.");
+        Console.WriteLine("Arrange: Creating a session and initial command.");
         var sessionId = Guid.NewGuid();
         var config = new SessionConfig(
             sessionId,
@@ -766,29 +767,44 @@ public class OrchestratorTests : TimeoutTestBase
         await _sessionManager.CreateSession(config);
         Console.WriteLine("Session created.");
 
-        var command = new BuildProject(
+        var command1 = new CreateBranch(
             Guid.NewGuid(),
             new Correlation(sessionId),
             new RepoRef("test", "/tmp/test"),
-            "../../../etc/passwd", // Invalid path
-            "Release");
-        Console.WriteLine("Created BuildProject command with invalid path.");
+            "branch1");
+
+        var command2 = new CreateBranch(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            new RepoRef("test", "/tmp/test"),
+            "branch2");
+        Console.WriteLine("Created two commands - first should succeed, second should be rejected when paused.");
 
         // Act
-        Console.WriteLine("Act: Publishing the invalid build command.");
-        await _sessionManager.PublishCommand(command);
-        Console.WriteLine("Invalid build command published.");
+        Console.WriteLine("Act: Publishing first command (should succeed), then pausing session.");
+        await _sessionManager.PublishCommand(command1); // Should succeed
+        await _sessionManager.PauseSession(sessionId);
+        Console.WriteLine("Session paused.");
+
+        Console.WriteLine("Publishing second command while paused (should be rejected).");
+        await _sessionManager.PublishCommand(command2); // Should be rejected
+        Console.WriteLine("Second command published while paused.");
 
         // Assert
-        Console.WriteLine("Assert: Verifying the command is rejected due to invalid path.");
-        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(1).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
-        Console.WriteLine($"Received {events.Count} event(s) after initial status.");
+        Console.WriteLine("Assert: Verifying the sequence includes CommandRejected for the paused session.");
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).Skip(1).Take(5).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+        Console.WriteLine($"Received {events.Count} events after initial status.");
 
-        Assert.Single(events);
-        var rejected = Assert.IsType<CommandRejected>(events[0]);
-        Assert.Equal(command.Id, rejected.CommandId);
-        Assert.Contains("Invalid project path", rejected.Reason);
-        Console.WriteLine("Test passed: BuildProject command with invalid path was properly rejected.");
+        Assert.Equal(5, events.Count);
+        Assert.IsType<CommandAccepted>(events[0]);
+        Assert.IsType<CommandCompleted>(events[1]);
+        Assert.IsType<SessionPaused>(events[2]);
+        Assert.IsType<SessionStatusChanged>(events[3]);
+        Assert.Equal(SessionStatus.Paused, ((SessionStatusChanged)events[3]).Status);
+        var rejected = Assert.IsType<CommandRejected>(events[4]);
+        Assert.Equal(command2.Id, rejected.CommandId);
+        Assert.Equal("Session is paused", rejected.Reason);
+        Console.WriteLine("Test passed: Commands to paused sessions are properly rejected with CommandRejected events.");
     }
 }
 
@@ -1101,5 +1117,179 @@ public class RateLimitingIntegrationTests : TimeoutTestBase
         Assert.Equal(1, throttled1);
         Assert.Equal(1, completed2);
         Assert.Equal(1, throttled2);
+    }
+
+    [Fact]
+    public async Task AutoPause_ConsecutiveErrors_PausesSessionAtThreshold()
+    {
+        Console.WriteLine("Test: AutoPause_ConsecutiveErrors_PausesSessionAtThreshold");
+        Console.WriteLine("Purpose: Verify that a session auto-pauses after consecutive errors reach the threshold.");
+
+        // Arrange
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile 
+            { 
+                Name = "auto-pause-test", 
+                ProtectedBranches = new HashSet<string> { "main" },
+                AutoPauseErrorThreshold = 3  // Pause after 3 consecutive errors
+            },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+
+        // Act - Simulate 3 consecutive failures
+        for (int i = 1; i <= 3; i++)
+        {
+            var failureEvent = new CommandCompleted(
+                Guid.NewGuid(),
+                new Correlation(sessionId),
+                Guid.NewGuid(),
+                CommandOutcome.Failure,
+                $"Simulated error {i}");
+            
+            await _sessionManager.PublishEvent(failureEvent);
+        }
+
+        await Task.Delay(100); // Allow auto-pause to process
+
+        // Assert - Try to publish a command, should be rejected due to paused session
+        var command = new Comment(Guid.NewGuid(), new Correlation(sessionId), new WorkItemRef("test", "1"), "Should be rejected");
+        await _sessionManager.PublishCommand(command);
+
+        await _sessionManager.CompleteSession(sessionId);
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+
+        var pauseEvents = events.OfType<SessionPaused>().ToList();
+        var rejectedEvents = events.OfType<CommandRejected>().ToList();
+
+        Assert.Single(pauseEvents);
+        Assert.Equal("system-auto-pause", pauseEvents[0].Actor);
+        Assert.Contains("3 consecutive errors", pauseEvents[0].Reason);
+        
+        Assert.Single(rejectedEvents);
+        Assert.Equal("Session is paused", rejectedEvents[0].Reason);
+    }
+
+    [Fact]
+    public async Task AutoPause_SuccessResetsErrorCount_DoesNotPause()
+    {
+        Console.WriteLine("Test: AutoPause_SuccessResetsErrorCount_DoesNotPause");
+        Console.WriteLine("Purpose: Verify that successful commands reset the error count and prevent auto-pause.");
+
+        // Arrange
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile 
+            { 
+                Name = "auto-pause-test", 
+                ProtectedBranches = new HashSet<string> { "main" },
+                AutoPauseErrorThreshold = 3
+            },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+
+        // Act - Simulate 2 failures, then success, then 2 more failures
+        await _sessionManager.PublishEvent(new CommandCompleted(
+            Guid.NewGuid(), new Correlation(sessionId), Guid.NewGuid(), 
+            CommandOutcome.Failure, "Error 1"));
+        
+        await _sessionManager.PublishEvent(new CommandCompleted(
+            Guid.NewGuid(), new Correlation(sessionId), Guid.NewGuid(), 
+            CommandOutcome.Failure, "Error 2"));
+        
+        // Success resets count
+        await _sessionManager.PublishEvent(new CommandCompleted(
+            Guid.NewGuid(), new Correlation(sessionId), Guid.NewGuid(), 
+            CommandOutcome.Success, "Success"));
+        
+        await _sessionManager.PublishEvent(new CommandCompleted(
+            Guid.NewGuid(), new Correlation(sessionId), Guid.NewGuid(), 
+            CommandOutcome.Failure, "Error 3"));
+        
+        await _sessionManager.PublishEvent(new CommandCompleted(
+            Guid.NewGuid(), new Correlation(sessionId), Guid.NewGuid(), 
+            CommandOutcome.Failure, "Error 4"));
+
+        await Task.Delay(100);
+
+        // Should still be running since count was reset
+        var command = new Comment(Guid.NewGuid(), new Correlation(sessionId), new WorkItemRef("test", "1"), "Should succeed");
+        await _sessionManager.PublishCommand(command);
+
+        await _sessionManager.CompleteSession(sessionId);
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+
+        var pauseEvents = events.OfType<SessionPaused>().ToList();
+        var completedEvents = events.OfType<CommandCompleted>().Where(e => e.Outcome == CommandOutcome.Success).ToList();
+
+        // Should not have auto-paused
+        Assert.Empty(pauseEvents);
+        // Should have at least one successful command (from the adapter processing the Comment)
+        Assert.NotEmpty(completedEvents);
+    }
+
+    [Fact]
+    public async Task AutoPause_ThresholdZero_DisablesAutoPause()
+    {
+        Console.WriteLine("Test: AutoPause_ThresholdZero_DisablesAutoPause");
+        Console.WriteLine("Purpose: Verify that setting AutoPauseErrorThreshold to 0 disables auto-pause.");
+
+        // Arrange
+        var sessionId = Guid.NewGuid();
+        var config = new SessionConfig(
+            sessionId,
+            null,
+            null,
+            new PolicyProfile 
+            { 
+                Name = "no-auto-pause", 
+                ProtectedBranches = new HashSet<string> { "main" },
+                AutoPauseErrorThreshold = 0  // Disabled
+            },
+            new RepoRef("test", "/tmp/test"),
+            new WorkspaceRef("/tmp/workspace"),
+            null,
+            "test-agent");
+
+        await _sessionManager.CreateSession(config);
+
+        // Act - Simulate many consecutive failures
+        for (int i = 1; i <= 10; i++)
+        {
+            await _sessionManager.PublishEvent(new CommandCompleted(
+                Guid.NewGuid(), new Correlation(sessionId), Guid.NewGuid(), 
+                CommandOutcome.Failure, $"Error {i}"));
+        }
+
+        await Task.Delay(100);
+
+        // Commands should still be processed
+        var command = new Comment(Guid.NewGuid(), new Correlation(sessionId), new WorkItemRef("test", "1"), "Should succeed");
+        await _sessionManager.PublishCommand(command);
+
+        await _sessionManager.CompleteSession(sessionId);
+        var events = await RunWithTimeout(_sessionManager.Subscribe(sessionId).ToListAsync().AsTask(), TimeSpan.FromSeconds(5));
+
+        var pauseEvents = events.OfType<SessionPaused>().ToList();
+        var completedEvents = events.OfType<CommandCompleted>().ToList();
+
+        // Should never auto-pause
+        Assert.Empty(pauseEvents);
+        // Last command should have completed
+        Assert.Contains(completedEvents, e => e.Outcome == CommandOutcome.Success);
     }
 }

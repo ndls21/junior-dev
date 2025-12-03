@@ -5,6 +5,8 @@ using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Options;
+using System.Linq;
 
 namespace JuniorDev.VcsGit;
 
@@ -22,13 +24,15 @@ public class VcsGitAdapter : IAdapter
     private readonly Counter<long> _commandsFailed;
     private readonly Counter<long> _gitOperations;
     private readonly Counter<long> _gitErrors;
+    private readonly IOptionsMonitor<LivePolicyConfig> _livePolicyMonitor;
 
-    public VcsGitAdapter(VcsConfig config, bool isFake = false, AppConfig? appConfig = null, ILogger<VcsGitAdapter>? logger = null)
+    public VcsGitAdapter(VcsConfig config, bool isFake = false, AppConfig? appConfig = null, ILogger<VcsGitAdapter>? logger = null, IOptionsMonitor<LivePolicyConfig>? livePolicyMonitor = null)
     {
         _config = config;
         _isFake = isFake;
         _appConfig = appConfig ?? new AppConfig();
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<VcsGitAdapter>.Instance;
+        _livePolicyMonitor = livePolicyMonitor ?? new OptionsMonitor<LivePolicyConfig>(new OptionsFactory<LivePolicyConfig>(Enumerable.Empty<IConfigureOptions<LivePolicyConfig>>(), Enumerable.Empty<IPostConfigureOptions<LivePolicyConfig>>()), Enumerable.Empty<IOptionsChangeTokenSource<LivePolicyConfig>>(), new OptionsCache<LivePolicyConfig>());
 
         // Initialize metrics
         _meter = new Meter("JuniorDev.VcsGit", "1.0.0");
@@ -130,7 +134,10 @@ public class VcsGitAdapter : IAdapter
     private async Task HandleRealCommand(ICommand command, SessionState session)
     {
         var repoPath = _config.RepoPath;
-        if (_config.DryRun)
+        
+        // Read live policy settings dynamically
+        var livePolicy = _livePolicyMonitor.CurrentValue;
+        if (livePolicy?.DryRun ?? true)
         {
             // In dry run, just emit events without running commands
             await HandleDryRunCommand(command, session);
@@ -212,7 +219,7 @@ public class VcsGitAdapter : IAdapter
                 await session.AddEvent(commitEvent);
                 break;
             case Push p:
-                if (!_config.AllowPush || !(_appConfig.LivePolicy?.PushEnabled ?? false))
+                if (!(_livePolicyMonitor.CurrentValue?.PushEnabled ?? false))
                 {
                     await EmitCommandCompletedFailure(session, command, "Push is disabled");
                     return;

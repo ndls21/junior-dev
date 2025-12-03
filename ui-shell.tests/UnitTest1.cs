@@ -1952,7 +1952,7 @@ public class MainFormTests : IDisposable
         var form = CreateMainForm(isTestMode: true);
         form.SetSessionManager(mockSessionManager.Object);
 
-        mockSessionManager.Setup(sm => sm.PauseSession(It.IsAny<Guid>()))
+        mockSessionManager.Setup(sm => sm.PauseSession(It.IsAny<Guid>(), It.IsAny<string>()))
             .Returns(Task.CompletedTask);
 
         // Act - Simulate 2 errors (should not auto-pause yet)
@@ -1960,13 +1960,13 @@ public class MainFormTests : IDisposable
         await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 2");
 
         // Assert - Should not have paused yet
-        mockSessionManager.Verify(sm => sm.PauseSession(sessionId), Times.Never);
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId, It.IsAny<string>()), Times.Never);
 
         // Act - Third error should trigger auto-pause
         await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 3");
 
         // Assert - Should have paused and added blocking condition
-        mockSessionManager.Verify(sm => sm.PauseSession(sessionId), Times.Once);
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId, It.IsAny<string>()), Times.Once);
         
         var blockingConditions = form.GetBlockingConditionsForTest();
         Assert.Contains(blockingConditions, bc => 
@@ -1976,7 +1976,7 @@ public class MainFormTests : IDisposable
     }
 
     [Fact]
-    public async Task SessionKillSwitches_AutoPauseOnErrorThreshold_ResetsCountAfterAutoPause()
+    public async Task SessionKillSwitches_AutoPauseOnErrorThreshold_PreventsMultiplePauses()
     {
         // Arrange
         var mockSessionManager = new Mock<ISessionManager>();
@@ -1984,7 +1984,7 @@ public class MainFormTests : IDisposable
         var form = CreateMainForm(isTestMode: true);
         form.SetSessionManager(mockSessionManager.Object);
 
-        mockSessionManager.Setup(sm => sm.PauseSession(It.IsAny<Guid>()))
+        mockSessionManager.Setup(sm => sm.PauseSession(It.IsAny<Guid>(), It.IsAny<string>()))
             .Returns(Task.CompletedTask);
 
         // Act - Trigger auto-pause with 3 errors
@@ -1992,15 +1992,16 @@ public class MainFormTests : IDisposable
         await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 2");
         await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 3");
 
-        // Assert - Should have paused
-        mockSessionManager.Verify(sm => sm.PauseSession(sessionId), Times.Once);
+        // Assert - Should have paused exactly once
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId, It.IsAny<string>()), Times.Once);
 
-        // Act - Add more errors after reset
+        // Act - Add more errors after pause (should not pause again)
         await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 4");
         await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 5");
+        await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 6");
 
-        // Assert - Should not pause again yet (count reset after auto-pause)
-        mockSessionManager.Verify(sm => sm.PauseSession(sessionId), Times.Once);
+        // Assert - Should still have paused only once (no additional pauses for already paused session)
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId, It.IsAny<string>()), Times.Once);
     }
 
     [Fact]
@@ -2012,7 +2013,7 @@ public class MainFormTests : IDisposable
         var form = CreateMainForm(isTestMode: true);
         form.SetSessionManager(mockSessionManager.Object);
 
-        mockSessionManager.Setup(sm => sm.PauseSession(It.IsAny<Guid>()))
+        mockSessionManager.Setup(sm => sm.PauseSession(It.IsAny<Guid>(), It.IsAny<string>()))
             .ThrowsAsync(new Exception("Pause failed"));
 
         // Act - Trigger auto-pause
@@ -2021,10 +2022,46 @@ public class MainFormTests : IDisposable
         await form.AutoPauseSessionOnErrorForTest(sessionId, "Error 3");
 
         // Assert - Should have attempted to pause but handled failure gracefully
-        mockSessionManager.Verify(sm => sm.PauseSession(sessionId), Times.Once);
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId, It.IsAny<string>()), Times.Once);
         // No blocking condition should be added due to failure
         var blockingConditions = form.GetBlockingConditionsForTest();
         Assert.DoesNotContain(blockingConditions, bc => bc.SessionId == sessionId && bc.Type == BlockingType.AutoPaused);
+    }
+
+    [Fact(Timeout = 5000)]
+    public async Task SessionKillSwitches_AutoPauseOnErrorThreshold_ConcurrentErrors_ThreadSafe()
+    {
+        // Arrange
+        var mockSessionManager = new Mock<ISessionManager>();
+        var sessionId = Guid.NewGuid();
+        var form = CreateMainForm(isTestMode: true);
+        form.SetSessionManager(mockSessionManager.Object);
+
+        mockSessionManager.Setup(sm => sm.PauseSession(It.IsAny<Guid>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
+        const int concurrentCalls = 10;
+        var tasks = new List<Task>();
+
+        // Act - Launch multiple concurrent error triggers
+        for (int i = 0; i < concurrentCalls; i++)
+        {
+            tasks.Add(Task.Run(() => form.AutoPauseSessionOnErrorForTest(sessionId, $"Concurrent Error {i}")));
+        }
+
+        await Task.WhenAll(tasks);
+
+        // Wait a bit for background tasks to complete
+        await Task.Delay(100);
+
+        // Assert - Should have paused exactly once despite concurrent calls
+        mockSessionManager.Verify(sm => sm.PauseSession(sessionId, It.IsAny<string>()), Times.Once);
+
+        // Should have added exactly one blocking condition
+        var blockingConditions = form.GetBlockingConditionsForTest();
+        var autoPauseConditions = blockingConditions.Where(bc => bc.SessionId == sessionId && bc.Type == BlockingType.AutoPaused).ToList();
+        Assert.Single(autoPauseConditions);
+        Assert.Contains("auto-paused due to repeated errors", autoPauseConditions[0].Message);
     }
 
     [Fact]
@@ -2103,14 +2140,14 @@ public class MainFormTests : IDisposable
         form.SetSessionManager(mockSessionManager.Object);
         form.SetSelectedSessionItemForTest(sessionItem);
 
-        mockSessionManager.Setup(sm => sm.AbortSession(It.IsAny<Guid>()))
+        mockSessionManager.Setup(sm => sm.AbortSession(It.IsAny<Guid>(), It.IsAny<string>()))
             .Returns(Task.CompletedTask);
 
         // Act - Abort selected session (simulate user clicking Yes in dialog)
         await form.AbortSelectedSessionForTest(true, sessionId);
 
         // Assert - Should have called AbortSession
-        mockSessionManager.Verify(sm => sm.AbortSession(sessionId), Times.Once);
+        mockSessionManager.Verify(sm => sm.AbortSession(sessionId, It.IsAny<string>()), Times.Once);
     }
 
     [Fact]
@@ -2129,7 +2166,7 @@ public class MainFormTests : IDisposable
         await form.AbortSelectedSessionForTest(false);
 
         // Assert - Should not have called AbortSession
-        mockSessionManager.Verify(sm => sm.AbortSession(It.IsAny<Guid>()), Times.Never);
+        mockSessionManager.Verify(sm => sm.AbortSession(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
@@ -2145,7 +2182,7 @@ public class MainFormTests : IDisposable
         await form.AbortSelectedSessionForTest(true);
 
         // Assert - Should not have called AbortSession
-        mockSessionManager.Verify(sm => sm.AbortSession(It.IsAny<Guid>()), Times.Never);
+        mockSessionManager.Verify(sm => sm.AbortSession(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
@@ -2160,14 +2197,14 @@ public class MainFormTests : IDisposable
         form.SetSessionManager(mockSessionManager.Object);
         form.SetSelectedSessionItemForTest(sessionItem);
 
-        mockSessionManager.Setup(sm => sm.AbortSession(It.IsAny<Guid>()))
+        mockSessionManager.Setup(sm => sm.AbortSession(It.IsAny<Guid>(), It.IsAny<string>()))
             .ThrowsAsync(new Exception("Abort failed"));
 
         // Act - Abort fails
         await form.AbortSelectedSessionForTest(true, sessionId);
 
         // Assert - Should have attempted abort but handled failure
-        mockSessionManager.Verify(sm => sm.AbortSession(sessionId), Times.Once);
+        mockSessionManager.Verify(sm => sm.AbortSession(sessionId, It.IsAny<string>()), Times.Once);
         // Error would be shown to user (in real scenario), but we can't test MessageBox in unit tests
     }
 

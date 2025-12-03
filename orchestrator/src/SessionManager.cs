@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using JuniorDev.Contracts;
+using System.Diagnostics.Metrics;
 
 namespace JuniorDev.Orchestrator;
 
@@ -21,6 +22,16 @@ public class SessionManager : ISessionManager, IDisposable
     private readonly System.Threading.Timer _cleanupTimer;
     private bool _disposed;
 
+    // Metrics for session management operations
+    private readonly Meter _meter;
+    private readonly Counter<long> _sessionsCreated;
+    private readonly Counter<long> _sessionsPaused;
+    private readonly Counter<long> _sessionsResumed;
+    private readonly Counter<long> _sessionsAborted;
+    private readonly Counter<long> _sessionsCompleted;
+    private readonly Counter<long> _commandsRejectedForPausedSession;
+    private readonly Counter<long> _sessionsAutoPaused;
+
     public SessionManager(
         IEnumerable<IAdapter> adapters,
         IPolicyEnforcer policyEnforcer,
@@ -36,6 +47,16 @@ public class SessionManager : ISessionManager, IDisposable
         _artifactStore = artifactStore;
         _workItemConfig = workItemConfig ?? new WorkItemConfig();
         _claimManager = new ClaimManager(_workItemConfig);
+
+        // Initialize metrics
+        _meter = new Meter("JuniorDev.Orchestrator.SessionManager", "1.0.0");
+        _sessionsCreated = _meter.CreateCounter<long>("sessions_created", "sessions", "Number of sessions created");
+        _sessionsPaused = _meter.CreateCounter<long>("sessions_paused", "sessions", "Number of sessions paused");
+        _sessionsResumed = _meter.CreateCounter<long>("sessions_resumed", "sessions", "Number of sessions resumed");
+        _sessionsAborted = _meter.CreateCounter<long>("sessions_aborted", "sessions", "Number of sessions aborted");
+        _sessionsCompleted = _meter.CreateCounter<long>("sessions_completed", "sessions", "Number of sessions completed");
+        _commandsRejectedForPausedSession = _meter.CreateCounter<long>("commands_rejected_paused_session", "commands", "Number of commands rejected due to paused session");
+        _sessionsAutoPaused = _meter.CreateCounter<long>("sessions_auto_paused", "sessions", "Number of sessions automatically paused due to error threshold");
 
         // Start background cleanup timer
         _cleanupTimer = new System.Threading.Timer(
@@ -61,6 +82,9 @@ public class SessionManager : ISessionManager, IDisposable
             "Session created");
 
         await sessionState.AddEvent(statusEvent);
+
+        // Record session creation metric
+        _sessionsCreated.Add(1);
     }
 
     public async Task PublishCommand(ICommand command)
@@ -76,6 +100,28 @@ public class SessionManager : ISessionManager, IDisposable
         }
 
         await session.AddEvent(@event);
+
+        // Track errors and auto-pause if threshold exceeded
+        if (@event is CommandCompleted completed)
+        {
+            if (completed.Outcome == CommandOutcome.Failure)
+            {
+                session.IncrementErrorCount();
+                
+                // Check if we've hit the error threshold
+                var threshold = session.Config.Policy.AutoPauseErrorThreshold;
+                if (threshold > 0 && session.ConsecutiveErrors >= threshold && session.Status == SessionStatus.Running)
+                {
+                    // Auto-pause the session
+                    await AutoPauseSession(session, completed.CommandId);
+                }
+            }
+            else if (completed.Outcome == CommandOutcome.Success)
+            {
+                // Reset error count on successful command
+                session.ResetErrorCount();
+            }
+        }
     }
 
     private async Task ProcessCommand(ICommand command, bool bypassApproval)
@@ -95,6 +141,9 @@ public class SessionManager : ISessionManager, IDisposable
                 "Session is paused");
 
             await session.AddEvent(rejectedEvent);
+            
+            // Record metric for rejected command due to paused session
+            _commandsRejectedForPausedSession.Add(1);
             return;
         }
 
@@ -294,7 +343,30 @@ public class SessionManager : ISessionManager, IDisposable
         return command is Push && config.Policy.RequireApprovalForPush;
     }
 
-    public async Task PauseSession(Guid sessionId)
+    private async Task AutoPauseSession(SessionState session, Guid triggeringCommandId)
+    {
+        var threshold = session.Config.Policy.AutoPauseErrorThreshold;
+        var reason = $"Auto-paused: {session.ConsecutiveErrors} consecutive errors (threshold: {threshold})";
+        
+        var pauseEvent = new SessionPaused(
+            Guid.NewGuid(),
+            new Correlation(session.Config.SessionId),
+            "system-auto-pause",
+            reason,
+            triggeringCommandId);
+
+        await session.AddEvent(pauseEvent);
+        await session.SetStatus(SessionStatus.Paused, reason);
+        
+        // Record metrics
+        _sessionsPaused.Add(1);
+        _sessionsAutoPaused.Add(1);
+        
+        // Log for auditability
+        Console.WriteLine($"[AUTO-PAUSE] Session {session.Config.SessionId} auto-paused after {session.ConsecutiveErrors} consecutive errors. Command: {triggeringCommandId}");
+    }
+
+    public async Task PauseSession(Guid sessionId, string actor = "system")
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
         {
@@ -306,7 +378,18 @@ public class SessionManager : ISessionManager, IDisposable
             throw new InvalidOperationException($"Cannot pause session in status {session.Status}");
         }
 
+        var pauseEvent = new SessionPaused(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            actor,
+            "Session paused by user/system");
+
+        await session.AddEvent(pauseEvent);
+
         await session.SetStatus(SessionStatus.Paused, "Session paused");
+        
+        // Record session pause metric
+        _sessionsPaused.Add(1);
     }
 
     public async Task ResumeSession(Guid sessionId)
@@ -322,9 +405,12 @@ public class SessionManager : ISessionManager, IDisposable
         }
 
         await session.SetStatus(SessionStatus.Running, "Session resumed");
+        
+        // Record session resume metric
+        _sessionsResumed.Add(1);
     }
 
-    public async Task AbortSession(Guid sessionId)
+    public async Task AbortSession(Guid sessionId, string actor = "system")
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
         {
@@ -336,7 +422,18 @@ public class SessionManager : ISessionManager, IDisposable
             throw new InvalidOperationException($"Session {sessionId} is already in terminal state");
         }
 
+        var abortEvent = new SessionAborted(
+            Guid.NewGuid(),
+            new Correlation(sessionId),
+            actor,
+            "Session aborted by user/system");
+
+        await session.AddEvent(abortEvent);
+
         await session.SetStatus(SessionStatus.Error, "Session aborted");
+        
+        // Record session abort metric
+        _sessionsAborted.Add(1);
     }
 
     public Task ApproveSession(Guid sessionId)
@@ -369,6 +466,9 @@ public class SessionManager : ISessionManager, IDisposable
         }
 
         await session.SetStatus(SessionStatus.Completed, "Session completed");
+        
+        // Record session completion metric
+        _sessionsCompleted.Add(1);
     }
 
     private async Task ProcessPending(SessionState session)

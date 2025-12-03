@@ -14,6 +14,7 @@ using DevExpress.AIIntegration;
 using System.Xml;
 using System.Linq;
 using System.Text.Json;
+using System.Collections.Concurrent;
 
 #pragma warning disable CS8602 // Dereference of possibly null reference - suppressed for fields initialized in constructor
 
@@ -126,9 +127,12 @@ public class EventRenderer
             
             case SessionStatusChanged status:
                 return $"{baseText}🔄 Session {status.Status}{(string.IsNullOrEmpty(status.Reason) ? "" : $" - {status.Reason}")}";
-            
-            case WorkItemClaimed claimed:
-                return $"{baseText}🔒 Work item {claimed.Item.Id} claimed by {claimed.Assignee} (expires: {claimed.ExpiresAt:HH:mm:ss})";
+
+            case SessionPaused paused:
+                return $"{baseText}⏸️ Session PAUSED by {paused.Actor}: {paused.Reason}";
+
+            case SessionAborted aborted:
+                return $"{baseText}🛑 Session ABORTED by {aborted.Actor}: {aborted.Reason}";
             
             case WorkItemClaimReleased released:
                 return $"{baseText}🔓 Work item {released.Item.Id} released{(string.IsNullOrEmpty(released.Reason) ? "" : $" - {released.Reason}")}";
@@ -190,6 +194,7 @@ public class LiveProfileSettings
     public bool PushEnabled { get; set; } = false;
     public bool DryRun { get; set; } = true;
     public bool RequireCredentialsValidation { get; set; } = true;
+    public int AutoPauseErrorThreshold { get; set; } = 3;
 
     // Current mode
     public bool IsLiveMode { get; set; } = false;
@@ -233,6 +238,7 @@ public class SettingsDialog : Form
     private System.Windows.Forms.CheckBox? pushEnabledCheck;
     private System.Windows.Forms.CheckBox? dryRunCheck;
     private System.Windows.Forms.CheckBox? requireValidationCheck;
+    private System.Windows.Forms.NumericUpDown? autoPauseErrorThresholdSpinner;
 
     // Profile mode controls
     private System.Windows.Forms.RadioButton? fakeModeRadio;
@@ -515,6 +521,7 @@ public class SettingsDialog : Form
         pushEnabledCheck = new System.Windows.Forms.CheckBox { Text = "Enable push operations", AutoSize = true };
         dryRunCheck = new System.Windows.Forms.CheckBox { Text = "Dry run mode (simulate operations)", AutoSize = true, Checked = true };
         requireValidationCheck = new System.Windows.Forms.CheckBox { Text = "Require credentials validation", AutoSize = true, Checked = true };
+        autoPauseErrorThresholdSpinner = new System.Windows.Forms.NumericUpDown { Minimum = 1, Maximum = 10, Value = 3, Width = 60 };
 
         var validateAllPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 480 };
         validateAllButton = new System.Windows.Forms.Button { Text = "Validate All Credentials", Width = 150 };
@@ -524,7 +531,13 @@ public class SettingsDialog : Form
         policyPanel.Controls.Add(pushEnabledCheck);
         policyPanel.Controls.Add(dryRunCheck);
         policyPanel.Controls.Add(requireValidationCheck);
-        policyPanel.Controls.Add(validateAllPanel);
+
+        // Add auto-pause error threshold control
+        var thresholdPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Height = 30, Width = 480 };
+        var thresholdLabel = new System.Windows.Forms.Label { Text = "Auto-pause error threshold:", AutoSize = true };
+        thresholdPanel.Controls.Add(thresholdLabel);
+        thresholdPanel.Controls.Add(autoPauseErrorThresholdSpinner);
+        policyPanel.Controls.Add(thresholdPanel);
         policyGroup.Controls.Add(policyPanel);
 
         // Wire up mode change events
@@ -568,6 +581,7 @@ public class SettingsDialog : Form
         pushEnabledCheck!.Checked = Settings.LiveProfile.PushEnabled;
         dryRunCheck!.Checked = Settings.LiveProfile.DryRun;
         requireValidationCheck!.Checked = Settings.LiveProfile.RequireCredentialsValidation;
+        autoPauseErrorThresholdSpinner!.Value = Settings.LiveProfile.AutoPauseErrorThreshold;
 
         fakeModeRadio!.Checked = !Settings.LiveProfile.IsLiveMode;
         liveModeRadio!.Checked = Settings.LiveProfile.IsLiveMode;
@@ -609,6 +623,7 @@ public class SettingsDialog : Form
         pushEnabledCheck!.Enabled = isLiveMode;
         dryRunCheck!.Enabled = isLiveMode;
         requireValidationCheck!.Enabled = isLiveMode;
+        autoPauseErrorThresholdSpinner!.Enabled = isLiveMode;
         validateAllButton!.Enabled = isLiveMode;
     }
 
@@ -654,7 +669,7 @@ public class SettingsDialog : Form
             };
 
             var adaptersConfig = new AdaptersConfig("github", "fake", "powershell");
-            var livePolicy = new LivePolicyConfig(pushEnabledCheck!.Checked, dryRunCheck!.Checked, requireValidationCheck!.Checked);
+            var livePolicy = new LivePolicyConfig(pushEnabledCheck!.Checked, dryRunCheck!.Checked, requireValidationCheck!.Checked, (int)autoPauseErrorThresholdSpinner!.Value);
 
             var appConfig = new AppConfig
             {
@@ -707,7 +722,7 @@ public class SettingsDialog : Form
             };
 
             var adaptersConfig = new AdaptersConfig("jira", "fake", "powershell");
-            var livePolicy = new LivePolicyConfig(pushEnabledCheck!.Checked, dryRunCheck!.Checked, requireValidationCheck!.Checked);
+            var livePolicy = new LivePolicyConfig(pushEnabledCheck!.Checked, dryRunCheck!.Checked, requireValidationCheck!.Checked, (int)autoPauseErrorThresholdSpinner!.Value);
 
             var appConfig = new AppConfig
             {
@@ -794,6 +809,7 @@ public class SettingsDialog : Form
                 PushEnabled = pushEnabledCheck!.Checked,
                 DryRun = dryRunCheck!.Checked,
                 RequireCredentialsValidation = requireValidationCheck!.Checked,
+                AutoPauseErrorThreshold = (int)autoPauseErrorThresholdSpinner!.Value,
                 IsLiveMode = liveModeRadio!.Checked
             }
         };
@@ -1006,7 +1022,10 @@ public partial class MainForm : Form
 
     // Blocking state tracking
     private List<BlockingCondition> _blockingConditions = new();
-    private Dictionary<Guid, int> _sessionErrorCounts = new();
+    private ConcurrentDictionary<Guid, int> _sessionErrorCounts = new();
+    private ConcurrentDictionary<Guid, object> _sessionPauseLocks = new();
+    private ConcurrentDictionary<Guid, bool> _sessionIsPausing = new();
+    private ConcurrentDictionary<Guid, bool> _sessionIsPaused = new();
 
     private bool isTestMode = false;
 
@@ -1050,16 +1069,23 @@ public partial class MainForm : Form
         // Register AI client for chat functionality
         RegisterAIClient();
 
-        InitializeComponent();
-        SetupMenu();
-        SetupUI();
-        eventRenderer = new EventRenderer(eventsMemoEdit!);
-        
-        // Only load layout if not in test mode, or let tests control it
+        // Skip UI initialization in test mode to avoid Windows Forms threading issues
         if (!this.isTestMode)
         {
+            InitializeComponent();
+            SetupMenu();
+            SetupUI();
+            eventRenderer = new EventRenderer(eventsMemoEdit!);
+            
+            // Only load layout if not in test mode
             LoadLayout();
             LoadAndApplySettings();
+        }
+        else
+        {
+            // Initialize minimal components for testing
+            eventRenderer = new EventRenderer(null); // No memo edit in test mode
+            _sessionErrorCounts = new ConcurrentDictionary<Guid, int>();
         }
 
         if (this.isTestMode)
@@ -1194,8 +1220,22 @@ public partial class MainForm : Form
         // Log UI state for inspection
         Console.WriteLine("=== UI TEST MODE INSPECTION ===");
         Console.WriteLine($"Window Size: {this.Size.Width}x{this.Size.Height}");
-        Console.WriteLine($"Sessions Panel: Visible={sessionsPanel!.Visible}, Width={sessionsPanel!.Width}");
-        Console.WriteLine($"Conversation Panel: Visible={conversationPanel!.Visible}");
+        if (sessionsPanel != null)
+        {
+            Console.WriteLine($"Sessions Panel: Visible={sessionsPanel.Visible}, Width={sessionsPanel.Width}");
+        }
+        else
+        {
+            Console.WriteLine("Sessions Panel: Not initialized (test mode)");
+        }
+        if (conversationPanel != null)
+        {
+            Console.WriteLine($"Conversation Panel: Visible={conversationPanel.Visible}");
+        }
+        else
+        {
+            Console.WriteLine("Conversation Panel: Not initialized (test mode)");
+        }
         Console.WriteLine($"Chat Streams: {_accordionManager?.ChatStreams.Count ?? 0}");
         if (_accordionManager != null)
         {
@@ -1206,9 +1246,30 @@ public partial class MainForm : Form
                 Console.WriteLine($"    Preview: {preview}");
             }
         }
-        Console.WriteLine($"Events Panel: Visible={eventsPanel!.Visible}, Height={eventsPanel!.Height}");
-        Console.WriteLine($"Artifacts Panel: Visible={artifactsPanel!.Visible}, Width={artifactsPanel!.Width}");
-        Console.WriteLine($"Chat Filter: {_chatFilterCombo?.SelectedItem?.ToString() ?? "None"}");
+        if (eventsPanel != null)
+        {
+            Console.WriteLine($"Events Panel: Visible={eventsPanel.Visible}, Height={eventsPanel.Height}");
+        }
+        else
+        {
+            Console.WriteLine("Events Panel: Not initialized (test mode)");
+        }
+        if (artifactsPanel != null)
+        {
+            Console.WriteLine($"Artifacts Panel: Visible={artifactsPanel.Visible}, Width={artifactsPanel.Width}");
+        }
+        else
+        {
+            Console.WriteLine("Artifacts Panel: Not initialized (test mode)");
+        }
+        if (_chatFilterCombo != null)
+        {
+            Console.WriteLine($"Chat Filter: {_chatFilterCombo.SelectedItem?.ToString() ?? "None"}");
+        }
+        else
+        {
+            Console.WriteLine("Chat Filter: Not initialized (test mode)");
+        }
         Console.WriteLine($"Total Artifacts: {_chatArtifacts.Sum(kvp => kvp.Value.Count)}");
         foreach (var kvp in _chatArtifacts)
         {
@@ -1220,7 +1281,14 @@ public partial class MainForm : Form
         {
             Console.WriteLine($"  - {condition.Type}: {condition.Message}");
         }
-        Console.WriteLine($"Sessions in list: {sessionsListBox!.Items.Count}");
+        if (sessionsListBox != null)
+        {
+            Console.WriteLine($"Sessions in list: {sessionsListBox.Items.Count}");
+        }
+        else
+        {
+            Console.WriteLine("Sessions in list: Not initialized (test mode)");
+        }
         Console.WriteLine("Mock data loaded successfully");
         Console.WriteLine("Auto-exit in 2 seconds...");
         Console.WriteLine("===============================");
@@ -1228,6 +1296,9 @@ public partial class MainForm : Form
 
     private void AddMockBlockingEvents()
     {
+        // Skip in test mode to avoid UI component initialization issues
+        if (isTestMode) return;
+
         // Add some mock blocking conditions for demonstration
         var sessionId1 = Guid.NewGuid();
         var sessionId2 = Guid.NewGuid();
@@ -1277,10 +1348,20 @@ public partial class MainForm : Form
 
     private void CreateSessionsPanel()
     {
-        sessionsPanel = dockManager.AddPanel(DockingStyle.Left);
-        sessionsPanel.Text = "Sessions";
-        sessionsPanel.FloatSize = new Size(300, 600);
-        sessionsPanel.FloatLocation = new Point(10, 10);
+        // In test mode, create components without docking if dockManager is not available
+        if (!isTestMode && dockManager != null)
+        {
+            sessionsPanel = dockManager.AddPanel(DockingStyle.Left);
+            sessionsPanel.Text = "Sessions";
+            sessionsPanel.FloatSize = new Size(300, 600);
+            sessionsPanel.FloatLocation = new Point(10, 10);
+        }
+        else if (isTestMode)
+        {
+            // In test mode, create a standalone panel for testing
+            sessionsPanel = new DockPanel();
+            sessionsPanel.Text = "Sessions";
+        }
 
         // Create a panel with action buttons, filters, and session list
         var panel = new Panel();
@@ -1374,13 +1455,27 @@ public partial class MainForm : Form
         panel.Controls.Add(filterPanel);
         panel.Controls.Add(actionPanel);
 
-        sessionsPanel.Controls.Add(panel);
+        // Only add to dock panel if we created one
+        if (sessionsPanel != null)
+        {
+            sessionsPanel.Controls.Add(panel);
+        }
     }
 
     private void CreateConversationPanel()
     {
-        conversationPanel = dockManager.AddPanel(DockingStyle.Fill);
-        conversationPanel.Text = "AI Chat";
+        // In test mode, create components without docking if dockManager is not available
+        if (!isTestMode && dockManager != null)
+        {
+            conversationPanel = dockManager.AddPanel(DockingStyle.Fill);
+            conversationPanel.Text = "AI Chat";
+        }
+        else if (isTestMode)
+        {
+            // In test mode, create a standalone panel for testing
+            conversationPanel = new DockPanel();
+            conversationPanel.Text = "AI Chat";
+        }
 
         // Create container panel for accordion layout
         _chatContainerPanel = new Panel
@@ -1399,7 +1494,11 @@ public partial class MainForm : Form
 
         // Don't auto-create initial session - let user create sessions explicitly via UI
 
-        conversationPanel.Controls.Add(_chatContainerPanel);
+        // Only add to dock panel if we created one
+        if (conversationPanel != null)
+        {
+            conversationPanel.Controls.Add(_chatContainerPanel);
+        }
     }
 
     private async void CreateInitialSession()
@@ -1462,23 +1561,47 @@ public partial class MainForm : Form
 
     private void CreateEventsPanel()
     {
-        eventsPanel = dockManager.AddPanel(DockingStyle.Bottom);
-        eventsPanel.Text = "Event Stream";
+        // In test mode, create components without docking if dockManager is not available
+        if (!isTestMode && dockManager != null)
+        {
+            eventsPanel = dockManager.AddPanel(DockingStyle.Bottom);
+            eventsPanel.Text = "Event Stream";
+        }
+        else if (isTestMode)
+        {
+            // In test mode, create a standalone panel for testing
+            eventsPanel = new DockPanel();
+            eventsPanel.Text = "Event Stream";
+        }
 
         eventsMemoEdit = new MemoEdit();
         eventsMemoEdit.Dock = DockStyle.Fill;
         eventsMemoEdit.Properties.ReadOnly = true;
         eventsMemoEdit.Properties.ScrollBars = ScrollBars.Vertical;
 
-        eventsPanel.Controls.Add(eventsMemoEdit);
+        // Only add to dock panel if we created one
+        if (eventsPanel != null)
+        {
+            eventsPanel.Controls.Add(eventsMemoEdit);
+        }
     }
 
     private void CreateArtifactsPanel()
     {
-        artifactsPanel = dockManager.AddPanel(DockingStyle.Right);
-        artifactsPanel.Text = "Artifacts & Tests";
-        artifactsPanel.FloatSize = new Size(300, 600);
-        artifactsPanel.FloatLocation = new Point(900, 10);
+        // In test mode, create components without docking if dockManager is not available
+        if (!isTestMode && dockManager != null)
+        {
+            artifactsPanel = dockManager.AddPanel(DockingStyle.Right);
+            artifactsPanel.Text = "Artifacts & Tests";
+            artifactsPanel.FloatSize = new Size(300, 600);
+            artifactsPanel.FloatLocation = new Point(900, 10);
+        }
+        else if (isTestMode)
+        {
+            // In test mode, create a standalone panel for testing
+            artifactsPanel = new DockPanel();
+            artifactsPanel.Text = "Artifacts & Tests";
+        }
 
         // Create container panel for filter + tree
         var containerPanel = new Panel();
@@ -1524,7 +1647,11 @@ public partial class MainForm : Form
         containerPanel.Controls.Add(artifactsTree);
         containerPanel.Controls.Add(filterPanel);
 
-        artifactsPanel.Controls.Add(containerPanel);
+        // Only add to dock panel if we created one
+        if (artifactsPanel != null)
+        {
+            artifactsPanel.Controls.Add(containerPanel);
+        }
 
         // Initialize with mock data
         RefreshArtifactsTree();
@@ -1938,42 +2065,87 @@ public partial class MainForm : Form
 
     private async Task AutoPauseSessionOnError(Guid sessionId, string reason)
     {
-        // Track error count for this session
-        if (!_sessionErrorCounts.ContainsKey(sessionId))
+        // Check if session is already paused - don't pause again
+        if (_sessionIsPaused.TryGetValue(sessionId, out var isPaused) && isPaused)
         {
-            _sessionErrorCounts[sessionId] = 0;
+            return;
         }
-        _sessionErrorCounts[sessionId]++;
 
-        const int ERROR_THRESHOLD = 3; // Auto-pause after 3 errors
-
-        if (_sessionErrorCounts[sessionId] >= ERROR_THRESHOLD)
+        // Use a per-session lock to prevent concurrent pause operations
+        var sessionLock = _sessionPauseLocks.GetOrAdd(sessionId, _ => new object());
+        
+        lock (sessionLock)
         {
-            try
+            // Check if already pausing to prevent multiple concurrent pauses
+            if (_sessionIsPausing.TryGetValue(sessionId, out var isPausing) && isPausing)
             {
-                await _sessionManager.PauseSession(sessionId);
+                Console.WriteLine($"Session {sessionId} is already being paused, ignoring additional error: {reason}");
+                return;
+            }
+
+            // Atomically increment error count for this session (thread-safe)
+            var currentCount = _sessionErrorCounts.AddOrUpdate(sessionId, 1, (key, oldValue) => oldValue + 1);
+
+            // Get configurable error threshold from live policy (default to 3 if not configured)
+            var errorThreshold = currentSettings.LiveProfile?.AutoPauseErrorThreshold ?? 3;
+
+            if (currentCount >= errorThreshold)
+            {
+                // Mark as pausing to prevent concurrent pauses
+                _sessionIsPausing.AddOrUpdate(sessionId, true, (key, oldValue) => true);
                 
-                AddBlockingCondition(new BlockingCondition
+                // Start pause operation
+                _ = Task.Run(async () =>
                 {
-                    SessionId = sessionId,
-                    Type = BlockingType.AutoPaused,
-                    Message = $"🚨 Session auto-paused due to repeated errors ({_sessionErrorCounts[sessionId]} failures). Last: {reason}",
-                    ActionText = "Resume"
-                });
+                    try
+                    {
+                        await _sessionManager.PauseSession(sessionId);
+                        
+                        // Reset error count after successful pause
+                        _sessionErrorCounts.AddOrUpdate(sessionId, 0, (key, oldValue) => 0);
+                        
+                        // Mark session as paused
+                        _sessionIsPaused.AddOrUpdate(sessionId, true, (key, oldValue) => true);
+                        
+                        // Use Invoke to update UI from background thread
+                        if (InvokeRequired)
+                        {
+                            Invoke(() => AddBlockingCondition(new BlockingCondition
+                            {
+                                SessionId = sessionId,
+                                Type = BlockingType.AutoPaused,
+                                Message = $"🚨 Session auto-paused due to repeated errors ({currentCount} failures). Last: {reason}",
+                                ActionText = "Resume"
+                            }));
+                        }
+                        else
+                        {
+                            AddBlockingCondition(new BlockingCondition
+                            {
+                                SessionId = sessionId,
+                                Type = BlockingType.AutoPaused,
+                                Message = $"🚨 Session auto-paused due to repeated errors ({currentCount} failures). Last: {reason}",
+                                ActionText = "Resume"
+                            });
+                        }
 
-                Console.WriteLine($"Auto-paused session {sessionId} due to {ERROR_THRESHOLD} consecutive errors");
-                
-                // Reset error count after auto-pause
-                _sessionErrorCounts[sessionId] = 0;
+                        Console.WriteLine($"Auto-paused session {sessionId} due to {errorThreshold} consecutive errors");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to auto-pause session {sessionId}: {ex.Message}");
+                    }
+                    finally
+                    {
+                        // Clear the pausing flag when done
+                        _sessionIsPausing.TryRemove(sessionId, out _);
+                    }
+                });
             }
-            catch (Exception ex)
+            else
             {
-                Console.WriteLine($"Failed to auto-pause session {sessionId}: {ex.Message}");
+                Console.WriteLine($"Session {sessionId} error count: {currentCount}/{errorThreshold} - {reason}");
             }
-        }
-        else
-        {
-            Console.WriteLine($"Session {sessionId} error count: {_sessionErrorCounts[sessionId]}/{ERROR_THRESHOLD} - {reason}");
         }
     }
 
@@ -2211,7 +2383,8 @@ public partial class MainForm : Form
                 {
                     PushEnabled = liveProfile.PushEnabled,
                     DryRun = liveProfile.DryRun,
-                    RequireCredentialsValidation = liveProfile.RequireCredentialsValidation
+                    RequireCredentialsValidation = liveProfile.RequireCredentialsValidation,
+                    AutoPauseErrorThreshold = liveProfile.AutoPauseErrorThreshold
                 };
                 updatedConfig["LivePolicy"] = System.Text.Json.JsonSerializer.SerializeToElement(livePolicy);
 
@@ -2697,14 +2870,18 @@ public partial class MainForm : Form
                 File.Delete(chatStreamsFile);
             }
             
-            // Explicitly reset panels to default layout
-            sessionsPanel!.Dock = DockingStyle.Left;
-            sessionsPanel!.Width = 250;
-            artifactsPanel!.Dock = DockingStyle.Right;
-            artifactsPanel!.Width = 300;
-            conversationPanel!.Dock = DockingStyle.Fill;
-            eventsPanel!.Dock = DockingStyle.Bottom;
-            eventsPanel!.Height = 200;
+            // Only reset panel layout if not in test mode (dock panels don't have Dock property in test mode)
+            if (!isTestMode)
+            {
+                // Explicitly reset panels to default layout
+                sessionsPanel!.Dock = DockingStyle.Left;
+                sessionsPanel!.Width = 250;
+                artifactsPanel!.Dock = DockingStyle.Right;
+                artifactsPanel!.Width = 300;
+                conversationPanel!.Dock = DockingStyle.Fill;
+                eventsPanel!.Dock = DockingStyle.Bottom;
+                eventsPanel!.Height = 200;
+            }
             
             // Reset chat streams to default
             LoadDefaultChatStreams();
@@ -3431,7 +3608,7 @@ public partial class MainForm : Form
         {
             try
             {
-                await _sessionManager.PauseSession(sessionItem.SessionId);
+                await _sessionManager.PauseSession(sessionItem.SessionId, "ui");
                 Console.WriteLine($"Paused session {sessionItem.SessionId} ({sessionItem.Name})");
                 RefreshSessionsList(); // Refresh to show updated status
             }
@@ -3450,6 +3627,8 @@ public partial class MainForm : Form
             try
             {
                 await _sessionManager.ResumeSession(sessionItem.SessionId);
+                // Clear the paused flag
+                _sessionIsPaused.TryRemove(sessionItem.SessionId, out _);
                 Console.WriteLine($"Resumed session {sessionItem.SessionId} ({sessionItem.Name})");
                 RefreshSessionsList(); // Refresh to show updated status
             }
@@ -3476,7 +3655,7 @@ public partial class MainForm : Form
             {
                 try
                 {
-                    await _sessionManager.AbortSession(sessionItem.SessionId);
+                    await _sessionManager.AbortSession(sessionItem.SessionId, "ui");
                     Console.WriteLine($"Aborted session {sessionItem.SessionId} ({sessionItem.Name})");
                     RefreshSessionsList(); // Refresh to show updated status
                 }

@@ -36,7 +36,8 @@ public class AiIntegrationTests
         var builder = Kernel.CreateBuilder();
         builder.AddOpenAIChatCompletion("gpt-4", apiKey!);
         var kernel = builder.Build();
-        var agent = new ReviewerAgent(kernel);
+        var appConfig = new JuniorDev.Contracts.AppConfig();
+        var agent = new ReviewerAgent(kernel, appConfig);
 
         var diffContent = @"
 diff --git a/src/Main.cs b/src/Main.cs
@@ -83,7 +84,8 @@ index 1234567..abcdef0 100644
         var builder = Kernel.CreateBuilder();
         builder.AddOpenAIChatCompletion("gpt-4", apiKey!);
         var kernel = builder.Build();
-        var agent = new ReviewerAgent(kernel);
+        var appConfig = new JuniorDev.Contracts.AppConfig();
+        var agent = new ReviewerAgent(kernel, appConfig);
 
         var logContent = @"Build started...
 Compiling src/Main.cs...

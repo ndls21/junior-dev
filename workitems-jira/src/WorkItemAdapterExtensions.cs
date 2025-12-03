@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using JuniorDev.Contracts;
 using JuniorDev.Orchestrator;
 using JuniorDev.Contracts;
+using Microsoft.Extensions.Options;
 
 namespace JuniorDev.WorkItems.Jira;
 
@@ -22,7 +23,7 @@ public static class WorkItemAdapterExtensions
 
         if (hasValidCredentials)
         {
-            services.AddSingleton<IAdapter>(sp => new JiraAdapter(appConfig, sp.GetRequiredService<ILogger<JiraAdapter>>()));
+            services.AddSingleton<IAdapter>(sp => new JiraAdapter(appConfig, sp.GetRequiredService<ILogger<JiraAdapter>>(), sp.GetService<IOptionsMonitor<LivePolicyConfig>>()));
         }
         else
         {

@@ -21,10 +21,13 @@ namespace JuniorDev.Agents.Sk;
 public class ReviewerAgent : AgentBase
 {
     private readonly Kernel _kernel;
+    private readonly ReviewerConfig _reviewerConfig;
     private OrchestratorFunctionBindings? _functionBindings;
 
     // Track reviewed artifacts to avoid duplicate reviews
     private readonly HashSet<string> _reviewedArtifacts = new();
+    // Cache for repository analysis results
+    private readonly Dictionary<string, (DateTimeOffset Timestamp, string Result)> _analysisCache = new();
 
     public override string AgentType => "reviewer";
 
@@ -38,9 +41,10 @@ public class ReviewerAgent : AgentBase
         nameof(Throttled)
     };
 
-    public ReviewerAgent(Kernel kernel)
+    public ReviewerAgent(Kernel kernel, AppConfig appConfig)
     {
         _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));
+        _reviewerConfig = appConfig?.Reviewer ?? new ReviewerConfig();
     }
 
     // Centralized review transition states so they are not hardcoded in multiple places
@@ -195,11 +199,11 @@ public class ReviewerAgent : AgentBase
         }
     }
 
-    internal Task<ReviewResult> GenerateReviewAsync(ArtifactAvailable artifact)
+    internal async Task<ReviewResult> GenerateReviewAsync(ArtifactAvailable artifact)
     {
         // TODO: Replace deterministic heuristics with Semantic Kernel / LLM analysis when
         // work-item query functions and LLM bindings are available (issues #8/#9).
-        return artifact.Artifact.Kind switch
+        var result = artifact.Artifact.Kind switch
         {
             "Diff" => ReviewDiffAsync(artifact),
             "Log" => ReviewLogAsync(artifact),
@@ -212,6 +216,20 @@ public class ReviewerAgent : AgentBase
                 Status = ReviewStatus.NeedsReview
             })
         };
+
+        // If repository analysis is enabled, perform additional analysis
+        if (_reviewerConfig.EnableRepositoryAnalysis)
+        {
+            var repoAnalysis = await PerformRepositoryAnalysisAsync();
+            if (repoAnalysis != null)
+            {
+                // Combine artifact review with repository analysis
+                var combinedResult = await result;
+                return CombineReviewResults(combinedResult, repoAnalysis);
+            }
+        }
+
+        return await result;
     }
 
     internal async Task<ReviewResult> ReviewDiffAsync(ArtifactAvailable artifact)
@@ -627,6 +645,43 @@ public class ReviewerAgent : AgentBase
     }
 
     /// <summary>
+    /// Parses LLM analysis response into ReviewResult.
+    /// </summary>
+    private ReviewResult ParseAnalysisToReviewResult(string analysis, string artifactType)
+    {
+        // SK/LLM scaffolding: Parse the LLM response
+        // TODO: Implement proper parsing based on expected LLM output format
+        // For now, simple heuristics on the response string
+
+        var summary = $"{artifactType} analysis: {analysis}";
+        var issues = new List<string>();
+        var recommendations = new List<string>();
+        var status = ReviewStatus.ReadyForQA;
+
+        if (analysis.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+            analysis.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+            analysis.Contains("issue", StringComparison.OrdinalIgnoreCase))
+        {
+            issues.Add("Issues detected in analysis");
+            status = ReviewStatus.NeedsReview;
+        }
+
+        if (analysis.Contains("recommend", StringComparison.OrdinalIgnoreCase) ||
+            analysis.Contains("consider", StringComparison.OrdinalIgnoreCase))
+        {
+            recommendations.Add("Review recommendations provided");
+        }
+
+        return new ReviewResult
+        {
+            Summary = summary,
+            Issues = issues,
+            Recommendations = recommendations,
+            Status = status
+        };
+    }
+
+    /// <summary>
     /// SK plugin for LLM-driven review analysis.
     /// </summary>
     private class ReviewAnalysisPlugin
@@ -682,63 +737,524 @@ Provide a clear assessment of the log contents.";
             return response.ToString();
         }
 
-        [KernelFunction("analyze_test_results")]
-        [Description("Analyzes test results for failures, success rates, and recommendations.")]
-        public async Task<string> AnalyzeTestResultsAsync(
-            [Description("The test results content to analyze")] string content)
+        [KernelFunction("analyze_structure")]
+        [Description("Analyzes repository structure for organization, missing files, and architectural issues.")]
+        public async Task<IReadOnlyList<AnalysisFinding>> AnalyzeStructureAsync(
+            [Description("Repository structure information (file tree, directories, etc.)")] string repoStructure,
+            [Description("Configuration for the analysis")] RepositoryAnalysisConfig config)
         {
-            // Use LLM to analyze the test results
-            var prompt = $@"Analyze these test results:
+            // Use LLM to analyze repository structure
+            var prompt = $@"Analyze this repository structure and identify specific issues:
 
-{content}
+{repoStructure}
 
-Please provide:
-1. Test execution summary
-2. Any failures and their causes
-3. Success rates and coverage assessment
-4. Recommendations for fixes or improvements
+Please identify specific structural issues and provide findings in this format:
+- Path: [file/directory path]
+- Kind: structure
+- Severity: [info/warning/error/critical]
+- Summary: [brief description]
+- Details: [more details]
+- Recommendation: [optional suggestion]
 
-Give a clear evaluation of the test outcomes.";
+Focus on:
+1. Missing important files (README, LICENSE, .gitignore, etc.)
+2. Poor directory organization
+3. Architectural inconsistencies
+4. Non-standard project layouts
+
+Return findings as a structured list.";
 
             var response = await _kernel.InvokePromptAsync(prompt);
-            return response.ToString();
+            return ParseFindingsFromResponse(response.ToString(), "structure");
+        }
+
+        [KernelFunction("analyze_quality")]
+        [Description("Analyzes code quality across the repository including patterns, consistency, and best practices.")]
+        public async Task<IReadOnlyList<AnalysisFinding>> AnalyzeQualityAsync(
+            [Description("Code files and their contents from the repository")] IReadOnlyList<FileMetadata> files,
+            [Description("Configuration for the analysis")] RepositoryAnalysisConfig config)
+        {
+            // Filter and limit files based on config
+            var filesToAnalyze = files
+                .Where(f => f.Content != null && f.Size <= config.MaxFileBytes)
+                .Take(config.MaxFiles)
+                .ToList();
+
+            if (!filesToAnalyze.Any())
+                return Array.Empty<AnalysisFinding>();
+
+            var codeSamples = string.Join("\n\n", filesToAnalyze.Select(f =>
+                $"File: {f.Path}\nSize: {f.Size} bytes\nContent:\n{f.Content}"));
+
+            // Use LLM to analyze code quality
+            var prompt = $@"Analyze the code quality in these files and identify specific issues:
+
+{codeSamples}
+
+Please identify specific code quality issues and provide findings in this format:
+- Path: [file path]
+- Kind: quality
+- Severity: [info/warning/error/critical]
+- Summary: [brief description]
+- Details: [more details]
+- Recommendation: [optional suggestion]
+
+Focus on:
+1. Code style and consistency issues
+2. Best practices violations
+3. Potential technical debt
+4. Readability and maintainability problems
+5. Common anti-patterns
+
+Return findings as a structured list.";
+
+            var response = await _kernel.InvokePromptAsync(prompt);
+            return ParseFindingsFromResponse(response.ToString(), "quality");
+        }
+
+        [KernelFunction("security_scan")]
+        [Description("Scans for security vulnerabilities and best practices in the codebase.")]
+        public async Task<IReadOnlyList<AnalysisFinding>> SecurityScanAsync(
+            [Description("Code files and configuration files to scan for security issues")] IReadOnlyList<FileMetadata> files,
+            [Description("Configuration for the analysis")] RepositoryAnalysisConfig config)
+        {
+            // Filter for security-sensitive files
+            var securityFiles = files
+                .Where(f => f.Content != null &&
+                           (f.Path.Contains("config") || f.Path.Contains("settings") ||
+                            f.Path.Contains("auth") || f.Path.Contains("security") ||
+                            f.Path.EndsWith(".cs") || f.Path.EndsWith(".js") || f.Path.EndsWith(".py")))
+                .Where(f => f.Size <= config.MaxFileBytes)
+                .Take(config.MaxFiles)
+                .ToList();
+
+            if (!securityFiles.Any())
+                return Array.Empty<AnalysisFinding>();
+
+            var codeContent = string.Join("\n\n", securityFiles.Select(f =>
+                $"File: {f.Path}\n{f.Content}"));
+
+            // Use LLM to perform security analysis
+            var prompt = $@"Perform a security analysis on these files and identify specific vulnerabilities:
+
+{codeContent}
+
+Please identify specific security issues and provide findings in this format:
+- Path: [file path]
+- Kind: security
+- Severity: [info/warning/error/critical]
+- Summary: [brief description]
+- Details: [more details]
+- Recommendation: [optional suggestion]
+
+Focus on:
+1. Hardcoded secrets, credentials, API keys
+2. SQL injection vulnerabilities
+3. XSS vulnerabilities
+4. Authentication/authorization issues
+5. Input validation problems
+6. Insecure configurations
+
+Return findings as a structured list.";
+
+            var response = await _kernel.InvokePromptAsync(prompt);
+            return ParseFindingsFromResponse(response.ToString(), "security");
+        }
+
+        [KernelFunction("perf_scan")]
+        [Description("Analyzes performance characteristics and potential bottlenecks in the code.")]
+        public async Task<IReadOnlyList<AnalysisFinding>> PerformanceScanAsync(
+            [Description("Code files to analyze for performance issues")] IReadOnlyList<FileMetadata> files,
+            [Description("Configuration for the analysis")] RepositoryAnalysisConfig config)
+        {
+            // Filter for performance-critical files
+            var perfFiles = files
+                .Where(f => f.Content != null && f.Size <= config.MaxFileBytes)
+                .Take(config.MaxFiles)
+                .ToList();
+
+            if (!perfFiles.Any())
+                return Array.Empty<AnalysisFinding>();
+
+            var codeContent = string.Join("\n\n", perfFiles.Select(f =>
+                $"File: {f.Path}\n{f.Content}"));
+
+            // Use LLM to analyze performance
+            var prompt = $@"Analyze the performance characteristics of this code and identify bottlenecks:
+
+{codeContent}
+
+Please identify specific performance issues and provide findings in this format:
+- Path: [file path]
+- Kind: performance
+- Severity: [info/warning/error/critical]
+- Summary: [brief description]
+- Details: [more details]
+- Recommendation: [optional suggestion]
+
+Focus on:
+1. Inefficient algorithms or data structures
+2. Synchronous I/O in hot paths
+3. Memory leaks or excessive allocations
+4. Scalability concerns
+5. Database query optimization opportunities
+
+Return findings as a structured list.";
+
+            var response = await _kernel.InvokePromptAsync(prompt);
+            return ParseFindingsFromResponse(response.ToString(), "performance");
+        }
+
+        [KernelFunction("dep_audit")]
+        [Description("Audits dependencies for security vulnerabilities, outdated packages, and licensing issues.")]
+        public async Task<IReadOnlyList<AnalysisFinding>> DependencyAuditAsync(
+            [Description("Dependency information (package files, lock files, etc.)")] IReadOnlyList<FileMetadata> files,
+            [Description("Configuration for the analysis")] RepositoryAnalysisConfig config)
+        {
+            // Filter for dependency files
+            var depFiles = files
+                .Where(f => f.Content != null &&
+                           (f.Path.Contains("package.json") || f.Path.Contains("requirements.txt") ||
+                            f.Path.Contains("packages.config") || f.Path.Contains("Directory.Packages.props") ||
+                            f.Path.Contains("*.csproj") || f.Path.Contains("*.fsproj")))
+                .Where(f => f.Size <= config.MaxFileBytes)
+                .Take(config.MaxFiles)
+                .ToList();
+
+            if (!depFiles.Any())
+                return Array.Empty<AnalysisFinding>();
+
+            var dependencyInfo = string.Join("\n\n", depFiles.Select(f =>
+                $"File: {f.Path}\n{f.Content}"));
+
+            // Use LLM to audit dependencies
+            var prompt = $@"Audit these dependencies for security and maintenance issues:
+
+{dependencyInfo}
+
+Please identify specific dependency issues and provide findings in this format:
+- Path: [file path]
+- Kind: dependencies
+- Severity: [info/warning/error/critical]
+- Summary: [brief description]
+- Details: [more details]
+- Recommendation: [optional suggestion]
+
+Focus on:
+1. Known security vulnerabilities in dependencies
+2. Outdated or unmaintained packages
+3. Licensing compatibility issues
+4. Dependency version conflicts
+5. Unused dependencies
+
+Return findings as a structured list.";
+
+            var response = await _kernel.InvokePromptAsync(prompt);
+            return ParseFindingsFromResponse(response.ToString(), "dependencies");
+        }
+
+        private IReadOnlyList<AnalysisFinding> ParseFindingsFromResponse(string response, string defaultKind)
+        {
+            var findings = new List<AnalysisFinding>();
+            var lines = response.Split('\n');
+
+            string? currentPath = null;
+            string? currentKind = null;
+            string? currentSeverity = null;
+            string? currentSummary = null;
+            string? currentDetails = null;
+            string? currentRecommendation = null;
+
+            foreach (var line in lines)
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("- Path:"))
+                {
+                    // Save previous finding if complete
+                    if (currentPath != null && currentSummary != null)
+                    {
+                        findings.Add(new AnalysisFinding(
+                            currentPath,
+                            currentKind ?? defaultKind,
+                            currentSeverity ?? "info",
+                            currentSummary,
+                            currentDetails ?? "",
+                            currentRecommendation));
+                    }
+
+                    // Start new finding
+                    currentPath = trimmed.Substring("- Path:".Length).Trim();
+                    currentKind = null;
+                    currentSeverity = null;
+                    currentSummary = null;
+                    currentDetails = null;
+                    currentRecommendation = null;
+                }
+                else if (trimmed.StartsWith("- Kind:"))
+                {
+                    currentKind = trimmed.Substring("- Kind:".Length).Trim();
+                }
+                else if (trimmed.StartsWith("- Severity:"))
+                {
+                    currentSeverity = trimmed.Substring("- Severity:".Length).Trim();
+                }
+                else if (trimmed.StartsWith("- Summary:"))
+                {
+                    currentSummary = trimmed.Substring("- Summary:".Length).Trim();
+                }
+                else if (trimmed.StartsWith("- Details:"))
+                {
+                    currentDetails = trimmed.Substring("- Details:".Length).Trim();
+                }
+                else if (trimmed.StartsWith("- Recommendation:"))
+                {
+                    currentRecommendation = trimmed.Substring("- Recommendation:".Length).Trim();
+                }
+            }
+
+            // Save last finding
+            if (currentPath != null && currentSummary != null)
+            {
+                findings.Add(new AnalysisFinding(
+                    currentPath,
+                    currentKind ?? defaultKind,
+                    currentSeverity ?? "info",
+                    currentSummary,
+                    currentDetails ?? "",
+                    currentRecommendation));
+            }
+
+            return findings;
+        }
+    }
+
+    private async Task<ReviewResult?> PerformRepositoryAnalysisAsync()
+    {
+        try
+        {
+            Logger.LogInformation("Performing repository-wide analysis");
+
+            // Check cache first
+            var cacheKey = "repo_analysis";
+            if (_analysisCache.TryGetValue(cacheKey, out var cachedResult))
+            {
+                // Check if cache is still valid
+                var cacheAge = DateTimeOffset.Now - cachedResult.Timestamp;
+                if (cacheAge < _reviewerConfig.AnalysisCacheTimeout)
+                {
+                    Logger.LogInformation("Using cached repository analysis (age: {Age})", cacheAge);
+                    return ParseCachedAnalysisResult(cachedResult.Result);
+                }
+                else
+                {
+                    // Cache expired, remove it
+                    _analysisCache.Remove(cacheKey);
+                }
+            }
+
+            // Run the orchestrated repository analysis
+            var analysisResult = await RunRepositoryAnalysisAsync();
+            if (analysisResult == null)
+                return null;
+
+            var result = new ReviewResult
+            {
+                Summary = "Repository-wide analysis completed",
+                Issues = analysisResult.Where(f => f.Severity == "error" || f.Severity == "critical").Select(f => $"{f.Kind}: {f.Summary}").ToList(),
+                Recommendations = analysisResult.Where(f => f.Recommendation != null).Select(f => $"{f.Kind}: {f.Recommendation}").ToList(),
+                Status = analysisResult.Any(f => f.Severity == "critical") ? ReviewStatus.NeedsReview : ReviewStatus.ReadyForQA
+            };
+
+            // Cache the result
+            var serializedResult = SerializeAnalysisResult(result);
+            _analysisCache[cacheKey] = (DateTimeOffset.Now, serializedResult);
+
+            Logger.LogInformation("Repository analysis completed and cached");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to perform repository analysis");
+            return null;
         }
     }
 
     /// <summary>
-    /// Parses LLM analysis response into ReviewResult.
+    /// Orchestrates repository-wide analysis by gathering files and running enabled analysis functions.
     /// </summary>
-    private ReviewResult ParseAnalysisToReviewResult(string analysis, string artifactType)
+    [KernelFunction("run_repository_analysis")]
+    [Description("Runs comprehensive repository analysis across enabled focus areas using VCS helpers and LLM analysis.")]
+    public async Task<IReadOnlyList<AnalysisFinding>> RunRepositoryAnalysisAsync()
     {
-        // SK/LLM scaffolding: Parse the LLM response
-        // TODO: Implement proper parsing based on expected LLM output format
-        // For now, simple heuristics on the response string
+        var allFindings = new List<AnalysisFinding>();
 
-        var summary = $"{artifactType} analysis: {analysis}";
-        var issues = new List<string>();
-        var recommendations = new List<string>();
-        var status = ReviewStatus.ReadyForQA;
-
-        if (analysis.Contains("error", StringComparison.OrdinalIgnoreCase) ||
-            analysis.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
-            analysis.Contains("issue", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            issues.Add("Issues detected in analysis");
-            status = ReviewStatus.NeedsReview;
+            Logger.LogInformation("Starting orchestrated repository analysis");
+
+            // Get repository analysis config
+            var config = _reviewerConfig.Analysis ?? new RepositoryAnalysisConfig();
+
+            // Use VCS helper to gather files
+            var workspaceRoot = Context!.Config.Workspace.Path;
+            var vcsHelper = new FileSystemVcsHelper(workspaceRoot);
+
+            // Get all files in repository
+            var allFiles = await vcsHelper.ListFilesAsync(
+                new[] { "." },
+                maxFiles: config.MaxFiles);
+
+            // Get file contents for analysis
+            var filePaths = allFiles.Select(f => f.Path).ToList();
+            var filesWithContent = await vcsHelper.GetFileContentsAsync(filePaths, config.MaxFileBytes);
+
+            Logger.LogInformation("Gathered {FileCount} files for analysis", filesWithContent.Count);
+
+            // Run enabled analysis functions
+            var enabledAreas = config.EnabledAreas ?? new List<string>();
+
+            if (enabledAreas.Contains("structure"))
+            {
+                Logger.LogInformation("Running structure analysis");
+                var structureFindings = await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
+                    "review_analysis", "analyze_structure",
+                    new KernelArguments
+                    {
+                        ["repoStructure"] = GenerateRepositoryStructureText(allFiles),
+                        ["config"] = config
+                    });
+                if (structureFindings != null)
+                    allFindings.AddRange(structureFindings);
+            }
+
+            if (enabledAreas.Contains("quality"))
+            {
+                Logger.LogInformation("Running code quality analysis");
+                var qualityFindings = await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
+                    "review_analysis", "analyze_quality",
+                    new KernelArguments
+                    {
+                        ["files"] = filesWithContent,
+                        ["config"] = config
+                    });
+                if (qualityFindings != null)
+                    allFindings.AddRange(qualityFindings);
+            }
+
+            if (enabledAreas.Contains("security"))
+            {
+                Logger.LogInformation("Running security analysis");
+                var securityFindings = await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
+                    "review_analysis", "security_scan",
+                    new KernelArguments
+                    {
+                        ["files"] = filesWithContent,
+                        ["config"] = config
+                    });
+                if (securityFindings != null)
+                    allFindings.AddRange(securityFindings);
+            }
+
+            if (enabledAreas.Contains("performance"))
+            {
+                Logger.LogInformation("Running performance analysis");
+                var perfFindings = await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
+                    "review_analysis", "perf_scan",
+                    new KernelArguments
+                    {
+                        ["files"] = filesWithContent,
+                        ["config"] = config
+                    });
+                if (perfFindings != null)
+                    allFindings.AddRange(perfFindings);
+            }
+
+            if (enabledAreas.Contains("dependencies"))
+            {
+                Logger.LogInformation("Running dependency analysis");
+                var depFindings = await _kernel.InvokeAsync<IReadOnlyList<AnalysisFinding>>(
+                    "review_analysis", "dep_audit",
+                    new KernelArguments
+                    {
+                        ["files"] = filesWithContent,
+                        ["config"] = config
+                    });
+                if (depFindings != null)
+                    allFindings.AddRange(depFindings);
+            }
+
+            Logger.LogInformation("Repository analysis completed with {FindingCount} findings", allFindings.Count);
+            return allFindings;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to run repository analysis");
+            return allFindings;
+        }
+    }
+
+    private string GenerateRepositoryStructureText(IReadOnlyList<FileMetadata> files)
+    {
+        var structure = new System.Text.StringBuilder();
+        structure.AppendLine("Repository Structure:");
+
+        // Group files by directory
+        var directories = files
+            .Select(f => System.IO.Path.GetDirectoryName(f.Path) ?? "")
+            .Distinct()
+            .OrderBy(d => d)
+            .ToList();
+
+        foreach (var dir in directories)
+        {
+            structure.AppendLine($"Directory: {dir}/");
+            var dirFiles = files
+                .Where(f => System.IO.Path.GetDirectoryName(f.Path) == dir)
+                .OrderBy(f => f.Path)
+                .ToList();
+
+            foreach (var file in dirFiles)
+            {
+                structure.AppendLine($"  - {System.IO.Path.GetFileName(file.Path)} ({file.Size} bytes)");
+            }
         }
 
-        if (analysis.Contains("recommend", StringComparison.OrdinalIgnoreCase) ||
-            analysis.Contains("consider", StringComparison.OrdinalIgnoreCase))
+        return structure.ToString();
+    }
+
+
+
+    private ReviewResult CombineReviewResults(ReviewResult artifactResult, ReviewResult repoResult)
+    {
+        return new ReviewResult
         {
-            recommendations.Add("Review recommendations provided");
-        }
+            Summary = $"{artifactResult.Summary}\nRepository Analysis: {repoResult.Summary}",
+            Issues = artifactResult.Issues.Concat(repoResult.Issues).ToList(),
+            Recommendations = artifactResult.Recommendations.Concat(repoResult.Recommendations).ToList(),
+            Status = artifactResult.Status == ReviewStatus.NeedsReview || repoResult.Status == ReviewStatus.NeedsReview
+                ? ReviewStatus.NeedsReview
+                : ReviewStatus.ReadyForQA
+        };
+    }
+
+    private string SerializeAnalysisResult(ReviewResult result)
+    {
+        // Simple serialization for caching - could be enhanced with JSON
+        return $"{result.Summary}|{string.Join(";", result.Issues)}|{string.Join(";", result.Recommendations)}|{result.Status}";
+    }
+
+    private ReviewResult ParseCachedAnalysisResult(string cached)
+    {
+        var parts = cached.Split('|');
+        if (parts.Length != 4)
+            throw new InvalidOperationException("Invalid cached analysis result format");
 
         return new ReviewResult
         {
-            Summary = summary,
-            Issues = issues,
-            Recommendations = recommendations,
-            Status = status
+            Summary = parts[0],
+            Issues = parts[1].Split(';', StringSplitOptions.RemoveEmptyEntries).ToList(),
+            Recommendations = parts[2].Split(';', StringSplitOptions.RemoveEmptyEntries).ToList(),
+            Status = Enum.Parse<ReviewStatus>(parts[3])
         };
     }
 }

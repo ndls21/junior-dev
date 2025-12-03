@@ -11,7 +11,8 @@ namespace JuniorDev.Agents.Sk.Tests
         public async Task ReviewDiff_WithTestsAndDocs_ReturnsReadyForQA()
         {
             var kernel = new Kernel();
-            var agent = new ReviewerAgent(kernel);
+            var appConfig = new JuniorDev.Contracts.AppConfig();
+            var agent = new ReviewerAgent(kernel, appConfig);
 
             var diffContent = "+ public void Test() { }\n+ // updated docs\n";
             var artifact = new JuniorDev.Contracts.ArtifactAvailable(
@@ -30,7 +31,8 @@ namespace JuniorDev.Agents.Sk.Tests
         public async Task ReviewLog_WithErrors_ReturnsNeedsReview()
         {
             var kernel = new Kernel();
-            var agent = new ReviewerAgent(kernel);
+            var appConfig = new JuniorDev.Contracts.AppConfig();
+            var agent = new ReviewerAgent(kernel, appConfig);
 
             var logContent = "Error: NullReferenceException\nWarning: something odd";
             var artifact = new JuniorDev.Contracts.ArtifactAvailable(
@@ -49,7 +51,8 @@ namespace JuniorDev.Agents.Sk.Tests
         public async Task GenerateReview_UnknownType_ReturnsNeedsReview()
         {
             var kernel = new Kernel();
-            var agent = new ReviewerAgent(kernel);
+            var appConfig = new JuniorDev.Contracts.AppConfig();
+            var agent = new ReviewerAgent(kernel, appConfig);
 
             var artifact = new JuniorDev.Contracts.ArtifactAvailable(
                 Id: System.Guid.NewGuid(),

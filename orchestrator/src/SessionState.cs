@@ -18,6 +18,8 @@ public class SessionState
     public IReadOnlyList<IEvent> Events => _eventLog;
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
     public string? CurrentTask { get; private set; }
+    public int ConsecutiveErrors { get; private set; } = 0;
+    public DateTimeOffset? LastErrorAt { get; private set; }
 
     public SessionState(SessionConfig config, string workspacePath)
     {
@@ -84,5 +86,17 @@ public class SessionState
     public void SetCurrentTask(string? task)
     {
         CurrentTask = task;
+    }
+
+    public void IncrementErrorCount()
+    {
+        ConsecutiveErrors++;
+        LastErrorAt = DateTimeOffset.Now;
+    }
+
+    public void ResetErrorCount()
+    {
+        ConsecutiveErrors = 0;
+        LastErrorAt = null;
     }
 }

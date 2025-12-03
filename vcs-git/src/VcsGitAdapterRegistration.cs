@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using JuniorDev.Orchestrator;
 using JuniorDev.Contracts;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 
 namespace JuniorDev.VcsGit;
 
@@ -8,7 +10,7 @@ public static class VcsGitAdapterRegistration
 {
     public static IServiceCollection AddVcsGitAdapter(this IServiceCollection services, VcsConfig config, bool isFake = false, AppConfig? appConfig = null)
     {
-        services.AddSingleton<IAdapter>(new VcsGitAdapter(config, isFake, appConfig));
+        services.AddSingleton<IAdapter>(sp => new VcsGitAdapter(config, isFake, appConfig, sp.GetService<ILogger<VcsGitAdapter>>(), sp.GetService<IOptionsMonitor<LivePolicyConfig>>()));
         return services;
     }
 
@@ -26,7 +28,7 @@ public static class VcsGitAdapterRegistration
 
         // For now, always use real VCS adapter (Git is well-established)
         // Could add fake detection logic here if needed
-        services.AddSingleton<IAdapter>(new VcsGitAdapter(vcsConfig, isFake: false));
+        services.AddSingleton<IAdapter>(sp => new VcsGitAdapter(vcsConfig, isFake: false, appConfig, sp.GetService<ILogger<VcsGitAdapter>>(), sp.GetService<IOptionsMonitor<LivePolicyConfig>>()));
         return services;
     }
 }
