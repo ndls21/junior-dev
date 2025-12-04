@@ -16,7 +16,11 @@ public sealed record WorkItemRef(string Id, string? ProviderHint = null);
 
 public sealed record WorkItemSummary(string Id, string Title, string Status, string? Assignee);
 
-public sealed record WorkItemDetails(string Id, string Title, string Description, string Status, string? Assignee, IReadOnlyList<string> Tags);
+public sealed record WorkItemDetails(string Id, string Title, string Description, string Status, string? Assignee, IReadOnlyList<string> Tags, IReadOnlyList<WorkItemComment> Comments = default!, IReadOnlyList<WorkItemLink> Links = default!);
+
+public sealed record WorkItemComment(string Author, string Body, DateTimeOffset CreatedAt);
+
+public sealed record WorkItemLink(string Type, string TargetId, string? TargetTitle = null, string? Relationship = null);
 
 public sealed record RepoRef(string Name, string Path);
 

@@ -68,7 +68,7 @@ public class JiraAdapter : IAdapter
 
     public bool CanHandle(ICommand command)
     {
-        return command is TransitionTicket or Comment or SetAssignee;
+        return command is TransitionTicket or Comment or SetAssignee or QueryWorkItem;
     }
 
     public async Task HandleCommand(ICommand command, SessionState session)
@@ -121,6 +121,9 @@ public class JiraAdapter : IAdapter
                     break;
                 case SetAssignee assign:
                     await HandleSetAssignee(assign, session);
+                    break;
+                case QueryWorkItem query:
+                    await HandleQueryWorkItem(query, session);
                     break;
                 default:
                     throw new NotSupportedException($"Command type {command.GetType()} not supported");
@@ -323,6 +326,134 @@ public class JiraAdapter : IAdapter
         await session.AddEvent(new ArtifactAvailable(Guid.NewGuid(), assign.Correlation, artifact));
     }
 
+    private async Task HandleQueryWorkItem(QueryWorkItem query, SessionState session)
+    {
+        var issueKey = GetIssueKey(query.Item.Id);
+        var url = $"{_baseUrl}/rest/api/2/issue/{issueKey}";
+
+        var response = await ExecuteWithRetry(() => _httpClient.GetAsync(url));
+        response.EnsureSuccessStatusCode();
+
+        var issueData = await response.Content.ReadFromJsonAsync<JiraIssueResponse>();
+        if (issueData == null) throw new InvalidOperationException("Invalid issue response from Jira");
+
+        // Fetch comments
+        var commentsUrl = $"{_baseUrl}/rest/api/2/issue/{issueKey}/comment";
+        var commentsResponse = await ExecuteWithRetry(() => _httpClient.GetAsync(commentsUrl));
+        commentsResponse.EnsureSuccessStatusCode();
+
+        var commentsData = await commentsResponse.Content.ReadFromJsonAsync<JiraCommentsResponse>();
+        
+        // Parse comments
+        var comments = new List<WorkItemComment>();
+        if (commentsData?.comments != null)
+        {
+            foreach (var comment in commentsData.comments)
+            {
+                var author = comment.author?.displayName ?? comment.author?.name ?? "unknown";
+                var body = comment.body ?? "";
+                var createdAt = DateTimeOffset.Parse(comment.created ?? DateTimeOffset.UtcNow.ToString());
+                comments.Add(new WorkItemComment(author, body, createdAt));
+            }
+        }
+
+        // Parse links from issue links and comments
+        var links = new List<WorkItemLink>();
+        
+        // Parse issue description for links
+        if (!string.IsNullOrEmpty(issueData.fields?.description))
+        {
+            links.AddRange(ParseJiraLinks(issueData.fields.description, "issue_description"));
+        }
+
+        // Parse comments for links
+        foreach (var comment in comments)
+        {
+            links.AddRange(ParseJiraLinks(comment.Body, $"comment_{comment.Author}"));
+        }
+
+        // Extract Jira issue links
+        if (issueData.fields?.issuelinks != null)
+        {
+            foreach (var link in issueData.fields.issuelinks)
+            {
+                var relationship = link.type?.inward ?? link.type?.outward ?? "linked";
+                var targetKey = link.inwardIssue?.key ?? link.outwardIssue?.key ?? "";
+                var targetTitle = link.inwardIssue?.fields?.summary ?? link.outwardIssue?.fields?.summary ?? "";
+                
+                if (!string.IsNullOrEmpty(targetKey))
+                {
+                    links.Add(new WorkItemLink("jira_issue", targetKey, targetTitle, relationship));
+                }
+            }
+        }
+
+        // Extract basic issue info
+        var status = issueData.fields?.status?.name ?? "Unknown";
+        var assignee = issueData.fields?.assignee?.displayName ?? issueData.fields?.assignee?.name;
+        var description = issueData.fields?.description ?? "";
+        var title = issueData.fields?.summary ?? $"Issue {issueKey}";
+
+        // Extract labels as tags
+        var tags = new List<string>();
+        if (issueData.fields?.labels != null)
+        {
+            tags.AddRange(issueData.fields.labels);
+        }
+
+        var details = new WorkItemDetails(
+            Id: query.Item.Id,
+            Title: title,
+            Description: description,
+            Status: status,
+            Assignee: assignee,
+            Tags: tags,
+            Comments: comments,
+            Links: links
+        );
+
+        await session.AddEvent(new WorkItemQueried(Guid.NewGuid(), query.Correlation, details));
+    }
+
+    private IEnumerable<WorkItemLink> ParseJiraLinks(string text, string source)
+    {
+        var links = new List<WorkItemLink>();
+        
+        // Match patterns like PROJ-123, [PROJ-456], https://company.atlassian.net/browse/PROJ-789
+        var patterns = new[]
+        {
+            @"(?<project>[A-Z][A-Z0-9]*)-(?<number>\d+)",  // PROJ-123
+            @"\[(?<project>[A-Z][A-Z0-9]*)-(?<number>\d+)\]",  // [PROJ-123]
+            @"browse/(?<project>[A-Z][A-Z0-9]*)-(?<number>\d+)"  // browse/PROJ-123
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var matches = System.Text.RegularExpressions.Regex.Matches(text, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            foreach (System.Text.RegularExpressions.Match match in matches)
+            {
+                var targetId = match.Value.Trim('[', ']').Replace("browse/", "");
+                var relationship = "mentioned";
+                
+                // Determine relationship based on context
+                if (text.Contains("blocked by") || text.Contains("depends on") || text.Contains("after"))
+                    relationship = "depends_on";
+                else if (text.Contains("blocks") || text.Contains("required by") || text.Contains("before"))
+                    relationship = "blocks";
+                else if (text.Contains("related to") || text.Contains("see also"))
+                    relationship = "related";
+                else if (text.Contains("part of") || text.Contains("parent"))
+                    relationship = "child_of";
+                else if (text.Contains("contains") || text.Contains("child"))
+                    relationship = "parent_of";
+
+                links.Add(new WorkItemLink("jira_issue", targetId, null, relationship));
+            }
+        }
+
+        return links;
+    }
+
     private string GetIssueKey(string workItemId)
     {
         // If workItemId already contains project key, use it as-is
@@ -422,4 +553,57 @@ public class JiraAdapter : IAdapter
         public string id { get; set; } = "";
         public string name { get; set; } = "";
     }
+
+    private class JiraIssueResponse
+    {
+        public string key { get; set; } = "";
+        public JiraFields? fields { get; set; }
+    }
+
+    private class JiraFields
+    {
+        public string? summary { get; set; }
+        public string? description { get; set; }
+        public JiraUser? assignee { get; set; }
+        public JiraStatus? status { get; set; }
+        public string[]? labels { get; set; }
+        public JiraIssueLink[]? issuelinks { get; set; }
+    }
+
+    private class JiraUser
+    {
+        public string? name { get; set; }
+        public string? displayName { get; set; }
+    }
+
+    private class JiraStatus
+    {
+        public string? name { get; set; }
+    }
+
+    private class JiraIssueLink
+    {
+        public string? type { get; set; }
+        public JiraIssueRef? inwardIssue { get; set; }
+        public JiraIssueRef? outwardIssue { get; set; }
+    }
+
+    private class JiraIssueRef
+    {
+        public string? key { get; set; }
+        public JiraFields? fields { get; set; }
+    }
+
+    private class JiraCommentsResponse
+    {
+        public JiraComment[]? comments { get; set; }
+    }
+
+    private class JiraComment
+    {
+        public string? body { get; set; }
+        public string? created { get; set; }
+        public JiraUser? author { get; set; }
+    }
+}
 }

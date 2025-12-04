@@ -61,7 +61,7 @@ public class GitHubAdapter : IAdapter
         _apiErrors = _meter.CreateCounter<long>("api_errors", "errors", "Number of API errors encountered");
     }
 
-    public bool CanHandle(ICommand command) => command is Comment or TransitionTicket or SetAssignee;
+    public bool CanHandle(ICommand command) => command is Comment or TransitionTicket or SetAssignee or QueryWorkItem;
 
     public async Task HandleCommand(ICommand command, SessionState session)
     {
@@ -104,6 +104,9 @@ public class GitHubAdapter : IAdapter
                     break;
                 case SetAssignee s:
                     await HandleSetAssignee(s);
+                    break;
+                case QueryWorkItem q:
+                    await HandleQueryWorkItem(q, session);
                     break;
             }
 
@@ -152,6 +155,121 @@ public class GitHubAdapter : IAdapter
         var body = new { assignees = new[] { command.Assignee } };
         var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
         await ExecuteWithRetry(() => _httpClient.PatchAsync(url, content));
+    }
+
+    private async Task HandleQueryWorkItem(QueryWorkItem command, SessionState session)
+    {
+        var issueNumber = int.Parse(command.Item.Id);
+        
+        // Fetch issue details
+        var issueResponse = await ExecuteWithRetry(() => _httpClient.GetAsync($"/repos/{_repo}/issues/{issueNumber}"));
+        var issueJson = await issueResponse.Content.ReadAsStringAsync();
+        var issue = JsonSerializer.Deserialize<JsonElement>(issueJson);
+
+        // Fetch comments
+        var commentsResponse = await ExecuteWithRetry(() => _httpClient.GetAsync($"/repos/{_repo}/issues/{issueNumber}/comments"));
+        var commentsJson = await commentsResponse.Content.ReadAsStringAsync();
+        var commentsArray = JsonSerializer.Deserialize<JsonElement>(commentsJson);
+
+        // Parse comments
+        var comments = new List<WorkItemComment>();
+        if (commentsArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var comment in commentsArray.EnumerateArray())
+            {
+                var author = comment.GetProperty("user").GetProperty("login").GetString() ?? "unknown";
+                var body = comment.GetProperty("body").GetString() ?? "";
+                var createdAt = DateTimeOffset.Parse(comment.GetProperty("created_at").GetString() ?? DateTimeOffset.UtcNow.ToString());
+                comments.Add(new WorkItemComment(author, body, createdAt));
+            }
+        }
+
+        // Fetch linked issues/PRs from issue body and comments
+        var links = new List<WorkItemLink>();
+        var issueBody = issue.GetProperty("body").GetString() ?? "";
+        
+        // Parse issue body for links
+        links.AddRange(ParseGitHubLinks(issueBody, "issue_body"));
+        
+        // Parse comments for links
+        foreach (var comment in comments)
+        {
+            links.AddRange(ParseGitHubLinks(comment.Body, $"comment_{comment.Author}"));
+        }
+
+        // Extract basic issue info
+        var title = issue.GetProperty("title").GetString() ?? $"Issue {issueNumber}";
+        var description = issue.GetProperty("body").GetString() ?? "";
+        var state = issue.GetProperty("state").GetString() ?? "open";
+        var assignee = issue.TryGetProperty("assignee", out var assigneeProp) && !assigneeProp.ValueKind.Equals(JsonValueKind.Null)
+            ? assigneeProp.GetProperty("login").GetString()
+            : null;
+        
+        // Extract labels as tags
+        var tags = new List<string>();
+        if (issue.TryGetProperty("labels", out var labelsProp) && labelsProp.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var label in labelsProp.EnumerateArray())
+            {
+                var labelName = label.GetProperty("name").GetString();
+                if (!string.IsNullOrEmpty(labelName))
+                {
+                    tags.Add(labelName);
+                }
+            }
+        }
+
+        var details = new WorkItemDetails(
+            Id: command.Item.Id,
+            Title: title,
+            Description: description,
+            Status: state,
+            Assignee: assignee,
+            Tags: tags,
+            Comments: comments,
+            Links: links
+        );
+
+        await session.AddEvent(new WorkItemQueried(Guid.NewGuid(), command.Correlation, details));
+    }
+
+    private IEnumerable<WorkItemLink> ParseGitHubLinks(string text, string source)
+    {
+        var links = new List<WorkItemLink>();
+        
+        // Match patterns like #123, PROJ-456, org/repo#789
+        var patterns = new[]
+        {
+            @"#(?<number>\d+)",  // #123
+            @"(?<project>[A-Z][A-Z0-9]*)-(?<number>\d+)",  // PROJ-123
+            @"(?<org>[a-zA-Z0-9_-]+)/(?<repo>[a-zA-Z0-9_-]+)#(?<number>\d+)"  // org/repo#123
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var matches = System.Text.RegularExpressions.Regex.Matches(text, pattern);
+            foreach (System.Text.RegularExpressions.Match match in matches)
+            {
+                var targetId = match.Value;
+                var relationship = "mentioned";
+                
+                // Determine relationship based on context
+                if (text.Contains("blocked by") || text.Contains("depends on") || text.Contains("after"))
+                    relationship = "depends_on";
+                else if (text.Contains("blocks") || text.Contains("required by") || text.Contains("before"))
+                    relationship = "blocks";
+                else if (text.Contains("related to") || text.Contains("see also"))
+                    relationship = "related";
+                else if (text.Contains("part of") || text.Contains("parent"))
+                    relationship = "child_of";
+                else if (text.Contains("contains") || text.Contains("child"))
+                    relationship = "parent_of";
+
+                links.Add(new WorkItemLink("github_issue", targetId, null, relationship));
+            }
+        }
+
+        return links;
     }
 
     private async Task ExecuteWithRetry(Func<Task<HttpResponseMessage>> operation)

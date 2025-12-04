@@ -84,31 +84,53 @@ public class FakeWorkItemsAdapter : FakeAdapter
             "PROJ-123" => new WorkItemDetails(
                 "PROJ-123",
                 "Implement user authentication",
-                "Add JWT-based authentication system with login/logout endpoints",
+                "Add JWT-based authentication system with login/logout endpoints. This depends on #456 for the user model.",
                 "Open",
                 "developer1",
-                new[] { "backend", "security" }),
+                new[] { "backend", "security" },
+                new[] 
+                {
+                    new WorkItemComment("developer1", "This should include password reset functionality", DateTimeOffset.UtcNow.AddHours(-2)),
+                    new WorkItemComment("reviewer1", "Blocked by PROJ-456 user model implementation", DateTimeOffset.UtcNow.AddHours(-1))
+                },
+                new[]
+                {
+                    new WorkItemLink("github_issue", "#456", "User model implementation", "depends_on"),
+                    new WorkItemLink("github_issue", "#789", "Security review", "blocks")
+                }),
             "PROJ-124" => new WorkItemDetails(
                 "PROJ-124",
                 "Add database migration",
-                "Create migration scripts for the new user table schema",
+                "Create migration scripts for the new user table schema. Part of the authentication epic.",
                 "In Progress",
                 "developer2",
-                new[] { "database", "migration" }),
+                new[] { "database", "migration" },
+                new[] 
+                {
+                    new WorkItemComment("developer2", "Migration should handle existing data", DateTimeOffset.UtcNow.AddHours(-4))
+                },
+                new[]
+                {
+                    new WorkItemLink("github_issue", "#123", "Authentication system", "parent_of")
+                }),
             "PROJ-125" => new WorkItemDetails(
                 "PROJ-125",
                 "Fix UI bug in dashboard",
                 "The dashboard chart is not displaying data correctly on mobile devices",
                 "Open",
                 null,
-                new[] { "frontend", "bug" }),
+                new[] { "frontend", "bug" },
+                Array.Empty<WorkItemComment>(),
+                Array.Empty<WorkItemLink>()),
             _ => new WorkItemDetails(
                 command.Item.Id,
                 $"Unknown item {command.Item.Id}",
                 "This is a placeholder for unknown work items",
                 "Unknown",
                 null,
-                Array.Empty<string>())
+                Array.Empty<string>(),
+                Array.Empty<WorkItemComment>(),
+                Array.Empty<WorkItemLink>())
         };
 
         var queriedEvent = new WorkItemQueried(
