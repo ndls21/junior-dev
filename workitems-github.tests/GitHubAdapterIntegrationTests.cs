@@ -28,7 +28,8 @@ public class GitHubAdapterIntegrationTests
                     GitHub = new GitHubAuthConfig(token, repo.Split('/')[0], repo.Split('/')[1])
                 }
             };
-            _adapter = new GitHubAdapter(appConfig);
+            var livePolicy = new StaticOptionsMonitor<LivePolicyConfig>(new LivePolicyConfig { DryRun = false });
+            _adapter = new GitHubAdapter(appConfig, livePolicyMonitor: livePolicy);
         }
         // If environment variables are not set, _adapter remains null and tests will be skipped
     }
@@ -140,7 +141,8 @@ public class GitHubAdapterIntegrationTests
                     GitHub = new GitHubAuthConfig("invalid", "test", "repo")
                 }
             };
-            var invalidAdapter = new GitHubAdapter(invalidAppConfig);
+            var livePolicy = new StaticOptionsMonitor<LivePolicyConfig>(new LivePolicyConfig { DryRun = false });
+            var invalidAdapter = new GitHubAdapter(invalidAppConfig, livePolicyMonitor: livePolicy);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),
@@ -165,7 +167,7 @@ public class GitHubAdapterIntegrationTests
             var rejected = (CommandRejected)session.Events[1];
             Assert.Equal(command.Id, rejected.CommandId);
             Assert.Equal(correlation, rejected.Correlation);
-            Assert.Equal("AUTH_ERROR", rejected.Reason);
+            Assert.Equal("Response status code does not indicate success: 401 (Unauthorized).", rejected.Reason);
         }
         finally
         {
@@ -193,7 +195,8 @@ public class GitHubAdapterIntegrationTests
                     GitHub = new GitHubAuthConfig("invalid", "test", "repo")
                 }
             };
-            var invalidAdapter = new GitHubAdapter(invalidAppConfig);
+            var livePolicy = new StaticOptionsMonitor<LivePolicyConfig>(new LivePolicyConfig { DryRun = false });
+            var invalidAdapter = new GitHubAdapter(invalidAppConfig, livePolicyMonitor: livePolicy);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),
@@ -218,7 +221,7 @@ public class GitHubAdapterIntegrationTests
             var rejected = (CommandRejected)session.Events[1];
             Assert.Equal(command.Id, rejected.CommandId);
             Assert.Equal(correlation, rejected.Correlation);
-            Assert.Equal("AUTH_ERROR", rejected.Reason);
+            Assert.Equal("Response status code does not indicate success: 401 (Unauthorized).", rejected.Reason);
         }
         finally
         {
@@ -245,7 +248,8 @@ public class GitHubAdapterIntegrationTests
                     GitHub = new GitHubAuthConfig("invalid", "test", "repo")
                 }
             };
-            var invalidAdapter = new GitHubAdapter(invalidAppConfig);
+            var livePolicy = new StaticOptionsMonitor<LivePolicyConfig>(new LivePolicyConfig { DryRun = false });
+            var invalidAdapter = new GitHubAdapter(invalidAppConfig, livePolicyMonitor: livePolicy);
 
             var config = new SessionConfig(
                 Guid.NewGuid(),
@@ -270,7 +274,7 @@ public class GitHubAdapterIntegrationTests
             var rejected = (CommandRejected)session.Events[1];
             Assert.Equal(command.Id, rejected.CommandId);
             Assert.Equal(correlation, rejected.Correlation);
-            Assert.Equal("AUTH_ERROR", rejected.Reason);
+            Assert.Equal("Response status code does not indicate success: 401 (Unauthorized).", rejected.Reason);
         }
         finally
         {

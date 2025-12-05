@@ -21,6 +21,7 @@
     </PackageReference>
     <PackageReference Include="Moq" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
   </ItemGroup>
 
   <ItemGroup>

@@ -400,13 +400,16 @@ public class GauntletSmokeTest
 
         _output.WriteLine("Created test .NET project for build verification");
 
-        // Query backlog
-        var queryBacklogCmd = new QueryBacklog(Guid.NewGuid(), new Correlation(sessionId), null);
-        await sessionManager.PublishCommand(queryBacklogCmd);
-        _output.WriteLine("Backlog query published");
+        // Query backlog - only in fake mode since real adapters don't support it
+        if (!useLiveAdapters)
+        {
+            var queryBacklogCmd = new QueryBacklog(Guid.NewGuid(), new Correlation(sessionId), null);
+            await sessionManager.PublishCommand(queryBacklogCmd);
+            _output.WriteLine("Backlog query published");
+        }
 
         // Query work item
-        var queryWorkItemCmd = new QueryWorkItem(Guid.NewGuid(), new Correlation(sessionId), new WorkItemRef("PROJ-123"));
+        var queryWorkItemCmd = new QueryWorkItem(Guid.NewGuid(), new Correlation(sessionId), new WorkItemRef("123"));
         await sessionManager.PublishCommand(queryWorkItemCmd);
         _output.WriteLine("Work item query published");
 
@@ -462,9 +465,10 @@ public class GauntletSmokeTest
         _output.WriteLine($"Artifacts generated: {artifactEvents}");
 
         // Assertions - allow for concurrent execution and session completion timing
-        Assert.True(acceptedCommands >= 6, $"Expected at least 6 accepted commands, got {acceptedCommands}");
-        Assert.True(completedCommands >= 6, $"Expected at least 6 completed commands, got {completedCommands}");
-        Assert.True(successfulCommands >= 6, $"Expected at least 6 successful commands (all should succeed with real project), got {successfulCommands}");
+        var expectedMinCommands = useLiveAdapters ? 5 : 6; // Live mode skips QueryBacklog; Push may not be counted in some runs
+        Assert.True(acceptedCommands >= expectedMinCommands, $"Expected at least {expectedMinCommands} accepted commands, got {acceptedCommands}");
+        Assert.True(completedCommands >= expectedMinCommands, $"Expected at least {expectedMinCommands} completed commands, got {completedCommands}");
+        Assert.True(successfulCommands >= expectedMinCommands, $"Expected at least {expectedMinCommands} successful commands (all should succeed with real project), got {successfulCommands}");
         Assert.True(artifactEvents > 0);
 
         _output.WriteLine($"=== GAUNTLET E2E SMOKE TEST ({(useLiveAdapters ? "LIVE" : "FAKE")}) PASSED ===");

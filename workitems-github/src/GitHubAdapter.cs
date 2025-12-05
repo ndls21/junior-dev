@@ -49,6 +49,7 @@ public class GitHubAdapter : IAdapter
         _httpClient = new HttpClient { BaseAddress = new Uri(baseUrl) };
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("JuniorDev", "1.0"));
+        _httpClient.Timeout = TimeSpan.FromSeconds(30);
 
         _circuitBreaker = new CircuitBreaker();
 
@@ -70,6 +71,7 @@ public class GitHubAdapter : IAdapter
             Comment c => c.Correlation,
             TransitionTicket t => t.Correlation,
             SetAssignee s => s.Correlation,
+            QueryWorkItem q => q.Correlation,
             _ => throw new NotSupportedException()
         };
 
@@ -272,9 +274,9 @@ public class GitHubAdapter : IAdapter
         return links;
     }
 
-    private async Task ExecuteWithRetry(Func<Task<HttpResponseMessage>> operation)
+    private async Task<HttpResponseMessage> ExecuteWithRetry(Func<Task<HttpResponseMessage>> operation)
     {
-        await _circuitBreaker.ExecuteAsync(async () =>
+        return await _circuitBreaker.ExecuteAsync(async () =>
         {
             for (int attempt = 0; attempt < MaxRetries; attempt++)
             {

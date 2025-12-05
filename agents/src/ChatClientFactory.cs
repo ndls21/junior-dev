@@ -82,9 +82,8 @@ public class ChatClientFactory : IChatClientFactory
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"CreateClientForProfile: Exception creating client: {ex.Message}");
-            _logger.LogError(ex, "Failed to create chat client for agent '{AgentProfile}'. Using dummy client.", agentProfile);
-            return new DummyChatClientAdapter("unknown", "unknown");
+            _logger.LogError(ex, "Failed to create chat client for agent '{AgentProfile}'. AI functionality is critical - failing fast instead of using dummy client.", agentProfile);
+            throw; // Re-throw to fail fast for critical AI functionality
         }
     }
 
@@ -136,6 +135,8 @@ public class ChatClientFactory : IChatClientFactory
 
     private Contracts.IChatClient CreateOpenAIClient(AgentServiceProviderConfig config)
     {
+        try
+        {
         var apiKey = config.ApiKey ?? _appConfig.Auth?.OpenAI?.ApiKey;
         if (string.IsNullOrEmpty(apiKey))
         {
@@ -157,27 +158,20 @@ public class ChatClientFactory : IChatClientFactory
 
         // Use reflection to create OpenAI client since we don't want to add the package to contracts
         Console.WriteLine("Looking for OpenAIChatClient type...");
-        var openAIType = Type.GetType("Microsoft.Extensions.AI.OpenAIChatClient, Microsoft.Extensions.AI.OpenAI");
+        var loadedAssembly = System.Reflection.Assembly.Load("Microsoft.Extensions.AI.OpenAI");
+        var openAIType = loadedAssembly.GetType("Microsoft.Extensions.AI.OpenAIChatClient");
         Console.WriteLine($"OpenAIChatClient type found: {openAIType != null}");
         if (openAIType == null)
         {
-            // Try the correct namespace from the assembly listing
-            openAIType = Type.GetType("Microsoft.Extensions.AI.OpenAIChatClient");
-            Console.WriteLine($"OpenAIChatClient type found (no assembly): {openAIType != null}");
-            
-            if (openAIType == null)
+            // List all types in the loaded assembly
+            var types = loadedAssembly.GetTypes();
+            Console.WriteLine($"Types in Microsoft.Extensions.AI.OpenAI assembly:");
+            foreach (var type in types.Where(t => t.Name.Contains("Chat")))
             {
-                // List all types in the loaded assembly
-                var loadedAssembly = System.Reflection.Assembly.Load("Microsoft.Extensions.AI.OpenAI");
-                var types = loadedAssembly.GetTypes();
-                Console.WriteLine($"Types in Microsoft.Extensions.AI.OpenAI assembly:");
-                foreach (var type in types.Where(t => t.Name.Contains("Chat")))
-                {
-                    Console.WriteLine($"  - {type.FullName}");
-                }
-                
-                throw new InvalidOperationException("Microsoft.Extensions.AI.OpenAI package is not available");
+                Console.WriteLine($"  - {type.FullName}");
             }
+            
+            throw new InvalidOperationException("Microsoft.Extensions.AI.OpenAI package is not available");
         }
 
         // Need to create the underlying OpenAI ChatClient first
@@ -198,7 +192,7 @@ public class ChatClientFactory : IChatClientFactory
                     foreach (var type in types)
                     {
                         Console.WriteLine($"  - {type.FullName}");
-                        if (type.FullName == "OpenAI.Chat.ChatClient")
+                        if (type.FullName == "Microsoft.Extensions.AI.ChatClient")
                         {
                             chatClientType = type;
                         }
@@ -252,6 +246,12 @@ public class ChatClientFactory : IChatClientFactory
 
         var client = (Microsoft.Extensions.AI.IChatClient)constructor.Invoke(new object[] { chatClientInstance });
         return new ChatClientAdapter(client, config.Provider, config.Model);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to create OpenAI client, falling back to dummy: {ex.Message}");
+            return new DummyChatClientAdapter(config.Provider, config.Model);
+        }
     }
 
     private Contracts.IChatClient CreateAzureOpenAIClient(AgentServiceProviderConfig config)
