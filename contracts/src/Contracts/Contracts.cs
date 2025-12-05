@@ -391,7 +391,9 @@ public sealed record UiSettings(
     bool ShowStatusChips = true,
     bool AutoScrollEvents = true,
     bool ShowTimestamps = true,
-    int MaxEventHistory = 1000);
+    int MaxEventHistory = 1000,
+    bool EnableHttpApi = false,
+    int HttpApiPort = 5180);
 
 /// <summary>
 /// Workspace configuration

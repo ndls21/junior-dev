@@ -15,6 +15,8 @@ using System.Xml;
 using System.Linq;
 using System.Text.Json;
 using System.Collections.Concurrent;
+using System.Net;
+using System.Threading.Tasks;
 
 #pragma warning disable CS8602 // Dereference of possibly null reference - suppressed for fields initialized in constructor
 
@@ -170,6 +172,8 @@ public class AppSettings
     public bool AutoScrollEvents { get; set; } = true;
     public bool ShowTimestamps { get; set; } = true;
     public int MaxEventHistory { get; set; } = 1000;
+    public bool EnableHttpApi { get; set; } = false;
+    public int HttpApiPort { get; set; } = 5180;
 
     // Live orchestrator profile settings
     public LiveProfileSettings LiveProfile { get; set; } = new();
@@ -1057,6 +1061,11 @@ public partial class MainForm : Form
     private string? _testSettingsFilePath;
     private string? _testChatStreamsFilePath;
 
+    // HTTP API fields
+    private HttpListener? _httpListener;
+    private readonly ConcurrentDictionary<Guid, List<(IEvent @event, DateTimeOffset timestamp)>> _recentEvents = new();
+    private const int MaxRecentEvents = 100;
+
     public MainForm(ISessionManager sessionManager, IConfiguration configuration, Microsoft.Extensions.AI.IChatClient chatClient, IServiceProvider serviceProvider, bool isTestMode = false)
     {
         _sessionManager = sessionManager ?? throw new ArgumentNullException(nameof(sessionManager));
@@ -1083,6 +1092,11 @@ public partial class MainForm : Form
             // Only load layout if not in test mode
             LoadLayout();
             LoadAndApplySettings();
+            
+            if (currentSettings.EnableHttpApi)
+            {
+                StartHttpServer();
+            }
         }
         else
         {
@@ -1864,6 +1878,7 @@ public partial class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        StopHttpServer();
         SaveLayout();
         base.OnFormClosing(e);
     }
@@ -2009,6 +2024,9 @@ public partial class MainForm : Form
         // Check for blocking conditions
         CheckForBlockingConditions(@event);
         
+        // Store event for HTTP API
+        StoreEventForApi(@event, timestamp);
+        
         // Render to global events panel
         eventRenderer?.RenderEvent(@event, timestamp);
 
@@ -2016,6 +2034,17 @@ public partial class MainForm : Form
         if (isTestMode)
         {
             Console.WriteLine($"Handled event: {@event.Kind} for session {@event.Correlation.SessionId}");
+        }
+    }
+
+    private void StoreEventForApi(IEvent @event, DateTimeOffset timestamp)
+    {
+        var sessionId = @event.Correlation.SessionId;
+        var events = _recentEvents.GetOrAdd(sessionId, _ => new List<(IEvent, DateTimeOffset)>());
+        events.Add((@event, timestamp));
+        if (events.Count > MaxRecentEvents)
+        {
+            events.RemoveAt(0);
         }
     }
 
@@ -3838,5 +3867,189 @@ public partial class MainForm : Form
     internal ContextMenuStrip GetSessionsContextMenuForTest()
     {
         return sessionsContextMenu;
+    }
+
+    // HTTP API methods
+    private void StartHttpServer()
+    {
+        if (_httpListener != null) return;
+
+        try
+        {
+            _httpListener = new HttpListener();
+            _httpListener.Prefixes.Add($"http://localhost:{currentSettings.HttpApiPort}/");
+            _httpListener.Start();
+            Console.WriteLine($"HTTP API server started on http://localhost:{currentSettings.HttpApiPort}");
+
+            Task.Run(async () => await HandleHttpRequests());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to start HTTP server: {ex.Message}");
+        }
+    }
+
+    private void StopHttpServer()
+    {
+        if (_httpListener != null)
+        {
+            _httpListener.Stop();
+            _httpListener.Close();
+            _httpListener = null;
+            Console.WriteLine("HTTP API server stopped");
+        }
+    }
+
+    private async Task HandleHttpRequests()
+    {
+        while (_httpListener != null && _httpListener.IsListening)
+        {
+            try
+            {
+                var context = await _httpListener.GetContextAsync();
+                await ProcessHttpRequest(context);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"HTTP request error: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task ProcessHttpRequest(HttpListenerContext context)
+    {
+        var request = context.Request;
+        var response = context.Response;
+
+        try
+        {
+            string responseString = "";
+            string contentType = "application/json";
+
+            if (request.HttpMethod == "GET")
+            {
+                if (request.Url?.AbsolutePath == "/api/sessions")
+                {
+                    responseString = GetSessionsJson();
+                }
+                else if (request.Url?.AbsolutePath.StartsWith("/api/sessions/") == true)
+                {
+                    var pathParts = request.Url.AbsolutePath.Split('/');
+                    if (pathParts.Length >= 4)
+                    {
+                        var sessionIdStr = pathParts[3];
+                        if (Guid.TryParse(sessionIdStr, out var sessionId))
+                        {
+                            if (pathParts.Length == 4)
+                            {
+                                responseString = GetSessionSummaryJson(sessionId);
+                            }
+                            else if (pathParts.Length == 5 && pathParts[4] == "artifacts")
+                            {
+                                responseString = GetSessionArtifactsJson(sessionId);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (string.IsNullOrEmpty(responseString))
+            {
+                response.StatusCode = 404;
+                responseString = "{\"error\": \"Not found\"}";
+            }
+            else
+            {
+                response.StatusCode = 200;
+            }
+
+            response.ContentType = contentType;
+            var buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+        }
+        catch (Exception ex)
+        {
+            response.StatusCode = 500;
+            var errorResponse = $"{{\"error\": \"{ex.Message}\"}}";
+            var buffer = System.Text.Encoding.UTF8.GetBytes(errorResponse);
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+        }
+        finally
+        {
+            response.Close();
+        }
+    }
+
+    private string GetSessionsJson()
+    {
+        var sessions = _sessionManager.GetActiveSessions()
+            .Select(s => new
+            {
+                sessionId = s.SessionId,
+                name = $"{s.AgentProfile}@{s.RepoName}",
+                status = s.Status.ToString(),
+                currentTask = s.CurrentTask,
+                hasBlockingConditions = _blockingConditions.Any(b => b.SessionId == s.SessionId)
+            })
+            .ToList();
+
+        return System.Text.Json.JsonSerializer.Serialize(sessions);
+    }
+
+    private string GetSessionSummaryJson(Guid sessionId)
+    {
+        var sessionInfo = _sessionManager.GetActiveSessions().FirstOrDefault(s => s.SessionId == sessionId);
+        if (sessionInfo == null)
+        {
+            return "{\"error\": \"Session not found\"}";
+        }
+
+        var recentEvents = _recentEvents.TryGetValue(sessionId, out var events) 
+            ? events.Select(e => (object)new
+            {
+                kind = e.@event.Kind,
+                timestamp = e.timestamp,
+                message = e.@event.ToString()
+            }).ToList()
+            : new List<object>();
+
+        var blockingConditions = _blockingConditions
+            .Where(b => b.SessionId == sessionId)
+            .Select(b => new
+            {
+                type = b.Type.ToString(),
+                message = b.Message,
+                actionText = b.ActionText,
+                timestamp = b.Timestamp
+            })
+            .ToList();
+
+        var summary = new
+        {
+            sessionId = sessionInfo.SessionId,
+            name = $"{sessionInfo.AgentProfile}@{sessionInfo.RepoName}",
+            status = sessionInfo.Status.ToString(),
+            currentTask = sessionInfo.CurrentTask,
+            recentEvents,
+            blockingConditions
+        };
+
+        return System.Text.Json.JsonSerializer.Serialize(summary);
+    }
+
+    private string GetSessionArtifactsJson(Guid sessionId)
+    {
+        var artifacts = _chatArtifacts.TryGetValue(sessionId, out var sessionArtifacts)
+            ? sessionArtifacts.Select(a => (object)new
+            {
+                name = a.Name,
+                kind = a.Kind.ToString(),
+                summary = a.InlineText ?? ""
+            }).ToList()
+            : new List<object>();
+
+        return System.Text.Json.JsonSerializer.Serialize(artifacts);
     }
 }
