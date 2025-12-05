@@ -5,7 +5,6 @@ using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Xunit;
-using Xunit.Sdk;
 
 namespace JuniorDev.Agents.Sk.Tests;
 
@@ -26,8 +25,10 @@ public class AiIntegrationTests
     [Fact]
     public async Task ReviewerAgent_CanAnalyzeDiff_WithRealAI()
     {
-        // Skip.IfNot(_fixture.ShouldRunAiTests, "AI tests disabled or credentials not available");
-        // Temporarily disabled due to Skip method issues
+        if (!_fixture.ShouldRunAiTests)
+        {
+            return; // Skip test when AI tests are disabled
+        }
 
         // Arrange - Set up kernel with OpenAI chat completion
         var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ??
@@ -74,8 +75,10 @@ index 1234567..abcdef0 100644
     [Fact]
     public async Task ReviewerAgent_CanAnalyzeLog_WithRealAI()
     {
-        // Skip.IfNot(_fixture.ShouldRunAiTests, "AI tests disabled or credentials not available");
-        // Temporarily disabled due to Skip method issues
+        if (!_fixture.ShouldRunAiTests)
+        {
+            return; // Skip test when AI tests are disabled
+        }
 
         // Arrange - Set up kernel with OpenAI chat completion
         var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ??

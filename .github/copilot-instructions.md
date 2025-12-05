@@ -21,8 +21,10 @@ These guidelines are reusable across projects. Project-specific guidance for thi
 - **Issue closure**: Don't auto-close issues; wait for explicit go-ahead. Clean up and commit before switching issues.
 - **NEXT! ritual**: When completing an issue and ready to move to the next:
   - Run full test suite to ensure no regressions
+  - **If any tests fail, ABORT the entire routine and investigate the failure before proceeding. Commit and push, and then proceed to fix the test failure until it is understood and addressed.**
   - Commit changes with descriptive message including issue reference
   - Push to remote repository
+  - **Document test results in the issue being closed**: Include test run summary, any warnings, and confirmation that all tests pass
   - Close the completed issue
   - Claim the next issue with a comment
   - Reference issue numbers in all TODOs
@@ -30,6 +32,7 @@ These guidelines are reusable across projects. Project-specific guidance for thi
 - **Commit messages**: Include issue/stage context if applicable (e.g., `Feat: implement X (#123)`).
 - **Test failures**: Investigate code vs. test assumptions; don’t just change tests to make them pass.
 - **Stage transitions**: Before moving to a new development stage or completing a feature, run the full test suite (`dotnet test`) to ensure all tests pass and no regressions were introduced. This includes unit tests, integration tests, and UI tests. Never proceed to the next stage with failing tests.
+- **UI Test Mode Validation**: When making UI changes or before major releases, run `dotnet run --project ui-shell -- --test` and analyze the output for any failures. If exceptions, crashes, or unexpected errors occur (beyond benign warnings like layout save failures in test mode), follow the test failure procedure: investigate the root cause, fix the issue, and re-run validation before proceeding.
 - **Transparency**: Surface major/refactor/reset decisions immediately; get consent for disruptive changes.
 
 ## Config/Secrets & AI Tests
@@ -58,6 +61,12 @@ These guidelines are reusable across projects. Project-specific guidance for thi
 - **CI discipline**: Keep integration/live/AI tests opt-in; default CI to deterministic, offline-safe tests. Use flags to enable heavier suites.
 - **Code quality**: Favor readability over cleverness; small, single-responsibility functions; meaningful names; consistent formatting; minimize shared mutable state.
 
+## Fallback Strategy Guidelines
+
+- **Strategic Fallbacks**: Be strategic with fallbacks - they should only be used when they don't hide real issues from users. For critical functionality (like AI clients), prefer failing fast over graceful degradation that masks problems.
+- **When to Crash vs. Fallback**: Sometimes crashing hard is better than silently providing degraded functionality that confuses users. Only use fallbacks for truly optional features or when the degraded state is clearly communicated to the user.
+- **AI Client Example**: Don't silently fall back to dummy AI clients when users expect real AI functionality. This hides configuration or dependency issues that need to be fixed, not worked around.
+
 ## UI Development Guidelines
 
 - **Error Handling**: Prefer throwing exceptions over showing modal dialogs for error conditions. Modal dialogs block automated testing and don't provide debuggable information to LLMs or automated systems. Use `isTestMode` checks to conditionally show dialogs only in interactive user sessions.
@@ -68,3 +77,9 @@ These guidelines are reusable across projects. Project-specific guidance for thi
 - **Accessibility**: Ensure UI elements have clear labels, keyboard shortcuts where appropriate, and logical tab order.
 - **Performance**: UI should load within 2-3 seconds; test mode helps verify startup performance.
 - **Automated Testing**: When writing unit tests that create `MainForm` instances, always set `form.IsTestMode = true` to prevent modal dialogs from blocking test execution. Structure automated tests to avoid any modal dialogs or user interactions that would block test execution. This ensures clean automated testing without user interaction requirements.
+
+## Code Formatting Guidelines
+
+- **Indentation**: Always use 4 spaces for indentation. Never use tabs. This ensures consistent formatting across all editors and platforms.
+- **Line endings**: Use LF (Unix-style) line endings for consistency.
+- **Consistent formatting**: Follow the existing code style in the project, prioritizing readability and maintainability.

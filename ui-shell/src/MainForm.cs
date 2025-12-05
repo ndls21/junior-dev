@@ -1702,17 +1702,30 @@ public partial class MainForm : Form
 
     private void SetupLayout()
     {
-        // Panels are already docked via DockingStyle in AddPanel
-        // Configure panel sizes
-        sessionsPanel!.Width = 250;
-        eventsPanel!.Height = 200;
-        artifactsPanel!.Width = 300;
+        if (dockManager == null) return;
+
+        dockManager.BeginUpdate();
+        try
+        {
+            // Canonical docking
+            sessionsPanel!.Dock = DockingStyle.Left;
+            sessionsPanel!.Width = 250;              // Initial only
+            conversationPanel!.Dock = DockingStyle.Fill;
+            eventsPanel!.Dock = DockingStyle.Bottom;
+            eventsPanel!.Height = 200;               // Initial only
+            artifactsPanel!.Dock = DockingStyle.Right;
+            artifactsPanel!.Width = 300;             // Initial only
+        }
+        finally
+        {
+            dockManager.EndUpdate();
+        }
     }
 
     private void LoadDefaultLayout()
     {
-        // Default layout is already set up in SetupLayout()
-        // Panels are docked via DockingStyle in AddPanel
+        // Set up the canonical layout
+        SetupLayout();
     }
 
     private void SaveLayout()
@@ -1857,19 +1870,30 @@ public partial class MainForm : Form
 
     private void SetupEventSubscriptions()
     {
-        // Subscribe to events from all existing chat streams
+        // Subscribe to events from all existing chat streams that have valid sessions
         if (_accordionManager != null)
         {
             foreach (var chatStream in _accordionManager.ChatStreams)
             {
-                SubscribeToSessionEvents(chatStream.SessionId);
+                // Only subscribe if the session actually exists
+                if (_sessionManager.GetSessionConfig(chatStream.SessionId) != null)
+                {
+                    if (!_eventSubscriptionTasks.ContainsKey(chatStream.SessionId))
+                    {
+                        SubscribeToSessionEvents(chatStream.SessionId);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"Skipping subscription for chat stream '{chatStream.AgentName}' - session {chatStream.SessionId} does not exist");
+                }
             }
         }
 
         // Listen for new chat streams being added
         if (_accordionManager != null)
         {
-            _accordionManager.StreamsChanged += (s, e) => 
+            _accordionManager.StreamsChanged += (s, e) =>
             {
                 // Subscribe to events for newly added streams
                 foreach (var stream in _accordionManager.ChatStreams)
@@ -2879,18 +2903,8 @@ public partial class MainForm : Form
                 File.Delete(chatStreamsFile);
             }
             
-            // Only reset panel layout if not in test mode (dock panels don't have Dock property in test mode)
-            if (!isTestMode)
-            {
-                // Explicitly reset panels to default layout
-                sessionsPanel!.Dock = DockingStyle.Left;
-                sessionsPanel!.Width = 250;
-                artifactsPanel!.Dock = DockingStyle.Right;
-                artifactsPanel!.Width = 300;
-                conversationPanel!.Dock = DockingStyle.Fill;
-                eventsPanel!.Dock = DockingStyle.Bottom;
-                eventsPanel!.Height = 200;
-            }
+            // Reset to canonical layout
+            SetupLayout();
             
             // Reset chat streams to default
             LoadDefaultChatStreams();

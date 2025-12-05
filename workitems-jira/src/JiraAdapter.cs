@@ -54,6 +54,7 @@ public class JiraAdapter : IAdapter
         _authHeader = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{token}"));
         _httpClient = new HttpClient();
         _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", _authHeader);
+        _httpClient.Timeout = TimeSpan.FromSeconds(30);
 
         _circuitBreaker = new CircuitBreaker();
 
@@ -583,9 +584,15 @@ public class JiraAdapter : IAdapter
 
     private class JiraIssueLink
     {
-        public string? type { get; set; }
+        public JiraLinkType? type { get; set; }
         public JiraIssueRef? inwardIssue { get; set; }
         public JiraIssueRef? outwardIssue { get; set; }
+    }
+
+    private class JiraLinkType
+    {
+        public string? inward { get; set; }
+        public string? outward { get; set; }
     }
 
     private class JiraIssueRef
@@ -605,5 +612,4 @@ public class JiraAdapter : IAdapter
         public string? created { get; set; }
         public JiraUser? author { get; set; }
     }
-}
 }
